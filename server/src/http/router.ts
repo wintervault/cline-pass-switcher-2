@@ -7,6 +7,11 @@ export interface Ctx {
   url: URL;
   method: string;
   path: string;
+  /**
+   * 客户端提前断开时中止的信号（响应正常结束时不会触发）。
+   * 长耗时操作（上游代理、探测）应把它传下去，客户端走了就别再花额度。
+   */
+  abortSignal: AbortSignal;
 }
 
 export type Handler = (ctx: Ctx) => Promise<void> | void;

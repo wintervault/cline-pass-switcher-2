@@ -17,7 +17,21 @@ export function createHttpServer(options: CreateHttpServerOptions): http.Server 
   const server = http.createServer((req, res) => {
     // 固定 base：只取 pathname/searchParams，不信任 Host 头
     const url = new URL(req.url ?? '/', 'http://localhost');
-    const ctx: Ctx = { req, res, url, method: req.method ?? 'GET', path: url.pathname };
+    // 客户端提前断开 → 中止信号。注意 res 'close' 在正常结束时也会触发，
+    // 必须用 writableEnded 区分「正常完成」与「客户端中途跑了」
+    const abortController = new AbortController();
+    const onResClose = () => {
+      if (!res.writableEnded) abortController.abort(new Error('client disconnected'));
+    };
+    res.on('close', onResClose);
+    const ctx: Ctx = {
+      req,
+      res,
+      url,
+      method: req.method ?? 'GET',
+      path: url.pathname,
+      abortSignal: abortController.signal,
+    };
 
     void composed(ctx).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);

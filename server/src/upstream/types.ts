@@ -103,5 +103,24 @@ export function defaultMeta(): MetaFile {
   };
 }
 
+/** 没有任何观测记录时的空白模型元数据。 */
+export function blankModelMeta(): ModelMeta {
+  return {
+    pipeline: null,
+    pinnable: false,
+    availableProviders: [],
+    upstreams: [],
+    upstreamDetail: {},
+    upstreamStatus: {},
+    tier0: [],
+    canonicalSlug: null,
+    openrouterSlug: null,
+    lastProvider: null,
+    lastMs: null,
+    probedAt: null,
+    validatedAt: null,
+  };
+}
+
 /** 上游错误的三分类，决定故障转移策略（见 errors.ts）。 */
 export type UpstreamErrorKind = 'account' | 'channel' | 'request';

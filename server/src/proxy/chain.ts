@@ -105,14 +105,14 @@ const errorBody = (message: string): Record<string, unknown> => ({ error: { mess
  */
 export class ChatChain {
   readonly #deps: ChainDeps;
-  #onChannelFailure: ((modelId: string, upstream: string, message: string) => void) | null = null;
+  #onChannelFailure: ((modelId: string, upstream: string | null, message: string) => void) | null = null;
 
   constructor(deps: ChainDeps) {
     this.#deps = deps;
   }
 
   /** 渠道失败回调（调用方用于把状态学习进 metadata）。传 null 取消。 */
-  onChannelFailure(listener: ((modelId: string, upstream: string, message: string) => void) | null): this {
+  onChannelFailure(listener: ((modelId: string, upstream: string | null, message: string) => void) | null): this {
     this.#onChannelFailure = listener;
     return this;
   }
@@ -230,8 +230,9 @@ export class ChatChain {
         if (upstream) {
           this.#deps.health.markFailed(modelId, upstream, this.#deps.failover.cooldownMs);
           if (!failedEarlier.includes(upstream)) failedEarlier.push(upstream);
-          this.#onChannelFailure?.(modelId, upstream, outcome.message);
         }
+        // 自动模式（upstream=null）也回调：报错里附带的最新渠道清单会被学习合并
+        this.#onChannelFailure?.(modelId, upstream, outcome.message);
 
         if (outcome.kind === 'request') {
           // 请求级：同渠道只多给一次机会，避免对参数错误打满所有候选
