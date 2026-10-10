@@ -20,7 +20,7 @@ use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Child;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -29,9 +29,9 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    SetInformationJobObject, TerminateJobObject, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
 };
-use windows::Win32::System::Threading::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const PORT: u16 = 3123;
@@ -63,28 +63,28 @@ fn main() {
             let log_dir = data_dir.join("logs");
             std::fs::create_dir_all(&log_dir)?;
 
-            let entry = resolve_entry(app);
+            let handle = app.handle().clone();
+            let entry = resolve_entry(&handle);
             let job = create_kill_on_close_job()?;
-            app.manage(ServerState {
+            app.manage(Arc::new(ServerState {
                 child: Mutex::new(None),
                 job: job.0 as isize,
                 data_dir,
                 entry,
                 log_dir,
-            });
+            }));
 
-            build_tray(app)?;
+            build_tray(&handle)?;
 
             // 启动服务并等待就绪；就绪（或超时）后显示窗口
-            let handle = app.handle().clone();
             std::thread::spawn(move || {
                 {
-                    let state = handle.state::<ServerState>();
+                    let state = handle.state::<Arc<ServerState>>();
                     if let Err(err) = spawn_server(&state) {
                         log_line(&state.log_dir, &format!("[壳] 启动失败：{err}"));
                     }
                 }
-                let state = handle.state::<ServerState>();
+                let state = handle.state::<Arc<ServerState>>();
                 if !wait_healthz(PORT, HEALTHZ_TIMEOUT) {
                     log_line(&state.log_dir, "[壳] 服务就绪检查超时，窗口仍将打开（可从托盘重试）");
                 }
@@ -172,12 +172,17 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             // 菜单事件在主线程回调：启停等耗时操作派发到后台线程，避免卡死托盘
             match event.id().as_ref() {
                 "open" => show_main(&app),
-                "start" => std::thread::spawn(move || menu_start(&app)),
-                "stop" => std::thread::spawn(move || menu_stop(&app)),
-                "restart" => std::thread::spawn(move || menu_restart(&app)),
+                "start" => {
+                    std::thread::spawn(move || menu_start(&app));
+                }
+                "stop" => {
+                    std::thread::spawn(move || menu_stop(&app));
+                }
+                "restart" => {
+                    std::thread::spawn(move || menu_restart(&app));
+                }
                 "logs" => {
-                    let state = app.state::<ServerState>();
-                    let dir = state.log_dir.clone();
+                    let dir = app.state::<Arc<ServerState>>().log_dir.clone();
                     let _ = std::process::Command::new("explorer").arg(dir).creation_flags(CREATE_NO_WINDOW).spawn();
                 }
                 "quit" => quit_app(&app),
@@ -195,7 +200,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn menu_start(app: &AppHandle) {
-    let state = app.state::<ServerState>();
+    let state = app.state::<Arc<ServerState>>();
     if let Err(err) = spawn_server(&state) {
         log_line(&state.log_dir, &format!("[壳] 托盘启动失败：{err}"));
         return;
@@ -204,12 +209,12 @@ fn menu_start(app: &AppHandle) {
 }
 
 fn menu_stop(app: &AppHandle) {
-    let state = app.state::<ServerState>();
+    let state = app.state::<Arc<ServerState>>();
     let _ = stop_server(&state, GRACEFUL_STOP);
 }
 
 fn menu_restart(app: &AppHandle) {
-    let state = app.state::<ServerState>();
+    let state = app.state::<Arc<ServerState>>();
     let _ = stop_server(&state, GRACEFUL_STOP);
     if let Err(err) = spawn_server(&state) {
         log_line(&state.log_dir, &format!("[壳] 托盘重启失败：{err}"));
@@ -221,10 +226,10 @@ fn menu_restart(app: &AppHandle) {
 /// 托盘「退出」：优雅停服务 → 退出进程（Job Object 兜底）
 fn quit_app(app: &AppHandle) {
     {
-        let state = app.state::<ServerState>();
+        let state = app.state::<Arc<ServerState>>();
         let _ = stop_server(&state, GRACEFUL_STOP);
     }
-    log_line(&app.state::<ServerState>().log_dir, "[壳] 托盘退出，壳进程结束");
+    log_line(&app.state::<Arc<ServerState>>().log_dir, "[壳] 托盘退出，壳进程结束");
     app.exit(0);
 }
 
@@ -232,7 +237,7 @@ fn quit_app(app: &AppHandle) {
 // 全部「立即返回、后台执行」，UI 用 server_status 轮询；不做阻塞式 IPC。
 
 #[tauri::command]
-fn server_status(state: tauri::State<'_, ServerState>) -> Result<String, String> {
+fn server_status(state: tauri::State<'_, Arc<ServerState>>) -> Result<String, String> {
     let alive = {
         let mut guard = state.child.lock().map_err(|e| e.to_string())?;
         match guard.as_mut() {
@@ -251,7 +256,7 @@ fn server_status(state: tauri::State<'_, ServerState>) -> Result<String, String>
 }
 
 #[tauri::command]
-fn server_start(state: tauri::State<'_, ServerState>) -> Result<String, String> {
+fn server_start(state: tauri::State<'_, Arc<ServerState>>) -> Result<String, String> {
     if let Err(err) = spawn_server(&state) {
         return Err(err);
     }
@@ -259,8 +264,8 @@ fn server_start(state: tauri::State<'_, ServerState>) -> Result<String, String> 
 }
 
 #[tauri::command]
-fn server_stop(state: tauri::State<'_, ServerState>) -> Result<String, String> {
-    let state = state.inner().clone();
+fn server_stop(state: tauri::State<'_, Arc<ServerState>>) -> Result<String, String> {
+    let state = Arc::clone(state.inner());
     std::thread::spawn(move || {
         let _ = stop_server(&state, GRACEFUL_STOP);
     });
@@ -268,8 +273,8 @@ fn server_stop(state: tauri::State<'_, ServerState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn server_restart(state: tauri::State<'_, ServerState>) -> Result<String, String> {
-    let state = state.inner().clone();
+fn server_restart(state: tauri::State<'_, Arc<ServerState>>) -> Result<String, String> {
+    let state = Arc::clone(state.inner());
     std::thread::spawn(move || {
         let _ = stop_server(&state, GRACEFUL_STOP);
         if let Err(err) = spawn_server(&state) {
@@ -280,7 +285,7 @@ fn server_restart(state: tauri::State<'_, ServerState>) -> Result<String, String
 }
 
 #[tauri::command]
-fn open_logs(state: tauri::State<'_, ServerState>) -> Result<(), String> {
+fn open_logs(state: tauri::State<'_, Arc<ServerState>>) -> Result<(), String> {
     std::process::Command::new("explorer")
         .arg(&state.log_dir)
         .creation_flags(CREATE_NO_WINDOW)
@@ -317,7 +322,7 @@ fn spawn_server(state: &ServerState) -> Result<(), String> {
         ),
     );
 
-    let mut child = std::process::Command::new(&node)
+    let child = std::process::Command::new(&node)
         .arg(&state.entry)
         .env("DATA_DIR", &state.data_dir)
         .env("PORT", PORT.to_string())
@@ -364,7 +369,9 @@ fn stop_server(state: &ServerState, grace: Duration) -> Result<(), String> {
             None if Instant::now() >= deadline => {
                 log_line(&state.log_dir, "[壳] 优雅关停超时，强制终止服务进程树");
                 unsafe {
-                    TerminateJobObject(HANDLE(state.job as *mut _), 1);
+                    if let Err(err) = TerminateJobObject(HANDLE(state.job as *mut _), 1) {
+                        log_line(&state.log_dir, &format!("[壳] 强制终止失败：{err}"));
+                    }
                 }
                 let _ = child.wait();
                 break;
@@ -386,7 +393,7 @@ fn create_kill_on_close_job() -> Result<HANDLE, String> {
         SetInformationJobObject(
             job,
             JobObjectExtendedLimitInformation,
-            &info,
+            std::ptr::from_ref(&info).cast(),
             std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
         )
         .map_err(|e| format!("配置作业对象失败：{e}"))?;
@@ -450,6 +457,18 @@ fn find_node() -> Option<PathBuf> {
     candidates.into_iter().flatten().find(|p| p.exists())
 }
 
+/// Tauri 的 resource_dir 返回 verbatim 路径（`\\\\?\\` 前缀，即 4 个反斜杠的形式），
+/// Node 处理不了（lstat 会一路走到盘根报 EISDIR），剥掉前缀还原成常规路径。
+/// 本机盘场景安全；`\\\\?\\UNC\\` 布局在本项目不会出现。
+fn normalize_path(p: PathBuf) -> PathBuf {
+    const VERBATIM: &str = "\\\\?\\";
+    let s = p.as_os_str().to_string_lossy();
+    match s.strip_prefix(VERBATIM) {
+        Some(stripped) => PathBuf::from(stripped.to_string()),
+        None => p,
+    }
+}
+
 /// 服务入口：多候选兜底（安装器 / 便携 exe / 开发环境的资源布局各不相同）
 fn resolve_entry(app: &AppHandle) -> PathBuf {
     let mut candidates: Vec<PathBuf> = Vec::new();
@@ -466,7 +485,7 @@ fn resolve_entry(app: &AppHandle) -> PathBuf {
         candidates.push(dir.join("../../server/dist/index.js"));
     }
     candidates.push(PathBuf::from("server/dist/index.js"));
-    candidates.into_iter().find(|p| p.exists()).unwrap_or_else(|| PathBuf::from("server/dist/index.js"))
+    normalize_path(candidates.into_iter().find(|p| p.exists()).unwrap_or_else(|| PathBuf::from("server/dist/index.js")))
 }
 
 fn log_path(log_dir: &PathBuf) -> PathBuf {

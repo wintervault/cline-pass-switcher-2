@@ -80,9 +80,30 @@ web/src/      api/{client,types,hooks} / features/* / theme.ts
 - Windows 上 `child.kill('SIGTERM')` 是无条件终止，优雅退出逻辑要直接单测 `shutdownServer`。
 - biome.json 不接受注释；`noNonNullAssertion` 是 error 级，用显式 undefined 检查替代 `!`。
 
+## 桌面壳（desktop/，Tauri 2）
+
+壳只做一件事：**把 Node 服务进程管起来，并保证「退出就是真退出」**。改动壳之前先读这段。
+
+**防残留三道闸（动任何退出/子进程代码前自查，缺一不可）：**
+1. Job Object kill-on-close：服务进程 spawn 后立即挂进作业树，作业句柄随壳进程消亡
+   而关闭 → OS 终止整棵树。壳崩溃/被强杀也覆盖——这是不依赖代码路径的兜底。
+2. 优雅优先：退出先请求 `POST /api/shutdown`（服务端只放行回环 + 无 Origin/Referer），
+   等待 ≤8s，超时 TerminateJobObject。服务的优雅路径与 SIGTERM 是同一条。
+3. 退出路径唯一：托盘「退出」→ stop → app.exit(0)。关窗只是 hide，不退出。
+
+其他不变式：启停 IPC 全部异步派发 + server_status 轮询（无阻塞 invoke）；spawn 幂等
+（try_wait 检测）；single-instance 插件防双开；initialization_script 注入 window.cpsHost
+（页面重载后依然有效）。服务入口多候选解析（resource/exe 同级/dev 相对路径），
+数据目录 = `%APPDATA%\com.wintervault.clinepass`，日志在其 logs/（超 8MB 轮转为 .old）。
+
+构建：`npm run desktop:build`（= 前后端 build + scripts/prepare-runtime.mjs 精简出
+7MB 运行时 + tauri build）。Rust 侧警告零容忍，与 TS 侧一致。
+
 ## 待办 / 已知边界
 
 - 流式钉住审计只能「检测+标记」，不能撤回（`docs/pinning.md` D3）。
 - 真实网关 UAT（`docs/UAT.md`）尚未完整跑过一轮：单测全 mock，真实行为以 UAT 为准。
+- 桌面壳依赖系统 Node ≥20（壳会探测 PATH 与常见安装位置）；打包内置 Node 运行时
+  （SEA/嵌入式）是明确的后续选项，未做。
 - 版本号以仓库根 `package.json` 为单一来源（`server/src/paths.ts` 的
   `PACKAGE_VERSION` 运行时读取），发版只改 package.json + CHANGELOG + tag。

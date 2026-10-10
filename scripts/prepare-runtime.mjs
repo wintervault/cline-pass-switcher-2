@@ -24,10 +24,16 @@ fs.mkdirSync(path.join(runtimeDir, 'server'), { recursive: true });
 // 1) 编译产物
 fs.cpSync(path.join(root, 'server/dist'), path.join(runtimeDir, 'server/dist'), { recursive: true });
 
-// 2) 模块类型标记（就近 package.json 决定 .js 是 ESM）
+// 2) 模块类型标记 + 版本号（服务端 PACKAGE_VERSION 读 REPO_ROOT/package.json，
+//    运行时布局下即 runtime/package.json——这里必须带上 version，否则 /healthz 显示 0.0.0）
+const rootPkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 fs.writeFileSync(
   path.join(runtimeDir, 'package.json'),
-  JSON.stringify({ name: 'cline-pass-runtime', private: true, type: 'module' }, null, 2),
+  JSON.stringify(
+    { name: 'cline-pass-runtime', private: true, type: 'module', version: rootPkg.version },
+    null,
+    2,
+  ),
 );
 fs.writeFileSync(
   path.join(runtimeDir, 'server/package.json'),

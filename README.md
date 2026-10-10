@@ -48,6 +48,23 @@ Model:    cline-pass/glm-5.2 等
 
 ---
 
+## 桌面应用（Windows）
+
+不想开终端的话，可以打包成桌面应用（托盘常驻）：
+
+```bash
+npm run desktop:build   # 产物在 desktop/target/{release,nsis}/
+```
+
+- **托盘常驻**：打开控制台 / 启动 / 停止 / 重启 / 打开日志目录 / 退出
+- **关窗自动进托盘**，不退出服务；托盘「退出」才真正结束（先优雅落盘再结束进程树）
+- **防残留保证**：服务进程挂在壳的 kill-on-close 作业树上——壳无论怎么死
+  （正常退出 / 崩溃 / 被任务管理器强杀），OS 都会终止整棵服务进程树，不会留下
+  「界面关了进程还在」的幽灵
+- 控制台右上角有服务状态灯与启停/重启/日志按钮（仅桌面模式显示）
+- 数据目录：`%APPDATA%\com.wintervault.clinepass`；日志在其 `logs/` 子目录
+- 前提：系统需安装 Node.js ≥ 20
+
 ## Docker 部署
 
 ### 方式 A：All-in-one（自带 Caddy 自动 HTTPS，推荐新手）

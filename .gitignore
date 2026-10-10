@@ -20,3 +20,8 @@ dist/
 Thumbs.db
 .idea/
 .vscode/
+
+# 桌面壳构建产物
+desktop/target/
+desktop/runtime/
+desktop/gen/
