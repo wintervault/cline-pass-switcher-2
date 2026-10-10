@@ -74,6 +74,20 @@ export function parseRouting(json: unknown): RoutingInfo {
   };
 }
 
+/** 未获得任何路由信息时的占位值（上游完全失败、或响应不含元数据）。 */
+export function emptyRouting(): RoutingInfo {
+  return {
+    content: null,
+    usage: null,
+    pipeline: null,
+    canonicalSlug: null,
+    finalProvider: null,
+    finalProviderName: null,
+    fallbacks: [],
+    plan: '',
+  };
+}
+
 // ---------- 钉住偏好注入 ----------
 
 export interface UpstreamPrefs {
