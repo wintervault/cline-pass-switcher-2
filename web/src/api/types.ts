@@ -159,10 +159,10 @@ export interface MetaInfo {
 
 /** 上游状态 → 展示标签与颜色。 */
 export const STATUS_TAG: Record<UpstreamStatusKind, { label: string; color: string }> = {
-  ok: { label: '✔ 可用', color: 'green' },
-  limited: { label: '⏳ 限流', color: 'orange' },
-  bad: { label: '✘ 不可钉', color: 'red' },
-  auth: { label: '🔑 key 错', color: 'red' },
+  ok: { label: '可用', color: 'green' },
+  limited: { label: '限流', color: 'gold' },
+  bad: { label: '不可钉', color: 'red' },
+  auth: { label: 'key 错误', color: 'volcano' },
   unknown: { label: '未判定', color: 'default' },
 };
 

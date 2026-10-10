@@ -1,22 +1,38 @@
-import { MoonOutlined, SunOutlined } from '@ant-design/icons';
+import {
+  AppstoreOutlined,
+  ExperimentOutlined,
+  FileTextOutlined,
+  HistoryOutlined,
+  LogoutOutlined,
+  MoonOutlined,
+  NodeIndexOutlined,
+  PauseCircleOutlined,
+  PlayCircleOutlined,
+  ReloadOutlined,
+  SafetyOutlined,
+  SunOutlined,
+  SyncOutlined,
+  TeamOutlined,
+} from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
+import type { MenuProps } from 'antd';
 import {
   Alert,
   App as AntdApp,
+  Badge,
   Button,
   ConfigProvider,
   Input,
   Layout,
+  Menu,
   Modal,
   Space,
-  Tabs,
-  Tag,
   Tooltip,
   Typography,
   theme,
 } from 'antd';
 import zhCN from 'antd/es/locale/zh_CN';
-import { useEffect, useState } from 'react';
+import { type ComponentType, useEffect, useState } from 'react';
 
 import { getAuthKey, setAuthKey } from './api/client.ts';
 import { useMeta, useRefresh } from './api/hooks.ts';
@@ -27,6 +43,7 @@ import Models from './features/Models.tsx';
 import Playground from './features/Playground.tsx';
 import Security from './features/Security.tsx';
 import { useHostBridge } from './hostBridge.ts';
+import { Logo } from './logo.tsx';
 import { darkTheme, initialTheme, lightTheme, persistTheme, type ThemeMode } from './theme.ts';
 
 /** 主题状态在最外层；Console 在 ConfigProvider 内部才能拿到主题 token。 */
@@ -60,35 +77,49 @@ function HostControls({ host }: { host: ReturnType<typeof useHostBridge> }) {
   const bridge = host.host;
   if (!bridge) return null;
   const { status } = host;
-  const color = status === 'running' ? 'green' : status === 'stopped' ? 'red' : 'orange';
+  const stopped = status === 'stopped';
   return (
     <Space size={4}>
       <Tooltip title="桌面壳托管的服务状态（2 秒自动刷新）">
-        <Tag color={color} style={{ margin: 0 }}>
-          ● {HOST_LABEL[status] ?? status}
-        </Tag>
+        <Badge
+          status={stopped ? 'error' : status === 'running' ? 'success' : 'processing'}
+          text={HOST_LABEL[status] ?? status}
+        />
       </Tooltip>
-      {status === 'stopped' && (
-        <Button size="small" onClick={() => void bridge.start()}>
-          启动
-        </Button>
+      {stopped && (
+        <Tooltip title="启动服务">
+          <Button size="small" type="text" icon={<PlayCircleOutlined />} onClick={() => void bridge.start()} />
+        </Tooltip>
       )}
-      {status !== 'stopped' && (
-        <Button size="small" onClick={() => void bridge.stop()}>
-          停止
-        </Button>
+      {!stopped && (
+        <Tooltip title="停止服务">
+          <Button size="small" type="text" icon={<PauseCircleOutlined />} onClick={() => void bridge.stop()} />
+        </Tooltip>
       )}
-      {status !== 'stopped' && (
-        <Button size="small" onClick={() => void bridge.restart()}>
-          重启
-        </Button>
+      {!stopped && (
+        <Tooltip title="重启服务">
+          <Button size="small" type="text" icon={<SyncOutlined />} onClick={() => void bridge.restart()} />
+        </Tooltip>
       )}
-      <Button size="small" onClick={() => void bridge.openLogs()}>
-        日志
-      </Button>
+      <Tooltip title="打开日志目录">
+        <Button size="small" type="text" icon={<FileTextOutlined />} onClick={() => void bridge.openLogs()} />
+      </Tooltip>
     </Space>
   );
 }
+
+/** 导航注册表。 */
+const PAGES: { key: string; label: string; icon: ComponentType; element: ComponentType }[] = [
+  { key: 'models', label: '订阅模型', icon: NodeIndexOutlined, element: Models },
+  { key: 'accounts', label: '账号池', icon: TeamOutlined, element: Accounts },
+  { key: 'security', label: '访问与安全', icon: SafetyOutlined, element: Security },
+  { key: 'playground', label: '测试台', icon: ExperimentOutlined, element: Playground },
+  { key: 'history', label: '请求历史', icon: HistoryOutlined, element: History },
+  { key: 'catalog', label: '完整目录', icon: AppstoreOutlined, element: Catalog },
+];
+
+/** Menu 数据源：icon 传组件引用，由 Menu 渲染。 */
+const NAV_ITEMS: MenuProps['items'] = PAGES.map((p) => ({ key: p.key, label: p.label, icon: <p.icon /> }));
 
 function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () => void }) {
   const { token } = theme.useToken();
@@ -96,6 +127,7 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
   const refresh = useRefresh();
   const qc = useQueryClient();
   const host = useHostBridge();
+  const [nav, setNav] = useState('models');
 
   const [authKey, setKey] = useState(getAuthKey());
   const [loginOpen, setLoginOpen] = useState(false);
@@ -140,8 +172,6 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
     }
   };
 
-  const proxyBase = meta.data?.proxyBase;
-
   return (
     <>
       <Layout style={{ minHeight: '100vh' }}>
@@ -156,37 +186,45 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
             borderBottom: `1px solid ${token.colorBorderSecondary}`,
           }}
         >
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            Cline Pass 上游控制台
-          </Typography.Title>
-          {proxyBase && (
-            <Typography.Text copyable={{ text: proxyBase }} code style={{ fontSize: 12 }}>
-              {proxyBase}
-            </Typography.Text>
-          )}
+          <Space size={8} align="center">
+            <Logo size={26} />
+            <Typography.Title level={5} style={{ margin: 0 }}>
+              Cline Pass 控制台
+            </Typography.Title>
+          </Space>
+          <Menu
+            mode="horizontal"
+            selectedKeys={[nav]}
+            onClick={(e) => setNav(e.key)}
+            items={NAV_ITEMS}
+            style={{ flex: 1, minWidth: 0, background: 'transparent' }}
+          />
           <Space style={{ marginLeft: 'auto' }}>
             <HostControls host={host} />
             <Tooltip title={mode === 'dark' ? '切换到亮色' : '切换到暗色'}>
               <Button
                 size="small"
+                type="text"
                 icon={mode === 'dark' ? <SunOutlined /> : <MoonOutlined />}
                 onClick={onToggleTheme}
               />
             </Tooltip>
-            <Button size="small" onClick={refresh}>
-              ↻ 刷新
-            </Button>
+            <Tooltip title="刷新全部数据">
+              <Button size="small" type="text" icon={<ReloadOutlined />} onClick={refresh} />
+            </Tooltip>
             {authKey && (
-              <Button
-                size="small"
-                onClick={() => {
-                  setAuthKey('');
-                  setKey('');
-                  qc.invalidateQueries();
-                }}
-              >
-                退出登录
-              </Button>
+              <Tooltip title="清除本机保存的访问密钥">
+                <Button
+                  size="small"
+                  type="text"
+                  icon={<LogoutOutlined />}
+                  onClick={() => {
+                    setAuthKey('');
+                    setKey('');
+                    qc.invalidateQueries();
+                  }}
+                />
+              </Tooltip>
             )}
           </Space>
         </Layout.Header>
@@ -201,17 +239,11 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
               description="在「账号池」里添加你的 Cline Pass 账号（sk_ 开头的 key）并保存；也可通过 CLINE_PASS_KEY 环境变量提供。"
             />
           )}
-          <Tabs
-            defaultActiveKey="models"
-            items={[
-              { key: 'models', label: '订阅模型', children: <Models /> },
-              { key: 'accounts', label: '账号池', children: <Accounts /> },
-              { key: 'security', label: '访问与安全', children: <Security /> },
-              { key: 'playground', label: '测试台', children: <Playground /> },
-              { key: 'history', label: '请求历史', children: <History /> },
-              { key: 'catalog', label: '完整目录', children: <Catalog /> },
-            ]}
-          />
+          {PAGES.map((p) => (
+            <div key={p.key} style={{ display: nav === p.key ? undefined : 'none' }}>
+              <p.element />
+            </div>
+          ))}
         </Layout.Content>
       </Layout>
 

@@ -1,8 +1,10 @@
+import { SendOutlined } from '@ant-design/icons';
 import { Alert, App, Button, Select, Space, Tag, Typography } from 'antd';
 import { useMemo, useState } from 'react';
 
 import { useModels, useTest } from '../api/hooks.ts';
 import type { TestResult, TraceEntry } from '../api/types.ts';
+import { PageHeader } from '../pageHeader.tsx';
 import { sortedUpstreams } from './Models.tsx';
 
 function TraceView({ trace }: { trace?: TraceEntry[] }) {
@@ -64,7 +66,8 @@ export default function Playground() {
 
   return (
     <div>
-      <Space wrap style={{ marginBottom: 12 }}>
+      <PageHeader title="测试台" desc="任选模型与渠道发最小请求，看网关实际路由与每次尝试的先后与耗时。" />
+      <Space wrap style={{ marginBottom: 16 }}>
         <Select
           showSearch
           style={{ width: 280 }}
@@ -74,7 +77,7 @@ export default function Playground() {
           options={rows.map((r) => ({ value: r.id, label: r.id }))}
         />
         <Select style={{ width: 240 }} value={upstream} onChange={setUpstream} options={upstreamOptions} />
-        <Button type="primary" loading={test.isPending} onClick={run}>
+        <Button type="primary" icon={<SendOutlined />} loading={test.isPending} onClick={run}>
           发送测试
         </Button>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>

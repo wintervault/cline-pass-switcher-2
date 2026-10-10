@@ -1,5 +1,6 @@
+import { ArrowDownOutlined, ArrowUpOutlined, DownloadOutlined } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
-import { Alert, App, Badge, Button, Collapse, Select, Space, Table, Tag, Tooltip, Typography, theme } from 'antd';
+import { Alert, App, Badge, Button, Select, Space, Table, Tag, Tooltip, Typography, theme } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useState } from 'react';
 import { qk, useFetchOfficial, useModels, useProbe, useSaveModelConfig, useTest, useValidate } from '../api/hooks.ts';
@@ -13,6 +14,7 @@ import {
   type SubscriptionRow,
   type UpstreamStatusKind,
 } from '../api/types.ts';
+import { PageHeader } from '../pageHeader.tsx';
 
 const EMPTY_CFG: PerModelConfig = { upstreams: [], exclude: [], pinMode: 'strict', sort: null };
 
@@ -39,7 +41,7 @@ function SummaryChips({ cfg }: { cfg: PerModelConfig }) {
         </Tag>
       ))}
       {cfg.upstreams.length > 4 && <Tag>+{cfg.upstreams.length - 4}</Tag>}
-      {cfg.exclude.length > 0 && <Tag color="red">✕ 排除 {cfg.exclude.length}</Tag>}
+      {cfg.exclude.length > 0 && <Tag color="red">排除 {cfg.exclude.length}</Tag>}
     </Space>
   );
 }
@@ -104,7 +106,7 @@ function UpstreamRow({
       }}
     >
       <span style={{ width: 22, textAlign: 'center' }}>
-        {selected ? <Badge count={order + 1} color="#4f8cff" overflowCount={99} /> : null}
+        {selected ? <Badge count={order + 1} color={token.colorPrimary} overflowCount={99} /> : null}
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <Typography.Text code style={{ fontSize: 12 }}>
@@ -116,7 +118,7 @@ function UpstreamRow({
         </div>
       </div>
       <div style={{ width: 76, textAlign: 'right' }}>
-        {excluded ? <Tag color="red">🚫 已排除</Tag> : status ? statusTag(status) : null}
+        {excluded ? <Tag color="red">已排除</Tag> : status ? statusTag(status) : null}
       </div>
       <Button size="small" type={selected ? 'primary' : 'default'} onClick={toggleSelect}>
         优先
@@ -126,12 +128,8 @@ function UpstreamRow({
       </Button>
       {selected && (
         <Space size={2}>
-          <Button size="small" variant="outlined" onClick={() => move(-1)}>
-            ↑
-          </Button>
-          <Button size="small" variant="outlined" onClick={() => move(1)}>
-            ↓
-          </Button>
+          <Button size="small" variant="outlined" icon={<ArrowUpOutlined />} onClick={() => move(-1)} />
+          <Button size="small" variant="outlined" icon={<ArrowDownOutlined />} onClick={() => move(1)} />
         </Space>
       )}
     </div>
@@ -144,52 +142,38 @@ function UpstreamPanel({ row, onSave }: { row: SubscriptionRow; onSave: (patch: 
   const ups = sortedUpstreams(meta);
 
   return (
-    <Collapse
-      ghost
-      size="small"
-      items={[
-        {
-          key: 'ups',
-          label: <SummaryChips cfg={cfg} />,
-          children: (
-            <div style={{ minWidth: 460 }}>
-              {meta?.pinState === 'ignored' && (
-                <Alert
-                  type="warning"
-                  showIcon
-                  style={{ marginBottom: 8 }}
-                  message="网关已忽略钉住参数（账号风控或策略变更）"
-                  description={
-                    meta.pinDisabledReason ??
-                    '钉住/排除/排序均不生效；勾选仅保留意图，网关恢复执行后自动生效。换个账号或稍后重新探测可能恢复。'
-                  }
-                />
-              )}
-              {ups.map((u) => (
-                <UpstreamRow key={u} upstream={u} cfg={cfg} meta={meta} onSave={onSave} />
-              ))}
-              {ups.length === 0 && <Typography.Text type="secondary">尚未探测到上游，先点「探测」</Typography.Text>}
-              <Space style={{ marginTop: 10 }}>
-                <Button
-                  size="small"
-                  onClick={() =>
-                    onSave({ upstreams: ups.filter((u) => !cfg.exclude.includes(u)), exclude: cfg.exclude })
-                  }
-                >
-                  全选优先
-                </Button>
-                <Button size="small" onClick={() => onSave({ upstreams: [], exclude: [] })}>
-                  清空
-                </Button>
-                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                  「优先」按序尝试（异常自动顺切）；「排除」永不使用
-                </Typography.Text>
-              </Space>
-            </div>
-          ),
-        },
-      ]}
-    />
+    <div style={{ padding: '4px 0' }}>
+      {meta?.pinState === 'ignored' && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 8 }}
+          message="网关已忽略钉住参数（账号风控或策略变更）"
+          description={
+            meta.pinDisabledReason ??
+            '钉住/排除/排序均不生效；勾选仅保留意图，网关恢复执行后自动生效。换个账号或稍后重新探测可能恢复。'
+          }
+        />
+      )}
+      {ups.map((u) => (
+        <UpstreamRow key={u} upstream={u} cfg={cfg} meta={meta} onSave={onSave} />
+      ))}
+      {ups.length === 0 && <Typography.Text type="secondary">尚未探测到上游，先点「探测」</Typography.Text>}
+      <Space style={{ marginTop: 10 }}>
+        <Button
+          size="small"
+          onClick={() => onSave({ upstreams: ups.filter((u) => !cfg.exclude.includes(u)), exclude: cfg.exclude })}
+        >
+          全选优先
+        </Button>
+        <Button size="small" onClick={() => onSave({ upstreams: [], exclude: [] })}>
+          清空
+        </Button>
+        <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+          「优先」按序尝试（异常自动顺切）；「排除」永不使用
+        </Typography.Text>
+      </Space>
+    </div>
   );
 }
 
@@ -238,7 +222,7 @@ export default function Models() {
             )}
             {row.meta?.pinState === 'ignored' && (
               <Tooltip title={row.meta.pinDisabledReason ?? '网关忽略钉住参数，钉住/排除/排序均不生效'}>
-                <Tag color="red">⚠ 钉住参数被网关忽略</Tag>
+                <Tag color="red">钉住参数被网关忽略</Tag>
               </Tooltip>
             )}
           </div>
@@ -269,7 +253,7 @@ export default function Models() {
       render: (_, row) => (
         <>
           {row.meta?.lastProvider ? (
-            <Tag color="blue">{row.meta.lastProvider}</Tag>
+            <Tag color="geekblue">{row.meta.lastProvider}</Tag>
           ) : (
             <Typography.Text type="secondary">未探测</Typography.Text>
           )}
@@ -281,7 +265,7 @@ export default function Models() {
     },
     {
       title: '上游优先级 / 排除（多选）',
-      render: (_, row) => <UpstreamPanel row={row} onSave={(patch) => saveConfig(row.id, patch)} />,
+      render: (_, row) => <SummaryChips cfg={row.config ?? EMPTY_CFG} />,
     },
     {
       title: '模式 / 排序',
@@ -384,7 +368,8 @@ export default function Models() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 12 }} wrap>
+      <PageHeader title="订阅模型" desc="先「探测」拿到渠道清单，再配置优先级与排除；「校验」逐渠道实测可用性。" />
+      <Space style={{ marginBottom: 16 }} wrap>
         <Button
           loading={fetchOfficial.isPending}
           onClick={() =>
@@ -399,7 +384,7 @@ export default function Models() {
             })
           }
         >
-          ⬇ 拉取官方最新模型
+          <DownloadOutlined /> 拉取官方最新模型
         </Button>
         {official && (
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -417,6 +402,9 @@ export default function Models() {
         dataSource={rows}
         columns={columns}
         pagination={false}
+        expandable={{
+          expandedRowRender: (row) => <UpstreamPanel row={row} onSave={(patch) => saveConfig(row.id, patch)} />,
+        }}
         scroll={{ x: 1160 }}
       />
     </div>

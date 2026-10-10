@@ -1,7 +1,8 @@
 import { App, Button, Input, Space, Switch, Tag, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 
-import { useSaveSecurity, useSecurity } from '../api/hooks.ts';
+import { useMeta, useSaveSecurity, useSecurity } from '../api/hooks.ts';
+import { PageHeader } from '../pageHeader.tsx';
 
 export default function Security() {
   const { message } = App.useApp();
@@ -38,12 +39,23 @@ export default function Security() {
   };
 
   const data = security.data;
+  const meta = useMeta();
 
   return (
     <div style={{ display: 'grid', gap: 16, maxWidth: 720 }}>
+      <PageHeader title="访问与安全" desc="下游接入地址、代理密钥与跨源防护。" />
+      <div>
+        <Typography.Text strong>接入地址</Typography.Text>
+        <div style={{ marginTop: 4 }}>
+          <Typography.Text code copyable style={{ fontSize: 12 }}>
+            {meta.data?.proxyBase ?? '—'}
+          </Typography.Text>
+        </div>
+      </div>
+
       <div>
         <Space align="center" style={{ marginBottom: 6 }}>
-          <Typography.Text>下游代理密钥</Typography.Text>
+          <Typography.Text strong>下游代理密钥</Typography.Text>
           {data?.authRequired ? (
             <Tag color="green">鉴权已开启</Tag>
           ) : (

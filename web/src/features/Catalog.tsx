@@ -1,7 +1,9 @@
+import { SearchOutlined } from '@ant-design/icons';
 import { Button, Input, Space, Table, Tag, Typography } from 'antd';
 import { useState } from 'react';
 
 import { useModels, useProbe } from '../api/hooks.ts';
+import { PageHeader } from '../pageHeader.tsx';
 
 export default function Catalog() {
   const models = useModels();
@@ -13,9 +15,11 @@ export default function Catalog() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 12 }} wrap>
+      <PageHeader title="完整目录" desc="Cline 公开目录的全部模型；:free 变体可精确钉住上游。" />
+      <Space style={{ marginBottom: 16 }} wrap>
         <Input
           style={{ width: 320 }}
+          prefix={<SearchOutlined />}
           placeholder="过滤… 如 free / glm / anthropic"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}

@@ -1,8 +1,10 @@
+import { PlusOutlined } from '@ant-design/icons';
 import { App, Button, Input, Radio, Select, Space, Switch, Table, Tag, Typography } from 'antd';
 import { useState } from 'react';
 
 import { useAccounts, useSaveAccounts, useTestAccount } from '../api/hooks.ts';
 import type { AccountMode } from '../api/types.ts';
+import { PageHeader } from '../pageHeader.tsx';
 
 interface EditRow {
   name: string;
@@ -81,7 +83,11 @@ export default function Accounts() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 12 }} wrap>
+      <PageHeader
+        title="账号池"
+        desc="粘性模式保住上游 prompt cache：只有账号级错误（key 失效 / 额度用完）才轮转到下一账号。"
+      />
+      <Space style={{ marginBottom: 16 }} wrap>
         <Typography.Text type="secondary">模式：</Typography.Text>
         <Select
           style={{ width: 200 }}
@@ -231,13 +237,8 @@ export default function Accounts() {
               setEditing([...rows, { name: `账号${rows.length + 1}`, key: '', enabled: true, existingIndex: null }])
             }
           >
-            ＋ 添加账号
+            <PlusOutlined /> 添加账号
           </Button>
-        )}
-        {currentMode === 'sticky' && (
-          <Typography.Text type="secondary" style={{ marginLeft: 12, fontSize: 12 }}>
-            粘性模式：持续使用当前账号，只有账号级错误（key 失效/额度用完）才轮转到下一个——保住上游 prompt cache。
-          </Typography.Text>
         )}
       </div>
     </div>
