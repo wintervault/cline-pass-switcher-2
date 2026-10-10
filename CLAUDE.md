@@ -89,7 +89,8 @@ web/src/      api/{client,types,hooks} / features/* / theme.ts
    而关闭 → OS 终止整棵树。壳崩溃/被强杀也覆盖——这是不依赖代码路径的兜底。
 2. 优雅优先：退出先请求 `POST /api/shutdown`（服务端只放行回环 + 无 Origin/Referer），
    等待 ≤8s，超时 TerminateJobObject。服务的优雅路径与 SIGTERM 是同一条。
-3. 退出路径唯一：托盘「退出」→ stop → app.exit(0)。关窗只是 hide，不退出。
+3. 退出路径唯一：托盘「退出」→ stop → app.exit(0)。关窗只是 hide，不退出；启动同理——
+   仅驻留托盘、不自动弹窗，窗口只由用户动作（托盘 / 二次启动）唤起。
 
 其他不变式：启停 IPC 全部异步派发 + server_status 轮询（无阻塞 invoke）；spawn 幂等
 （try_wait 检测）；single-instance 插件防双开；initialization_script 注入 window.cpsHost

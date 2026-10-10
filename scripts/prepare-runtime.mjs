@@ -31,11 +31,7 @@ fs.cpSync(path.join(root, 'web/dist'), path.join(runtimeDir, 'web/dist'), { recu
 const rootPkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 fs.writeFileSync(
   path.join(runtimeDir, 'package.json'),
-  JSON.stringify(
-    { name: 'cline-pass-runtime', private: true, type: 'module', version: rootPkg.version },
-    null,
-    2,
-  ),
+  JSON.stringify({ name: 'cline-pass-runtime', private: true, type: 'module', version: rootPkg.version }, null, 2),
 );
 fs.writeFileSync(
   path.join(runtimeDir, 'server/package.json'),

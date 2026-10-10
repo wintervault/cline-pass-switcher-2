@@ -21,6 +21,11 @@ Thumbs.db
 .idea/
 .vscode/
 
+# AI 会话与工具链产物（impeccable 设计工具 / Playwright 截图 / Serena）
+.claude/
+.playwright-mcp/
+.serena/
+
 # 桌面壳构建产物
 desktop/target/
 desktop/runtime/
