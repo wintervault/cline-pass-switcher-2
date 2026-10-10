@@ -99,6 +99,12 @@ web/src/      api/{client,types,hooks} / features/* / theme.ts
 构建：`npm run desktop:build`（= 前后端 build + scripts/prepare-runtime.mjs 精简出
 7MB 运行时 + tauri build）。Rust 侧警告零容忍，与 TS 侧一致。
 
+**Tauri NSIS 模板已自带运行中进程的收尾**（安装与卸载都会 taskkill，实测证明）——
+不要自加「优雅关停钩子/Sleep 等待」之类的补丁层：那是对每次安装/升级的无条件
+时间税，且从安装器调 PowerShell 非主流。数据丢失窗口由写盘防抖上限（1.5s）+
+原子写兜底，接受它。**判断标准：加「聪明」机制前，先确认平台/模板没有提供
+同等能力（v2.1.2 的钩子就是反面教材，v2.1.3 撤销）。**
+
 ## 待办 / 已知边界
 
 - 流式钉住审计只能「检测+标记」，不能撤回（`docs/pinning.md` D3）。
