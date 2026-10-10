@@ -24,6 +24,16 @@
 
 ### 修复
 
+- **钉住上游适配网关风控现实**（详见 `docs/pinning.md`，四来源交叉印证）：
+  2026-09-20 起网关对部分账号整体忽略 `providerOptions.gateway.*`，旧版的钉住/排除/
+  排序/枚举/校验全部静默空转且毫无提示（「校验」还会因为钉不住反而全绿）。现在：
+  - 探针（合法形状的不存在渠道）逐模型判定 `enforced / ignored / unknown`，
+    ignored 时 UI 明示、注入与校验停用（旧探针名 `__probe__` 下划线形状本身就会被静默丢弃）；
+  - 渠道清单改用 `planningReasoning` 执行链（含链首；旧版依赖的 `fallbacksAvailable`
+    不含链首，deepseek 等链首渠道会从清单消失）；
+  - strict 钉住的结果逐次审计：网关不听话（`finalProvider` ≠ 目标）视为该渠道失败并切换；
+    流式在流结束后标记「钉住未生效」；
+  - 校验在 ignored 时拒绝执行（409），不再输出误导性的全绿。
 - **丢数据**：配置写盘改为「临时文件 → fsync → rename」原子替换；旧版 `writeFileSync`
   截断重写，崩溃后 config.json 可能被截断、账号池静默清空。
 - **崩溃**：`config.json` / `metadata.json` 载入后全字段校验兜底。旧版文件内容为 `{}` 即抛

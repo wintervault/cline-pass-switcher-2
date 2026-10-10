@@ -123,7 +123,14 @@ Cline Pass 订阅模型在 Cline 网关之后分成两条管道，钉住上游�
 | **直连**（direct） | OpenRouter | 响应顶层带 `provider` 与真实 `model` 字段 | 顶层 `provider.only / order` |
 | **规划器**（planner） | **Vercel AI Gateway** | 响应带 `provider_metadata.gateway.routing` | **`providerOptions.gateway.only / order / sort`** |
 
-**关键发现**：规划器管道的请求由 Vercel AI Gateway 执行，请求体里的顶层 `provider.only/order` 会被 Cline 丢弃
+> ⚠️ **2026-09 起的现实（详见 [docs/pinning.md](docs/pinning.md)）**：`providerOptions.gateway.*`
+> 是否被执行取决于**账号风控状态且随时间变化**——部分账号生效，被风控的账号参数被整体丢弃、
+> 请求一律路由到 `openai-compatible-private`。只有 deepseek-v4.1-flash 等少数模型可钉，
+> glm/kimi 钉不了。直连管道（`:free` 模型）的顶层 `provider.only` 一直有效。
+> 本代理用「合法形状的不存在渠道」做探针逐模型判定（enforced / ignored / unknown），
+> ignored 时停用注入与校验并在 UI 明示；strict 钉住的结果会被审计，网关不听话就切换。
+
+**关键发现（2026-09-17 实测，现已部分失效，保留作背景）**：规划器管道的请求由 Vercel AI Gateway 执行，请求体里的顶层 `provider.only/order` 会被 Cline 丢弃
 （这也是官方 API 上"换上游不生效"的原因），但 `providerOptions.gateway` 嵌套形式会**原样透传**：
 
 ```json
@@ -137,11 +144,17 @@ Cline Pass 订阅模型在 Cline 网关之后分成两条管道，钉住上游�
 实测响应：`finalProvider: "alibaba"`，规划器理由变为 `Provider set restricted to: alibaba`。
 参考：[Vercel AI Gateway — Provider Filtering, Ordering & Sorting](https://vercel.com/docs/ai-gateway/models-and-providers/provider-filtering-and-ordering)
 
-### 上游枚举的三种手段
+### 上游枚举的手段（按可靠性排序）
 
-1. **响应元数据回读**：规划器管道带 `canonicalSlug` / `fallbacksAvailable` / `finalProvider`；直连管道顶层 `provider` 即实际上游；
-2. **假上游探测**（零 token）：带不存在的 `only:["__probe__"]` 让网关在路由层报错并列出精确的可用渠道清单（两条管道的清单**不一致**，要分别取）；
-3. **OpenRouter 公开接口** `GET /api/v1/models/{slug}/endpoints`：补充上下文长度/在线率（对直连管道有直接参考意义）。
+1. **执行链解析**（2026-10 起的主要来源）：`planningReasoning` 的
+   `System credentials planned for: … / Total execution order: …` 给出**完整候选池（含链首）**；
+   `fallbacksAvailable` 的语义是「执行链去掉链首」，链首渠道不在其中，不能单独作清单；
+2. **响应元数据回读**：规划器管道带 `canonicalSlug` / `finalProvider`（**必须并入清单**，
+   否则链首渠道永远缺席）；直连管道顶层 `provider` 即实际上游；
+3. **钉住探针**（仅 enforced 账号可用）：带「合法形状的不存在渠道」
+   （如 `zzz-not-a-provider`，**不能用** `__probe__` 这类下划线形状——会被静默丢弃）
+   让网关在路由层报错并列出精确清单；
+4. **OpenRouter 公开接口** `GET /api/v1/models/{slug}/endpoints`：补充上下文长度/在线率（对直连管道有直接参考意义）。
 
 ### 实测记录（2026-09）
 
@@ -153,8 +166,12 @@ Cline Pass 订阅模型在 Cline 网关之后分成两条管道，钉住上游�
 | glm-5.2 + `providerOptions.gateway.sort:"cost"` | ✔ 按成本重排执行顺序 |
 | glm-5.3-flash（直连）+ 顶层 `provider.only:["gmicloud"]` | ✔ `provider: "GMICloud"` |
 | glm-5.3-flash + `providerOptions.gateway` | ✘ 无效（直连管道只认顶层 provider 形式） |
+| 2026-09-20 起探针（合法形状不存在渠道） | 部分账号从「报错带清单」变为「200 正常完成」→ 参数被整体丢弃 |
+| 2026-09-30 `providerOptions.gateway.sort` | ✘ 响应元数据无 `gateway.routing.sort` 字段（Vercel 文档说生效时会有）→ 整个路由选项块被丢弃 |
+| 2026-10-02~04 双账号对照 | 同套餐两账号：一个钉住生效（无效 slug 被拒绝），另一个钉什么都 200、一律 `openai-compatible-private` |
 
-> 管道归属由 Cline 侧决定、可能随时间变化，控制台的「探测」会刷新每个模型的管道类型与渠道清单。
+> 管道归属由 Cline 侧决定、可能随时间变化，控制台的「探测」会刷新每个模型的管道类型与渠道清单；
+> 可钉性按账号风控而异（换个账号结果可能不同），探测结果只代表探测时刻、所用账号的状态。
 
 ---
 
@@ -173,6 +190,9 @@ prompt cache 是一等约束：agent 多轮对话每轮带完整上下文，切�
 - **冷却**：渠道级失败进入 `cooldownMs`（默认 5 分钟）冷却，期间排到候选末尾（不剔除）。
 - **账号粘性**：一次请求固定一个账号；粘性模式跨请求也固定，只有账号级错误才轮转。
 - **preferred = 本地说了算**：前面的候选逐个 strict，只给**最后一个候选**放开网关回退。
+- **钉住结果审计**：strict 钉住且探针确认参数被读取时，校验响应里的 `finalProvider` 是否等于目标
+  （slug 等价比较防显示名误判）；不符视为该渠道确定性失败、立即切换。流式只能在流结束后标记
+  「⚠ 钉住未生效」（元数据在最后一帧才出现，无法撤回）。
 - **客户端断开**：立即终止整条链，不再花一分钱。
 - 流式在 SSE 开始前可切换；SSE 一旦开始即透传不可重试（HTTP 头必须先于 body，
   所以流式响应没有 `X-Cline-Actual-Upstream` 头，该信息记在请求历史里）。
