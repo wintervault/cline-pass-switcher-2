@@ -63,6 +63,8 @@ npm run desktop:build   # 产物在 desktop/target/{release,nsis}/
   「界面关了进程还在」的幽灵
 - 控制台右上角有服务状态灯与启停/重启/日志按钮（仅桌面模式显示）
 - 数据目录：`%APPDATA%\com.wintervault.clinepass`；日志在其 `logs/` 子目录
+- **卸载/升级**：安装包与卸载器会先优雅停服（落盘）再动文件，运行中直接卸载也安全；
+  卸载**默认保留数据目录**（配置含密钥），彻底清除请手动删除上述目录
 - 前提：系统需安装 Node.js ≥ 20
 
 ## Docker 部署
