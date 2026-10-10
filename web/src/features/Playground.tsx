@@ -12,8 +12,12 @@ function TraceView({ trace }: { trace?: TraceEntry[] }) {
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         尝试序列：
       </Typography.Text>
-      {trace.map((t, i) => (
-        <Tag key={i} color={t.status === 200 ? 'green' : 'orange'} style={{ fontFamily: 'monospace' }}>
+      {trace.map((t) => (
+        <Tag
+          key={`${t.upstream ?? 'auto'}-${t.status}-${t.ms}-${t.note.slice(0, 12)}`}
+          color={t.status === 200 ? 'green' : 'orange'}
+          style={{ fontFamily: 'monospace' }}
+        >
           {t.upstream ?? 'auto'}({t.status === 200 ? '✔' : `✗${t.status}`} {t.ms}ms
           {t.note && t.status !== 200 && t.note !== 'ok' ? ` · ${t.note.slice(0, 40)}` : ''})
         </Tag>
