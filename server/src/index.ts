@@ -10,7 +10,7 @@ import { chatHandler, isChatPath, isModelsPath, modelsHandler } from './http/rou
 import { staticHandler } from './http/routes/static.ts';
 import { createHttpServer, shutdownServer } from './http/server.ts';
 import { logger } from './log/logger.ts';
-import { CONFIG_PATH, DATA_DIR, META_PATH } from './paths.ts';
+import { CONFIG_PATH, DATA_DIR, META_PATH, PACKAGE_VERSION } from './paths.ts';
 import { ChatChain } from './proxy/chain.ts';
 import { ChannelHealth } from './proxy/health.ts';
 import { assertBindSafe, InsecureBindError } from './security/bind.ts';
@@ -23,7 +23,7 @@ import { classifyChannelStatus } from './upstream/errors.ts';
 import { mergeLearnedProviders, ProbeService } from './upstream/probe.ts';
 import { blankModelMeta, type MetaFile } from './upstream/types.ts';
 
-export const VERSION = '2.0.0-dev';
+const VERSION = PACKAGE_VERSION;
 const startedAt = Date.now();
 
 /**

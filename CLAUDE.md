@@ -82,5 +82,7 @@ web/src/      api/{client,types,hooks} / features/* / theme.ts
 
 ## 待办 / 已知边界
 
-- 旧版根目录 `server.js` 保留至 UAT 通过后删除（对照用）。
 - 流式钉住审计只能「检测+标记」，不能撤回（`docs/pinning.md` D3）。
+- 真实网关 UAT（`docs/UAT.md`）尚未完整跑过一轮：单测全 mock，真实行为以 UAT 为准。
+- 版本号以仓库根 `package.json` 为单一来源（`server/src/paths.ts` 的
+  `PACKAGE_VERSION` 运行时读取），发版只改 package.json + CHANGELOG + tag。

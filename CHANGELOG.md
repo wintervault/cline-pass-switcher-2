@@ -1,9 +1,10 @@
 # Changelog
 
-## 2.0.0-dev（2026-10）
+## 2.0.0（2026-10-10）
 
 完整重构：接管项目后的第一次大版本。修掉数据丢失、启动崩溃、白烧额度三类缺陷，
-故障转移语义按 prompt cache 优先重新设计。旧版 `server.js` 保留至 UAT 通过后删除。
+故障转移语义按 prompt cache 优先重新设计；适配网关风控现实（钉住探针/审计/防假绿）；
+旧版单文件实现（`server.js`、`public/`）已移除，需要时可从 git 历史取回。
 
 ### 破坏性变更
 
@@ -52,8 +53,13 @@
 - pino 结构化日志（`LOG_LEVEL`），密钥字段一律 redact。
 - 密钥恒定时间比较（`timingSafeEqual`）。
 - 配置新增：`failover.*`（超时/预算/重试/冷却）、`corsOrigins`、`historyLimit`（默认 500）。
-- 工程：npm workspaces（server + web）、全栈 TypeScript、Vitest 200 例（mock fetch
+- 工程：npm workspaces（server + web）、全栈 TypeScript、Vitest 225 例（mock fetch
   零真实网络）、Biome、原子写存储、优雅退出（SIGTERM/SIGINT）。
+- **控制台亮暗色主题切换**：跟随系统 + 手动切换 + 持久化。
+- 全面审计修复：账号编辑删除行后 key 按行号错位继承他人密钥（数据破坏级，
+  改为显式 existingIndex 归属 + 回归测试）；`/api/models` 官方拉取信息字段名错误
+  导致「上次拉取时间」永不显示；流式/非流式钉住审计的 slug 比较不一致；API 错误
+  消息可读化；账号测试支持按已存下标（前端无需明文 key）。
 
 ## 1.2.0
 

@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,5 +19,15 @@ export const META_PATH = path.join(DATA_DIR, 'metadata.json');
 /** 前端构建产物（阶段 6 之后由后端静态托管）。 */
 export const WEB_DIST = path.join(REPO_ROOT, 'web', 'dist');
 
-/** 旧版单文件前端。阶段 6 前端重写完成后移除。 */
-export const LEGACY_PUBLIC_DIR = path.join(REPO_ROOT, 'public');
+/**
+ * 程序版本号：读仓库根 package.json（单一来源，避免与代码里的常量漂移）。
+ * 开发（server/src）与容器（/app/server/dist）两种布局下 REPO_ROOT 都成立。
+ */
+export const PACKAGE_VERSION: string = (() => {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')) as { version?: string };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();

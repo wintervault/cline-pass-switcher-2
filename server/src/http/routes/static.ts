@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { LEGACY_PUBLIC_DIR, WEB_DIST } from '../../paths.ts';
+import { WEB_DIST } from '../../paths.ts';
 import { sendError } from '../respond.ts';
 import type { Ctx, Handler } from '../router.ts';
 
@@ -27,7 +27,7 @@ function resolveWithin(root: string, pathname: string): string | null {
 }
 
 /**
- * 静态资源：优先 web/dist（React 构建产物），不存在时回退旧版单文件控制台。
+ * 静态资源：托管 web/dist（React 构建产物）。
  * SPA 路由（非 /api、非 /v1 的未知路径）回落到 index.html。
  */
 export function staticHandler(): Handler {
@@ -37,14 +37,13 @@ export function staticHandler(): Handler {
       return;
     }
 
-    const root = fs.existsSync(path.join(WEB_DIST, 'index.html')) ? WEB_DIST : LEGACY_PUBLIC_DIR;
-    if (!fs.existsSync(root)) {
+    if (!fs.existsSync(path.join(WEB_DIST, 'index.html'))) {
       sendError(c.res, 404, 'front-end assets not found (run `npm run build --workspace=web`)');
       return;
     }
 
     const pathname = c.path === '/' ? '/index.html' : c.path;
-    const file = resolveWithin(root, pathname);
+    const file = resolveWithin(WEB_DIST, pathname);
 
     if (file && fs.existsSync(file) && fs.statSync(file).isFile()) {
       respondFile(c, file);
@@ -53,11 +52,8 @@ export function staticHandler(): Handler {
 
     // SPA fallback：仅对看起来像前端路由的路径回 index.html
     if (!pathname.startsWith('/api/') && !pathname.startsWith('/v1/')) {
-      const index = path.join(root, 'index.html');
-      if (fs.existsSync(index)) {
-        respondFile(c, index);
-        return;
-      }
+      respondFile(c, path.join(WEB_DIST, 'index.html'));
+      return;
     }
     sendError(c.res, 404, `no route: ${c.method} ${c.path}`, 'not_found');
   };
