@@ -1,34 +1,35 @@
 # Cline Pass 上游控制台（cline-pass-switcher）
 
+**本仓库是原项目的独立分叉，由本人自主维护，不向上游提交。**
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Node](https://img.shields.io/badge/node-%E2%89%A5%2018-green)
+![Node](https://img.shields.io/badge/node-%E2%89%A520-green)
 ![Docker](https://img.shields.io/badge/docker-ready-2496ED)
 
-**零依赖**的 Node.js 本地/服务器代理 + 网页控制台，用于 [Cline Pass](https://cline.bot/cline-pass) 订阅：
+本地/服务器代理 + 网页控制台，用于 [Cline Pass](https://cline.bot/cline-pass) 订阅：
 
-- 🔍 **上游枚举与校验** —— 列出订阅模型背后每一条上游渠道，并一键实测哪些「✔可用 / ⏳限流 / ✘不可钉」
-- 🎯 **精确钉住上游** —— 严格钉住 / 优先+回退两种模式，支持按最低成本、最快首字、最高吞吐排序
-- 🧬 **多上游优先级故障转移（2026-09-06 新增）** —— 勾选多个上游即按勾选顺序逐个尝试：第一个异常（报错 / 网络失败 / 超时）自动顺切下一个，全部失败才透传错误；每次尝试有独立 120s 超时与逐次尝试明细（请求头 X-Cline-Target-Upstream: a>b 与 X-Cline-Attempts，历史与测试台展示逐次尝试路径 upstream(502) 到 upstream(200)）
-- 🚫 **上游排除** —— 勾「排除」的渠道永不被使用：勾选模式下从候选中剔除；自动模式与优先+回退模式下把排除换算成 only 白名单（已知上游 - 排除项）注入，两类管道均实测生效；网关侧渠道清单更新导致白名单过期时，报错中附带的最新渠道清单会被自动学习合并
-- 👥 **账号池** —— 多账号管理、手动切换、轮询均衡、逐账号连通性测试与用量统计
-- 📊 **观测** —— 每条请求自动记录实际命中的渠道、背后模型、耗时（含流式）
-- 🔑 **代理密钥** —— 给下游客户端发一把独立密钥，可随时在页面轮换
-- 🌐 **OpenAI 兼容** —— 任何 OpenAI 客户端 / Cline 扩展把 Base URL 指向代理即可，无侵入
+- 🔍 **上游枚举与校验** —— 列出订阅模型背后每一条上游渠道，一键实测「✔可用 / ⏳限流 / ✘不可钉」
+- 🎯 **精确钉住上游** —— 严格钉住 / 优先+回退，支持按最低成本、最快首字、最高吞吐排序
+- 🧬 **故障转移 2.0** —— 错误三分类（账号级/渠道级/请求级）决定「换账号、重试还是切渠道」；
+  全局预算封顶不让 agent 卡死；失败渠道冷却沉底；**一切以保住 prompt cache 为先**
+- 🚫 **上游排除** —— 排除的渠道永不被使用（换算成白名单注入）；清单过期时显式告警而非静默失效
+- 👥 **账号池** —— 粘性（默认，保缓存）/ 单账号 / 轮询；账号级错误自动轮转
+- 📊 **观测** —— 每条请求记录实际渠道、耗时、逐次尝试序列；渠道失败自动学习
+- 🔑 **代理密钥** —— timingSafeEqual 比较、密钥掩码、跨源防护、公网空密钥拒绝启动
 
 ![控制台截图](docs/screenshot-top.png)
 
 ---
 
-## 30 秒上手（本地）
+## 30 秒上手
 
 ```bash
-git clone https://github.com/<你的用户名>/cline-pass-switcher.git
-cd cline-pass-switcher
-node server.js        # 仅需 Node ≥ 18，无需 npm install
+npm install
+npm run build     # 编译 server（tsc）与 web（vite）
+npm start         # http://127.0.0.1:3123/
 ```
 
-打开 <http://127.0.0.1:3123/>，在「账号管理」里添加你的 Cline Pass 账号（`sk_` 开头的 key）并保存即可。
-没有 key 也能启动：页面会提示配置入口。
+打开控制台，在「账号池」添加你的 Cline Pass 账号（`sk_` 开头的 key）并保存。
 
 > Cline Pass key 从哪里来？购买 Cline Pass 订阅后，在 Cline 的账户设置里创建 API Key。
 > 订阅模型 ID 均为 `cline-pass/*` 前缀（如 `cline-pass/glm-5.2`）。
@@ -37,9 +38,11 @@ node server.js        # 仅需 Node ≥ 18，无需 npm install
 
 ```
 Base URL: http://127.0.0.1:3123/v1
-API Key:  （在控制台「访问与安全」里设置代理密钥；本地留空 = 不鉴权）
+API Key:  （控制台「访问与安全」里设置代理密钥；本地留空 = 不鉴权）
 Model:    cline-pass/glm-5.2 等
 ```
+
+开发模式：`npm run dev`（server `node --watch` + web `vite` 热更新，API 代理到 3123）。
 
 ---
 
@@ -49,7 +52,7 @@ Model:    cline-pass/glm-5.2 等
 
 ```bash
 mkdir -p data && cp config.example.json data/config.json
-# 编辑 data/config.json，或在启动时用环境变量注入 key
+# 编辑 data/config.json，或启动时用环境变量注入 key
 
 # 有域名（A 记录指向服务器，自动签发 Let's Encrypt 受信证书）：
 CPASS_DOMAIN=pass.example.com docker compose -f deploy/docker-compose.all-in-one.yml up -d --build
@@ -58,11 +61,11 @@ CPASS_DOMAIN=pass.example.com docker compose -f deploy/docker-compose.all-in-one
 docker compose -f deploy/docker-compose.all-in-one.yml up -d --build
 ```
 
-访问 `https://你的域名/`（或 `https://服务器IP/`），控制台里设置代理密钥即可对外提供服务。
+多阶段构建：最终镜像只含编译产物与 2 个生产依赖（pino/zod）；`/healthz` 供编排探活。
 
-### 方式 B：已有一个性化反代（nginx 门户等）
+### 方式 B：已有反代（nginx 门户等）
 
-根目录的 `docker-compose.yml` 只启动应用并绑定 `127.0.0.1:3123`，由你现有的 nginx/Caddy 做 TLS：
+根目录 `docker-compose.yml` 只启动应用并绑定 `127.0.0.1:3123`，TLS 交给现有反代：
 
 ```nginx
 location / {
@@ -75,32 +78,39 @@ location / {
 }
 ```
 
+> 若反代域名与 Origin 不一致，把域名加进控制台「访问与安全」的 CORS 白名单。
+
 ### 环境变量
 
 | 变量 | 说明 |
 |---|---|
 | `CLINE_PASS_KEY` | 上游 Cline Pass API Key（无 config 时自动创建账号） |
-| `PROXY_KEY` | 下游代理密钥（客户端访问代理的凭据） |
+| `PROXY_KEY` | 下游代理密钥；**绑定非回环地址时必填，否则拒绝启动** |
 | `PUBLIC_BASE_URL` | 门户展示的公网代理地址，如 `https://pass.example.com` |
-| `PORT` / `BIND_HOST` / `DATA_DIR` | 端口 / 绑定地址（容器内为 0.0.0.0）/ 配置目录 |
-
-环境变量在启动时覆盖 `config.json`；此后通过控制台保存设置，会以当前生效值写回文件。
+| `PORT` / `BIND_HOST` / `DATA_DIR` | 端口 / 绑定地址（容器内 0.0.0.0）/ 配置目录 |
+| `LOG_LEVEL` | 日志级别（默认 info；`debug` 更啰嗦） |
+| `ALLOW_INSECURE_BIND` | `1` 时允许非回环绑定且无密钥（仅限隔离内网） |
 
 ---
 
-## 配置参考（config.json）
+## 配置参考（config.json，版本 2）
 
 | 字段 | 说明 |
 |---|---|
+| `version` | 配置格式版本，当前 2；低版本自动迁移，损坏自动备份重建 |
 | `accounts` | 账号池：`[{ name, key, enabled }]` |
-| `accountMode` | `single` 手动指定 / `roundrobin` 轮询 |
-| `activeAccount` | 单账号模式下使用的下标 |
-| `proxyKey` | 下游代理密钥；空 = 不鉴权 |
-| `publicBaseUrl` | 公网代理地址（控制台展示用） |
-| `exposeCatalog` | `true` 时代理的 `/v1/models` 会合并 Cline 公开目录模型；默认 `false` 只返回订阅模型（避免客户端模型列表被淹没） |
-| `knownModels` | 订阅模型清单（控制台主表） |
-| `perModel` | 每模型的钉住配置：`{ upstream, pinMode: strict|preferred, sort: cost|ttft|tps, maxRetries }` |
-| `apiKey` | 旧版单 key 字段，启动时自动迁移进 `accounts` |
+| `accountMode` | `sticky`（默认，保 prompt cache）/ `single` / `roundrobin` |
+| `activeAccount` | single 模式使用的账号下标 |
+| `proxyKey` | 下游代理密钥；空 = 不鉴权（仅限回环绑定） |
+| `publicBaseUrl` | 公网代理地址（展示用） |
+| `corsOrigins` | CORS 白名单（默认空 = 不发跨域头） |
+| `exposeCatalog` | `true` 时 `/v1/models` 合并完整目录模型 |
+| `knownModels` | 订阅模型清单（可「拉取官方最新」合并，成功调用自动收录） |
+| `perModel` | 每模型钉住配置：`{ upstreams, exclude, pinMode, sort }` |
+| `failover` | `{ attemptTimeoutMs:60000, budgetMs:90000, retriesPerChannel:1, cooldownMs:300000, retryBackoffMs:500 }` |
+| `historyLimit` | 请求历史上限（默认 500） |
+
+数据文件损坏不会丢：`config.json` / `metadata.json` 原子写 + 损坏自动备份为 `*.broken-<时间>`。
 
 ---
 
@@ -148,48 +158,54 @@ Cline Pass 订阅模型在 Cline 网关之后分成两条管道，钉住上游�
 
 ---
 
+## 故障转移语义（2.0 重写）
+
+prompt cache 是一等约束：agent 多轮对话每轮带完整上下文，切渠道或切账号都会让上游缓存
+全失效（cache-miss 计价可能贵一个数量级）。所以整体取向是**默认稳定，按需快速切换**：
+
+| 错误类别 | 判定 | 动作 |
+|---|---|---|
+| **账号级** | 401 / 402 / 403、key 失效、额度用完 | **立即换账号**（不重试），同一渠道重来 |
+| **渠道级** | 429 / 5xx / 网络失败 / 超时 | 同渠道退避重试 ≤ `retriesPerChannel` → 仍失败则标记冷却并切下一个候选 |
+| **请求级** | 其余 4xx | 同渠道重试一次即切换（`invalid_request_error` 兼有「渠道映射失败」与「参数错误」两种含义，从文本无法可靠区分，用「重试是否复现」区分） |
+
+- **预算封顶**：整条链 `failover.budgetMs`（默认 90s）；每次尝试超时 = min(单次上限, 剩余预算)。agent 场景下绝不久挂。
+- **冷却**：渠道级失败进入 `cooldownMs`（默认 5 分钟）冷却，期间排到候选末尾（不剔除）。
+- **账号粘性**：一次请求固定一个账号；粘性模式跨请求也固定，只有账号级错误才轮转。
+- **preferred = 本地说了算**：前面的候选逐个 strict，只给**最后一个候选**放开网关回退。
+- **客户端断开**：立即终止整条链，不再花一分钱。
+- 流式在 SSE 开始前可切换；SSE 一旦开始即透传不可重试（HTTP 头必须先于 body，
+  所以流式响应没有 `X-Cline-Actual-Upstream` 头，该信息记在请求历史里）。
+
+---
+
 ## 控制台功能一览
 
-| 卡片 | 功能 |
+| 标签页 | 功能 |
 |---|---|
-| 账号管理 | 账号池增删改、显隐密钥、逐账号连通性测试、单账号/轮询模式、用量统计 |
-| 访问与安全 | 修改下游代理密钥（即时生效）、公网代理地址、鉴权开关 |
-| 订阅模型 | 背后模型 / 渠道数 / 最近实际渠道；渠道下拉（带可用性标注）；严格钉住 / 优先+回退；排序 |
-| 操作按钮 | 探测（刷新渠道清单）、测试（单次钉住验证）、校验（全渠道实测地图） |
-| 测试台 | 任选模型+渠道发一条小请求，直接看网关是否采纳 |
-| 请求历史 | 自动记录每条请求的账号、实际渠道、耗时、尝试序列（最近 100 条，含流式） |
+| 订阅模型 | 背后模型 / 渠道数 / 最近实际渠道；渠道优先级与排除（乐观更新）；严格钉住 / 优先+回退；排序 |
+| 账号池 | 增删改、密钥掩码显示、逐账号连通性测试、粘性/单账号/轮询、用量统计 |
+| 访问与安全 | 下游密钥（掩码回显）、公网地址、CORS 白名单、目录暴露开关 |
+| 测试台 | 任选模型+渠道发小请求，看网关是否采纳 + 尝试序列 |
+| 请求历史 | 自动记录账号、实际渠道、耗时、尝试序列（默认 500 条，含流式） |
 | 完整目录 | Cline 公开目录模型，`:free` 变体可精确钉住 |
 
-代理同时做了兼容性标准化：解包 Cline 的 `{"data":...}` 包装为标准 OpenAI 格式、错误统一为
-`{"error":{"message":...}}`、附加 `X-Cline-Target-Upstream / X-Cline-Actual-Upstream / X-Cline-Account` 等响应头。
+代理做了兼容性标准化：解包 Cline 的 `{"data":...}` 包装、错误统一为 `{"error":{"message":...}}`、
+附加 `X-Cline-Target-Upstream / X-Cline-Actual-Upstream / X-Cline-Attempts / X-Cline-Account` 响应头。
 
 ---
 
-## 常见问题
+## 从 1.2 升级
 
-**Q：为什么选了某个渠道会报 `invalid_request_error`？**
-部分渠道被单独钉住时会因模型 ID 映射失败，还有渠道处于共享池限流（429）状态。点该模型行的「校验」，
-把所有渠道实测一遍，下拉框会标注 ✔可用 / ⏳限流 / ✘不可钉。钉住失败的渠道会被自动学习标记。
-
-**Q：限流的渠道还能用吗？**
-能。限流是共享池的临时状态，过段时间重新「校验」即可；或改用「优先+回退」模式，限流时自动跳到其他渠道。
-
-**Q：直接用官方 API 写 `provider.only` 为什么不生效？**
-对规划器管道（走 Vercel AI Gateway 的模型）会被 Cline 网关丢弃，请改用 `providerOptions.gateway`，见上文。
-
-**Q：两条管道的渠道清单为什么不一样？**
-钉住发生在不同后端（OpenRouter vs Vercel AI Gateway），各自支持的渠道池不同，要以对应清单为准。
-
-**Q：订阅额度怎么计？**
-经代理的请求与直连官方 API 计费一致；「探测/测试/校验」会产生极小额的真实请求（每次约 0.0002 美元级）。
-
----
+配置文件自动迁移（`apiKey` → 账号池、单 `upstream` → 优先级列表、`roundrobin` → `sticky`），
+启动日志会列出每一项。行为变化与原因见 [CHANGELOG.md](CHANGELOG.md)；
+真实网关的手动验收清单见 [docs/UAT.md](docs/UAT.md)。
 
 ## 安全提醒
 
-- `config.json` / `data/` 含明文密钥，已在 `.gitignore` 排除，**不要提交或分享**；
-- 对外部署务必设置 `proxyKey`（控制台可随时轮换）；
-- 「重试博弈」`maxRetries > 0` 时会放大请求量，注意额度消耗。
+- `config.json` / `data/` 含明文密钥，已在 `.gitignore` / `.dockerignore` 排除，**不要提交或分享**；
+- 对外部署**必须**设置 `proxyKey`（代码强制：非回环绑定 + 空密钥拒绝启动）；
+- 故障转移的重试会放大请求量，注意额度消耗（预算封顶可限制最坏情况）。
 
 ## License
 
