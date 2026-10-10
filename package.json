@@ -1,6 +1,6 @@
 {
   "name": "cline-pass-switcher",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "description": "Cline Pass 上游控制台：枚举/校验/钉住订阅模型背后的上游渠道，账号池轮询，OpenAI 兼容代理",
   "license": "MIT",
@@ -22,11 +22,12 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "desktop:dev": "node scripts/prepare-runtime.mjs && cd desktop && tauri dev",
-    "desktop:build": "npm run build && node scripts/prepare-runtime.mjs && cd desktop && tauri build && node scripts/package-portable.mjs",
+    "desktop:build": "npm run build && node scripts/prepare-runtime.mjs && cd desktop && tauri build && cd .. && node scripts/package-portable.mjs",
     "desktop:portable": "node scripts/package-portable.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
+    "@resvg/resvg-js": "^2.6.2",
     "@types/node": "^26.6.5",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3"

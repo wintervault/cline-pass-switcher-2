@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Cline Pass 路由分叉图标">
+  <title>Cline Pass 路由分叉图标</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6AA5FF"/>
+      <stop offset="1" stop-color="#2E5BEB"/>
+    </linearGradient>
+    <radialGradient id="hl" cx="118" cy="72" r="360" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="115" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="111" fill="none" stroke="#ffffff" stroke-opacity="0.14" stroke-width="4"/>
+  <rect width="512" height="512" rx="115" fill="url(#hl)"/>
+  <path d="M206 256 V202 A40 40 0 0 1 246 162 H372" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M206 256 V310 A40 40 0 0 0 246 350 H372" fill="none" stroke="#fff" stroke-opacity="0.55" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="382" cy="162" r="24" fill="#ffffff" fill-opacity="0.55"/>
+  <circle cx="382" cy="350" r="24" fill="#ffffff" fill-opacity="0.55"/>
+  <path d="M110 256 H368" stroke="#ffffff" stroke-width="34" stroke-linecap="round"/>
+  <circle cx="382" cy="256" r="48" fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="12"/>
+  <circle cx="382" cy="256" r="32" fill="#7DE9FF"/>
+  <circle cx="110" cy="256" r="30" fill="#ffffff"/>
+</svg>
