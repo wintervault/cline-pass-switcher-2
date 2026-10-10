@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { Alert, App, Badge, Button, Collapse, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
+import { Alert, App, Badge, Button, Collapse, Select, Space, Table, Tag, Tooltip, Typography, theme } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useState } from 'react';
 import { qk, useFetchOfficial, useModels, useProbe, useSaveModelConfig, useTest, useValidate } from '../api/hooks.ts';
@@ -55,6 +55,7 @@ function UpstreamRow({
   meta: ModelMeta | null;
   onSave: (patch: Partial<PerModelConfig>) => void;
 }) {
+  const { token } = theme.useToken();
   const selected = cfg.upstreams.includes(upstream);
   const excluded = cfg.exclude.includes(upstream);
   const order = cfg.upstreams.indexOf(upstream);
@@ -98,7 +99,7 @@ function UpstreamRow({
         alignItems: 'center',
         gap: 10,
         padding: '6px 0',
-        borderBottom: '1px dashed rgba(255,255,255,.08)',
+        borderBottom: `1px dashed ${token.colorBorderSecondary}`,
         opacity: excluded ? 0.55 : 1,
       }}
     >
@@ -109,7 +110,7 @@ function UpstreamRow({
         <Typography.Text code style={{ fontSize: 12 }}>
           {upstream}
         </Typography.Text>
-        <div style={{ fontSize: 11, color: 'rgba(255,255,255,.45)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <div style={{ fontSize: 11, color: token.colorTextTertiary, overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {detail?.name ?? ''}
           {detail && detail.endpoints !== undefined && detail.endpoints > 1 ? ` ×${detail.endpoints}` : ''}
         </div>
@@ -194,6 +195,9 @@ function UpstreamPanel({ row, onSave }: { row: SubscriptionRow; onSave: (patch: 
 
 export default function Models() {
   const { message } = App.useApp();
+  const {
+    token: { colorTextTertiary: tokenColorTextTertiary },
+  } = theme.useToken();
   const models = useModels();
   const qc = useQueryClient();
   const save = useSaveModelConfig();
@@ -270,7 +274,7 @@ export default function Models() {
             <Typography.Text type="secondary">未探测</Typography.Text>
           )}
           {row.meta?.lastMs ? (
-            <div style={{ fontSize: 11, color: 'rgba(255,255,255,.45)' }}>{row.meta.lastMs} ms</div>
+            <div style={{ fontSize: 11, color: tokenColorTextTertiary }}>{row.meta.lastMs} ms</div>
           ) : null}
         </>
       ),
