@@ -44,7 +44,11 @@ export default function Security() {
       <div>
         <Space align="center" style={{ marginBottom: 6 }}>
           <Typography.Text>下游代理密钥</Typography.Text>
-          {data?.authRequired ? <Tag color="green">鉴权已开启</Tag> : <Tag color="orange">鉴权关闭（仅限本机绑定）</Tag>}
+          {data?.authRequired ? (
+            <Tag color="green">鉴权已开启</Tag>
+          ) : (
+            <Tag color="orange">鉴权关闭（仅限本机绑定）</Tag>
+          )}
         </Space>
         <div>
           <Space.Compact style={{ width: '100%' }}>
@@ -92,10 +96,7 @@ export default function Security() {
 
       <div>
         <Space align="center">
-          <Switch
-            checked={data?.exposeCatalog ?? false}
-            onChange={(v) => save.mutate({ exposeCatalog: v })}
-          />
+          <Switch checked={data?.exposeCatalog ?? false} onChange={(v) => save.mutate({ exposeCatalog: v })} />
           <Typography.Text>把完整目录模型加入 /v1/models（默认关闭：客户端只看到订阅模型）</Typography.Text>
         </Space>
       </div>

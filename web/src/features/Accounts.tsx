@@ -22,8 +22,7 @@ export default function Accounts() {
   const [active, setActive] = useState<number | null>(null);
 
   const data = accounts.data;
-  const rows: EditRow[] =
-    editing ?? (data?.accounts.map((a) => ({ name: a.name, key: '', enabled: a.enabled })) ?? []);
+  const rows: EditRow[] = editing ?? data?.accounts.map((a) => ({ name: a.name, key: '', enabled: a.enabled })) ?? [];
   const currentMode = mode ?? data?.mode ?? 'sticky';
   const currentActive = active ?? data?.active ?? 0;
 
@@ -57,7 +56,6 @@ export default function Accounts() {
   };
 
   const testRow = (index: number): void => {
-    const key = rows[index]?.key || data?.accounts[index]?.keyTail;
     if (!rows[index]?.key) {
       message.warning('请先填写该账号的 key（保存后才能用已存的 key 测试）');
       return;
@@ -215,7 +213,10 @@ export default function Accounts() {
       />
       <div style={{ marginTop: 8 }}>
         {editing && (
-          <Button size="small" onClick={() => setEditing([...rows, { name: `账号${rows.length + 1}`, key: '', enabled: true }])}>
+          <Button
+            size="small"
+            onClick={() => setEditing([...rows, { name: `账号${rows.length + 1}`, key: '', enabled: true }])}
+          >
             ＋ 添加账号
           </Button>
         )}

@@ -1,16 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { api } from './client.ts';
-import {
-  type AccountsResponse,
-  type HistoryEntry,
-  type MetaInfo,
-  type ModelsResponse,
-  type ProbeResult,
-  type PerModelConfig,
-  type ValidationResult,
-  type SecurityResponse,
-  type TestResult,
+import type {
+  AccountsResponse,
+  HistoryEntry,
+  MetaInfo,
+  ModelsResponse,
+  PerModelConfig,
+  ProbeResult,
+  SecurityResponse,
+  TestResult,
+  ValidationResult,
 } from './types.ts';
 
 export const qk = {
@@ -100,7 +100,8 @@ export function useSaveAccounts() {
 
 export function useTestAccount() {
   return useMutation({
-    mutationFn: (key: string) => api<{ ok: boolean; ms: number; error?: string; note?: string }>('/api/accounts/test', { json: { key } }),
+    mutationFn: (key: string) =>
+      api<{ ok: boolean; ms: number; error?: string; note?: string }>('/api/accounts/test', { json: { key } }),
   });
 }
 

@@ -1,8 +1,8 @@
-import { App, Alert, Button, Select, Space, Table, Tag, Typography } from 'antd';
+import { Alert, App, Button, Select, Space, Table, Tag, Typography } from 'antd';
 import { useMemo, useState } from 'react';
 
 import { useModels, useTest } from '../api/hooks.ts';
-import { type TestResult, type TraceEntry } from '../api/types.ts';
+import type { TestResult, TraceEntry } from '../api/types.ts';
 import { sortedUpstreams } from './Models.tsx';
 
 function TraceView({ trace }: { trace?: TraceEntry[] }) {
@@ -69,12 +69,7 @@ export default function Playground() {
           onChange={setModel}
           options={rows.map((r) => ({ value: r.id, label: r.id }))}
         />
-        <Select
-          style={{ width: 240 }}
-          value={upstream}
-          onChange={setUpstream}
-          options={upstreamOptions}
-        />
+        <Select style={{ width: 240 }} value={upstream} onChange={setUpstream} options={upstreamOptions} />
         <Button type="primary" loading={test.isPending} onClick={run}>
           发送测试
         </Button>
@@ -83,9 +78,7 @@ export default function Playground() {
         </Typography.Text>
       </Space>
 
-      {result && !result.ok && (
-        <Alert type="error" showIcon message={`请求失败：${result.error ?? '未知错误'}`} />
-      )}
+      {result && !result.ok && <Alert type="error" showIcon message={`请求失败：${result.error ?? '未知错误'}`} />}
       {result?.degraded && (
         <Alert
           type="warning"
@@ -103,7 +96,12 @@ export default function Playground() {
             </Typography.Text>
             <Typography.Text type="secondary">耗时 {result.ms} ms</Typography.Text>
             <Typography.Text type="secondary">
-              管道：{result.pipeline === 'direct' ? '直连(OpenRouter)' : result.pipeline === 'planner' ? '规划器(Vercel)' : '未知'}
+              管道：
+              {result.pipeline === 'direct'
+                ? '直连(OpenRouter)'
+                : result.pipeline === 'planner'
+                  ? '规划器(Vercel)'
+                  : '未知'}
             </Typography.Text>
             <Typography.Text type="secondary">背后模型：{result.canonicalSlug ?? '—'}</Typography.Text>
           </Space>

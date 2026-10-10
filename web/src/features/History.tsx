@@ -17,10 +17,23 @@ export default function History() {
       dataSource={rows}
       pagination={{ pageSize: 20, hideOnSinglePage: true }}
       columns={[
-        { title: '时间', width: 90, render: (_, r) => <Typography.Text type="secondary">{time(r.ts)}</Typography.Text> },
-        { title: '模型', dataIndex: 'model', width: 200, render: (v: string) => <Typography.Text code>{v}</Typography.Text> },
+        {
+          title: '时间',
+          width: 90,
+          render: (_, r) => <Typography.Text type="secondary">{time(r.ts)}</Typography.Text>,
+        },
+        {
+          title: '模型',
+          dataIndex: 'model',
+          width: 200,
+          render: (v: string) => <Typography.Text code>{v}</Typography.Text>,
+        },
         { title: '账号', width: 90, render: (_, r) => (r.account ? <Tag color="blue">{r.account}</Tag> : '—') },
-        { title: '实际上游', width: 110, render: (_, r) => (r.provider ? <Tag color="purple">{r.provider}</Tag> : '—') },
+        {
+          title: '实际上游',
+          width: 110,
+          render: (_, r) => (r.provider ? <Tag color="purple">{r.provider}</Tag> : '—'),
+        },
         {
           title: '背后模型',
           width: 180,
@@ -48,9 +61,7 @@ export default function History() {
             if (!trace.length) return '—';
             return (
               <span style={{ fontSize: 11, fontFamily: 'monospace' }}>
-                {trace
-                  .map((t) => `${t.upstream ?? 'auto'}${t.status === 200 ? '✔' : `✗${t.status}`}`)
-                  .join(' → ')}
+                {trace.map((t) => `${t.upstream ?? 'auto'}${t.status === 200 ? '✔' : `✗${t.status}`}`).join(' → ')}
               </span>
             );
           },

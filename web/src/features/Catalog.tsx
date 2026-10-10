@@ -9,9 +9,7 @@ export default function Catalog() {
   const [filter, setFilter] = useState('');
 
   const catalog = models.data?.catalog ?? [];
-  const filtered = catalog
-    .filter((id) => !filter || id.toLowerCase().includes(filter.toLowerCase()))
-    .slice(0, 400);
+  const filtered = catalog.filter((id) => !filter || id.toLowerCase().includes(filter.toLowerCase())).slice(0, 400);
 
   return (
     <div>
@@ -48,7 +46,11 @@ export default function Catalog() {
             title: '操作',
             width: 90,
             render: (_, r) => (
-              <Button size="small" loading={probe.isPending && probe.variables === r.id} onClick={() => probe.mutate(String(r.id))}>
+              <Button
+                size="small"
+                loading={probe.isPending && probe.variables === r.id}
+                onClick={() => probe.mutate(String(r.id))}
+              >
                 探测
               </Button>
             ),

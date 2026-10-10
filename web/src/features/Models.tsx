@@ -1,19 +1,18 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { App, Badge, Button, Collapse, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-
+import { useState } from 'react';
 import { qk, useFetchOfficial, useModels, useProbe, useSaveModelConfig, useTest, useValidate } from '../api/hooks.ts';
 import {
   type ModelMeta,
   type ModelsResponse,
   type PerModelConfig,
   type SortKey,
-  type SubscriptionRow,
   STATUS_RANK,
   STATUS_TAG,
+  type SubscriptionRow,
   type UpstreamStatusKind,
 } from '../api/types.ts';
-import { useState } from 'react';
 
 const EMPTY_CFG: PerModelConfig = { upstreams: [], exclude: [], pinMode: 'strict', sort: null };
 
@@ -248,7 +247,11 @@ export default function Models() {
       width: 130,
       render: (_, row) => (
         <>
-          {row.meta?.lastProvider ? <Tag color="blue">{row.meta.lastProvider}</Tag> : <Typography.Text type="secondary">未探测</Typography.Text>}
+          {row.meta?.lastProvider ? (
+            <Tag color="blue">{row.meta.lastProvider}</Tag>
+          ) : (
+            <Typography.Text type="secondary">未探测</Typography.Text>
+          )}
           {row.meta?.lastMs ? (
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,.45)' }}>{row.meta.lastMs} ms</div>
           ) : null}
@@ -372,7 +375,8 @@ export default function Models() {
         </Button>
         {official && (
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            上次拉取 {new Date(official.ts).toLocaleString()}（{official.sources.join('+')}，新增 {official.added.length}）
+            上次拉取 {new Date(official.ts).toLocaleString()}（{official.sources.join('+')}，新增{' '}
+            {official.added.length}）
           </Typography.Text>
         )}
         {fetchNote && <Typography.Text style={{ fontSize: 12 }}>{fetchNote}</Typography.Text>}

@@ -1,17 +1,17 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { App as AntdApp, Alert, Button, ConfigProvider, Input, Layout, Modal, Space, Tabs, Typography } from 'antd';
+import { Alert, App as AntdApp, Button, ConfigProvider, Input, Layout, Modal, Space, Tabs, Typography } from 'antd';
 import zhCN from 'antd/es/locale/zh_CN';
 import { useEffect, useState } from 'react';
 
 import { api, getAuthKey, setAuthKey } from './api/client.ts';
 import { useMeta, useRefresh } from './api/hooks.ts';
-import { darkTheme } from './theme.ts';
 import Accounts from './features/Accounts.tsx';
 import Catalog from './features/Catalog.tsx';
 import History from './features/History.tsx';
 import Models from './features/Models.tsx';
 import Playground from './features/Playground.tsx';
 import Security from './features/Security.tsx';
+import { darkTheme } from './theme.ts';
 
 export default function App() {
   const meta = useMeta();
