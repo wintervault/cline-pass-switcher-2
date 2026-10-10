@@ -3,7 +3,7 @@ import { Alert, App as AntdApp, Button, ConfigProvider, Input, Layout, Modal, Sp
 import zhCN from 'antd/es/locale/zh_CN';
 import { useEffect, useState } from 'react';
 
-import { api, getAuthKey, setAuthKey } from './api/client.ts';
+import { getAuthKey, setAuthKey } from './api/client.ts';
 import { useMeta, useRefresh } from './api/hooks.ts';
 import Accounts from './features/Accounts.tsx';
 import Catalog from './features/Catalog.tsx';

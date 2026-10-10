@@ -1,4 +1,4 @@
-import { Alert, App, Button, Select, Space, Table, Tag, Typography } from 'antd';
+import { Alert, App, Button, Select, Space, Tag, Typography } from 'antd';
 import { useMemo, useState } from 'react';
 
 import { useModels, useTest } from '../api/hooks.ts';
