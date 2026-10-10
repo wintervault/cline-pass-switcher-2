@@ -127,7 +127,7 @@ export function registerApiRoutes(
     const model = (body.value as { model?: unknown })?.model;
     if (typeof model !== 'string' || !model) return sendError(c.res, 400, 'model required');
     try {
-      const result = await ctx.probe.probeModel(model);
+      const result = await ctx.probe.probeModel(model, c.abortSignal);
       sendJSON(c.res, result.ok ? 200 : 502, result);
     } catch (err) {
       sendJSON(c.res, 502, { ok: false, error: err instanceof Error ? err.message : String(err) });
@@ -139,7 +139,7 @@ export function registerApiRoutes(
     if (!body.ok) return sendError(c.res, 400, body.reason === 'bad-json' ? 'invalid JSON body' : 'body too large');
     const model = (body.value as { model?: unknown })?.model;
     if (typeof model !== 'string' || !model) return sendError(c.res, 400, 'model required');
-    const outcome = await ctx.probe.validateUpstreams(model);
+    const outcome = await ctx.probe.validateUpstreams(model, c.abortSignal);
     if (!outcome.ok) {
       // 钉住参数被网关丢弃：校验结果是假绿，明确拒绝而不是输出全绿误导
       sendJSON(c.res, 409, { ok: false, error: outcome.reason, pinState: outcome.pinState });
@@ -157,7 +157,7 @@ export function registerApiRoutes(
   });
 
   router.post('/api/fetch-official-models', async (c: Ctx) => {
-    const result = await ctx.catalog.fetchOfficialModels();
+    const result = await ctx.catalog.fetchOfficialModels(c.abortSignal);
     sendJSON(c.res, 200, { ok: true, ...result });
   });
 
@@ -292,6 +292,7 @@ export function registerApiRoutes(
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
         body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Say OK' }], max_tokens: 512 }),
+        signal: c.abortSignal,
       },
       120_000,
     );

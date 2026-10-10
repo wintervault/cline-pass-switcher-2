@@ -29,7 +29,7 @@ export function modelsHandler(ctx: AppContext): Handler {
   return async (c: Ctx) => {
     const config = ctx.configStore.value;
     const ids = config.exposeCatalog
-      ? [...new Set([...config.knownModels, ...(await ctx.catalog.catalog())])]
+      ? [...new Set([...config.knownModels, ...(await ctx.catalog.catalog(c.abortSignal))])]
       : [...new Set([...config.knownModels, ...Object.keys(config.perModel)])];
     sendList(c, ids);
   };

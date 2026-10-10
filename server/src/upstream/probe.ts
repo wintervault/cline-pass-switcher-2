@@ -12,7 +12,10 @@ export interface ProbeDeps {
   getMeta: (modelId: string) => ModelMeta | undefined;
   setMeta: (modelId: string, meta: ModelMeta) => void;
   /** OpenRouter endpoints 查询（直连管道参考）。 */
-  orEndpoints?: (slug: string) => Promise<{
+  orEndpoints?: (
+    slug: string,
+    signal?: AbortSignal,
+  ) => Promise<{
     slug: string;
     endpoints: Array<{ slug: string; name?: string; endpoints?: number; context?: number; uptime?: number }>;
   }>;
@@ -69,6 +72,7 @@ async function pinProbe(
   modelId: string,
   pipeline: 'planner' | 'direct',
   key: string,
+  signal?: AbortSignal,
 ): Promise<PinProbeOutcome> {
   const base = { model: modelId, messages: [{ role: 'user', content: 'Reply with the word OK' }], max_tokens: 512 };
   const body =
@@ -80,7 +84,7 @@ async function pinProbe(
   try {
     const res = await fetchJSON(
       `${deps.upstreamBase}${CHAT}`,
-      { method: 'POST', headers: authHeaders(key), body: JSON.stringify(body) },
+      { method: 'POST', headers: authHeaders(key), body: JSON.stringify(body), signal },
       90_000,
     );
     json = res.json;
@@ -159,13 +163,13 @@ export class ProbeService {
    * 探测单个模型：真实小请求回读管道类型与执行链，再用钉住探针判定参数是否被读取。
    * 可钉性与账号风控相关（换个账号结果可能不同），结果只代表探测时刻、所用账号的状态。
    */
-  async probeModel(modelId: string): Promise<ProbeResult> {
+  async probeModel(modelId: string, signal?: AbortSignal): Promise<ProbeResult> {
     const account = this.#deps.pool.pick();
     const started = Date.now();
     const body = { model: modelId, messages: [{ role: 'user', content: 'Reply with the word OK' }], max_tokens: 256 };
     const { json } = await fetchJSON(
       `${this.#deps.upstreamBase}${CHAT}`,
-      { method: 'POST', headers: authHeaders(account?.key ?? ''), body: JSON.stringify(body) },
+      { method: 'POST', headers: authHeaders(account?.key ?? ''), body: JSON.stringify(body), signal },
       180_000,
     );
 
@@ -180,7 +184,7 @@ export class ProbeService {
     // 钉住探针（D1）：判定 providerOptions/provider 是否还被网关读取
     let probe: PinProbeOutcome = { pinState: 'unknown', providers: null, routedTo: null };
     if (routing.pipeline) {
-      probe = await pinProbe(this.#deps, modelId, routing.pipeline, account?.key ?? '');
+      probe = await pinProbe(this.#deps, modelId, routing.pipeline, account?.key ?? '', signal);
     }
 
     let endpoints: Array<{ slug: string; name?: string; endpoints?: number; context?: number; uptime?: number }> = [];
@@ -188,7 +192,7 @@ export class ProbeService {
     if (routing.pipeline !== 'planner' && routing.canonicalSlug && this.#deps.orEndpoints) {
       // 规划器管道的钉住发生在 Vercel 侧，OpenRouter 的 endpoint 明细仅对直连管道有参考意义
       try {
-        const res = await this.#deps.orEndpoints(routing.canonicalSlug);
+        const res = await this.#deps.orEndpoints(routing.canonicalSlug, signal);
         endpoints = res.endpoints;
         orSlug = res.slug;
       } catch {
@@ -250,7 +254,10 @@ export class ProbeService {
    * 钉住参数被网关丢弃时（pinState=ignored）拒绝执行：此时每个渠道的请求都会成功并返回
    * `empty response content`（被判为 ok），输出全绿是误导（docs/pinning.md D5）。
    */
-  async validateUpstreams(modelId: string): Promise<
+  async validateUpstreams(
+    modelId: string,
+    signal?: AbortSignal,
+  ): Promise<
     | { ok: false; reason: string; pinState: PinState }
     | {
         ok: true;
@@ -291,7 +298,7 @@ export class ProbeService {
           try {
             const res = await fetchJSON(
               `${this.#deps.upstreamBase}${CHAT}`,
-              { method: 'POST', headers: authHeaders(account?.key ?? ''), body: JSON.stringify(body) },
+              { method: 'POST', headers: authHeaders(account?.key ?? ''), body: JSON.stringify(body), signal },
               60_000,
             );
             json = res.json;

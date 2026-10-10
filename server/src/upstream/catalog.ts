@@ -40,14 +40,14 @@ export class CatalogService {
   }
 
   /** Cline 公开目录（/models），1 小时缓存。 */
-  async catalog(): Promise<string[]> {
+  async catalog(signal?: AbortSignal): Promise<string[]> {
     const { meta, markDirty } = this.#deps;
     if (meta.catalog && Date.now() - meta.catalogFetchedAt < 3_600_000) return meta.catalog;
     const account = this.#deps.pool.pick();
     try {
       const { json } = await fetchJSON(
         `${this.#deps.upstreamBase}/models`,
-        { headers: account ? { Authorization: `Bearer ${account.key}` } : {} },
+        { headers: account ? { Authorization: `Bearer ${account.key}` } : {}, signal },
         60_000,
       );
       const ids = (((json as { data?: unknown })?.data as unknown[] | undefined) ?? [])
@@ -65,10 +65,10 @@ export class CatalogService {
   }
 
   /** OpenRouter 目录 id 列表，6 小时缓存。 */
-  async orModelList(): Promise<string[]> {
+  async orModelList(signal?: AbortSignal): Promise<string[]> {
     const { meta, markDirty } = this.#deps;
     if (meta.orModelList && Date.now() - meta.orModelsFetchedAt < 6 * 3_600_000) return meta.orModelList;
-    const { json } = await fetchJSON(`${OR_API}/models`, {}, 60_000);
+    const { json } = await fetchJSON(`${OR_API}/models`, { signal }, 60_000);
     const ids = (((json as { data?: unknown })?.data as unknown[] | undefined) ?? [])
       .map((m) => (typeof m === 'object' && m !== null ? (m as { id?: unknown }).id : null))
       .filter((id): id is string => typeof id === 'string');
@@ -81,11 +81,11 @@ export class CatalogService {
   }
 
   /** OpenRouter 各渠道的 endpoint 明细（上下文长度/在线率），直连管道有直接参考意义。 */
-  async orEndpoints(slug: string): Promise<{ slug: string; endpoints: OrEndpointDetail[] }> {
-    const ids = await this.orModelList();
+  async orEndpoints(slug: string, signal?: AbortSignal): Promise<{ slug: string; endpoints: OrEndpointDetail[] }> {
+    const ids = await this.orModelList(signal);
     const real = ids.find((id) => id === slug) ?? ids.find((id) => norm(id) === norm(slug));
     if (!real) return { slug, endpoints: [] };
-    const { json } = await fetchJSON(`${OR_API}/models/${real}/endpoints`, {}, 60_000);
+    const { json } = await fetchJSON(`${OR_API}/models/${real}/endpoints`, { signal }, 60_000);
     const eps = ((json as { data?: { endpoints?: unknown } })?.data?.endpoints as unknown[] | undefined) ?? [];
     const detail: Record<string, OrEndpointDetail> = {};
     for (const raw of eps) {
@@ -107,7 +107,7 @@ export class CatalogService {
    * 从官方接口、社区注册表与官方文档拉取最新订阅模型清单（只增不删）。
    * 多来源互相兜底：官方推荐接口权威且最快，models.dev 是社区注册表，文档表格最后兜底。
    */
-  async fetchOfficialModels(): Promise<OfficialFetchResult> {
+  async fetchOfficialModels(signal?: AbortSignal): Promise<OfficialFetchResult> {
     const found = new Set<string>();
     const sources: string[] = [];
     const add = (value: unknown): void => {
@@ -124,7 +124,7 @@ export class CatalogService {
 
     // 官方推荐模型接口：Cline 自己用来列出订阅模型，权威且更新最快（无需鉴权）
     try {
-      const { json } = await fetchJSON('https://api.cline.bot/api/v1/ai/cline/recommended-models', {}, 30_000);
+      const { json } = await fetchJSON('https://api.cline.bot/api/v1/ai/cline/recommended-models', { signal }, 30_000);
       const shaped = json as { clinePass?: unknown; data?: { clinePass?: unknown } } | null;
       const list = shaped?.clinePass ?? shaped?.data?.clinePass;
       if (Array.isArray(list) && list.length) {
@@ -137,7 +137,7 @@ export class CatalogService {
 
     // 社区注册表 models.dev：历史响应包在 providers 下，新响应直接以 provider id 为顶层键
     try {
-      const { json } = await fetchJSON('https://models.dev/api.json', {}, 30_000);
+      const { json } = await fetchJSON('https://models.dev/api.json', { signal }, 30_000);
       const shaped = json as Record<string, unknown> | null;
       const cp = (shaped?.providers as Record<string, unknown> | undefined)?.['cline-pass'] ?? shaped?.['cline-pass'];
       const models = (cp as { models?: unknown } | null)?.models;
@@ -153,8 +153,9 @@ export class CatalogService {
 
     // 官方文档表格兜底
     try {
+      const docSignal = AbortSignal.any([AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]);
       const res = await fetch('https://docs.cline.bot/getting-started/clinepass', {
-        signal: AbortSignal.timeout(30_000),
+        signal: docSignal,
       });
       const text = await res.text();
       const ids = text.match(/cline-pass\/[a-z0-9._-]+/gi) ?? [];

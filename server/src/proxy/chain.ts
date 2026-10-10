@@ -340,7 +340,8 @@ export class ChatChain {
 
     try {
       if (input.stream) return await this.#attemptStream(sendBody, headers, controller.signal, ms);
-      return await this.#attemptJson(sendBody, headers, ms);
+      // signal 必须传下去：这是非流式尝试的「单次超时 + 客户端断连止损」的唯一通道
+      return await this.#attemptJson(sendBody, headers, controller.signal, ms);
     } finally {
       clearTimeout(timer);
       input.clientSignal?.removeEventListener('abort', onClientAbort);
@@ -350,6 +351,7 @@ export class ChatChain {
   async #attemptJson(
     sendBody: Record<string, unknown>,
     headers: Record<string, string>,
+    signal: AbortSignal,
     ms: () => number,
   ): Promise<AttemptOutcome> {
     const url = `${this.#deps.upstreamBase}${CHAT_PATH}`;
@@ -358,7 +360,7 @@ export class ChatChain {
         status: httpStatus,
         json,
         text,
-      } = await fetchJSON(url, { method: 'POST', headers, body: JSON.stringify(sendBody) });
+      } = await fetchJSON(url, { method: 'POST', headers, body: JSON.stringify(sendBody), signal });
       if (!json) {
         return {
           verdict: 'error',

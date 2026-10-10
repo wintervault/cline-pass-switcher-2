@@ -160,3 +160,52 @@ describe('unwrap', () => {
     expect(r.error).toBe('boom');
   });
 });
+
+describe('fetchJSON 外部 signal 与内部超时的组合（回归：signal 被覆盖）', () => {
+  it('外部 abort 能中止慢响应，而不是被内部 signal 顶掉', async () => {
+    const { FakeUpstream } = await import('./helpers/upstream.ts');
+    const { fetchJSON } = await import('../src/upstream/client.ts');
+    const upstream = new FakeUpstream();
+    const base = await upstream.listen();
+    try {
+      upstream.script([{ status: 200, body: { ok: 1 }, delayMs: 5000 }]);
+      const controller = new AbortController();
+      const pending = fetchJSON(`${base}/chat/completions`, { method: 'POST', signal: controller.signal }, 60_000);
+      setTimeout(() => controller.abort(), 100);
+      await expect(pending).rejects.toThrow();
+    } finally {
+      await upstream.close();
+    }
+  });
+
+  it('内部超时仍然生效（外部未 abort，慢响应触发 UpstreamTimeoutError）', async () => {
+    const { FakeUpstream } = await import('./helpers/upstream.ts');
+    const { fetchJSON, UpstreamTimeoutError } = await import('../src/upstream/client.ts');
+    const upstream = new FakeUpstream();
+    const base = await upstream.listen();
+    try {
+      upstream.script([{ status: 200, body: { ok: 1 }, delayMs: 5000 }]);
+      await expect(fetchJSON(`${base}/chat/completions`, {}, 200)).rejects.toBeInstanceOf(UpstreamTimeoutError);
+    } finally {
+      await upstream.close();
+    }
+  });
+
+  it('外部 abort 的错误不被误报为超时', async () => {
+    const { FakeUpstream } = await import('./helpers/upstream.ts');
+    const { fetchJSON, UpstreamTimeoutError } = await import('../src/upstream/client.ts');
+    const upstream = new FakeUpstream();
+    const base = await upstream.listen();
+    try {
+      upstream.script([{ status: 200, body: { ok: 1 }, delayMs: 5000 }]);
+      const controller = new AbortController();
+      const pending = fetchJSON(`${base}/chat/completions`, { method: 'POST', signal: controller.signal }, 60_000);
+      setTimeout(() => controller.abort(new Error('client disconnected')), 100);
+      await expect(pending).rejects.toThrow(/client disconnected/);
+      await expect(pending.catch(() => null)).resolves.toBe(null); // 已 settle
+      void UpstreamTimeoutError;
+    } finally {
+      await upstream.close();
+    }
+  });
+});

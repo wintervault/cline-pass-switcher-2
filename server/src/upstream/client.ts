@@ -21,13 +21,20 @@ export interface FetchJsonResult {
 /**
  * 发请求并解析 JSON 响应。
  *
- * 与旧版的差异：超时不再让调用方拿到裸 AbortError，而是抛带上下文的
- * UpstreamTimeoutError；非 JSON 响应不再伪装成 `{raw: text}`（那会让调用方误判为成功），
- * 而是保留 text 并把 json 置为 null。
+ * - `options.signal`：外部中止信号（客户端断开等）。与内部超时信号**合并**而不是被覆盖——
+ *   `{...options, signal}` 的写法会让外部 signal 被内部 signal 静默顶掉（实测踩过）。
+ * - 超时抛带上下文的 UpstreamTimeoutError，而不是裸 AbortError。
+ * - 非 JSON 响应保留 text、json 置 null，让调用方决定如何归类。
  */
 export async function fetchJSON(url: string, options: RequestInit = {}, timeoutMs = 60_000): Promise<FetchJsonResult> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const external = options.signal;
+  const onExternalAbort = () => ctrl.abort(external instanceof AbortSignal ? external.reason : undefined);
+  if (external) {
+    if (external.aborted) ctrl.abort(external.reason);
+    else external.addEventListener('abort', onExternalAbort, { once: true });
+  }
+  const timer = setTimeout(() => ctrl.abort(new Error(`upstream timeout (${timeoutMs}ms)`)), timeoutMs);
   try {
     const res = await fetch(url, { ...options, signal: ctrl.signal });
     const text = await res.text();
@@ -39,9 +46,16 @@ export async function fetchJSON(url: string, options: RequestInit = {}, timeoutM
     }
     return { status: res.status, json, text };
   } catch (err) {
-    if (ctrl.signal.aborted) throw new UpstreamTimeoutError(url, timeoutMs);
+    if (ctrl.signal.aborted) {
+      const reason = ctrl.signal.reason;
+      if (reason instanceof Error && /upstream timeout/.test(reason.message))
+        throw new UpstreamTimeoutError(url, timeoutMs);
+      if (external?.aborted) throw err instanceof Error ? err : new Error(String(err));
+      throw new UpstreamTimeoutError(url, timeoutMs);
+    }
     throw err;
   } finally {
     clearTimeout(timer);
+    external?.removeEventListener('abort', onExternalAbort);
   }
 }

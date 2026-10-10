@@ -504,3 +504,47 @@ describe('ChatChain 钉住结果审计（docs/pinning.md D3）', () => {
     expect(r.outcome).toBe('success');
   });
 });
+
+describe('ChatChain 非流式的超时与断连（回归：signal 未接线）', () => {
+  it('客户端断开会中止在飞的非流式请求，不再让它后台跑完（旧缺陷）', async () => {
+    const controller = new AbortController();
+    upstream.script([{ status: 200, body: okBody('ch1'), delayMs: 5000 }]);
+    const chain = makeChain();
+    const started = Date.now();
+    const pending = chain.run({
+      modelId: 'cline-pass/x',
+      body: bodyOf(),
+      cfg: cfgOf({ upstreams: ['ch1'] }),
+      meta: metaOf(),
+      stream: false,
+      clientSignal: controller.signal,
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    controller.abort();
+    asFailure(await pending);
+    // 若 signal 没接到 fetch 上，这里要等满 5s 才返回
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(upstream.count).toBe(1);
+  });
+
+  it('非流式单次尝试超时生效（不再退化为 fetchJSON 内部默认 60s）', async () => {
+    config.failover.attemptTimeoutMs = 300;
+    config.failover.retriesPerChannel = 0; // 超时后的重试会吃掉假上游的默认成功响应，干扰断言
+    pool = new AccountPool(config);
+    upstream.script([{ status: 200, body: okBody('ch1'), delayMs: 5000 }]);
+    const chain = makeChain();
+    const started = Date.now();
+    const r = asFailure(
+      await chain.run({
+        modelId: 'cline-pass/x',
+        body: bodyOf(),
+        cfg: cfgOf({ upstreams: ['ch1'] }),
+        meta: metaOf(),
+        stream: false,
+      }),
+    );
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(r.message).toMatch(/timeout/i);
+    expect(r.trace[0]?.status).toBe(502);
+  });
+});

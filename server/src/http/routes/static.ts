@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { WEB_DIST } from '../../paths.ts';
-import { sendError } from '../respond.ts';
+import { canRespond, sendError } from '../respond.ts';
 import type { Ctx, Handler } from '../router.ts';
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -60,6 +60,7 @@ export function staticHandler(): Handler {
 }
 
 function respondFile(c: Ctx, file: string): void {
+  if (!canRespond(c.res)) return;
   try {
     const data = fs.readFileSync(file);
     const type = CONTENT_TYPES[path.extname(file).toLowerCase()] ?? 'application/octet-stream';

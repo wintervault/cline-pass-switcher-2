@@ -10,6 +10,11 @@ const SECURITY_HEADERS: Record<string, string> = {
   'X-Frame-Options': 'DENY',
 };
 
+/** 客户端已断开 / 响应已结束时的写保护：对这些 res 写入会抛未捕获异常，可能拖垮进程。 */
+export function canRespond(res: http.ServerResponse): boolean {
+  return !res.writableEnded && !res.destroyed && !res.headersSent;
+}
+
 export function applySecurityHeaders(res: http.ServerResponse): void {
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) {
     if (!res.hasHeader(k)) res.setHeader(k, v);
@@ -17,6 +22,7 @@ export function applySecurityHeaders(res: http.ServerResponse): void {
 }
 
 export function sendJSON(res: http.ServerResponse, status: number, body: unknown): void {
+  if (!canRespond(res)) return;
   applySecurityHeaders(res);
   const payload = JSON.stringify(body);
   res.writeHead(status, {
@@ -42,6 +48,7 @@ export function sendText(
   body: string,
   contentType = 'text/plain; charset=utf-8',
 ): void {
+  if (!canRespond(res)) return;
   applySecurityHeaders(res);
   res.writeHead(status, { 'Content-Type': contentType, 'Content-Length': Buffer.byteLength(body) });
   res.end(body);
