@@ -31,6 +31,7 @@ export default function Catalog() {
       <Table
         rowKey="id"
         size="small"
+        sticky
         loading={models.isLoading}
         dataSource={filtered.map((id) => ({ id }))}
         pagination={false}

@@ -1,5 +1,5 @@
-import { PlusOutlined } from '@ant-design/icons';
-import { App, Button, Input, Radio, Select, Space, Switch, Table, Tag, Typography } from 'antd';
+import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
+import { App, Button, Card, Input, Radio, Select, Space, Switch, Tooltip, Typography, theme } from 'antd';
 import { useState } from 'react';
 
 import { useAccounts, useSaveAccounts, useTestAccount } from '../api/hooks.ts';
@@ -19,8 +19,18 @@ interface EditRow {
   existingIndex: number | null;
 }
 
+/** 最近使用时间：当天只显示时刻，跨天带日期。 */
+function fmtUsed(ts: number): string {
+  const d = new Date(ts);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay
+    ? d.toLocaleTimeString()
+    : `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 export default function Accounts() {
   const { message } = App.useApp();
+  const { token } = theme.useToken();
   const accounts = useAccounts();
   const save = useSaveAccounts();
   const testKey = useTestAccount();
@@ -44,6 +54,10 @@ export default function Accounts() {
     setEditing(null);
     setMode(null);
     setActive(null);
+  };
+
+  const patch = (i: number, p: Partial<EditRow>): void => {
+    setEditing(rows.map((r, j) => (j === i ? { ...r, ...p } : r)));
   };
 
   const persist = (): void => {
@@ -75,8 +89,8 @@ export default function Accounts() {
     testKey.mutate(payload, {
       onSuccess: (r) =>
         r.ok
-          ? message.success(`✔ ${row.name} 可用（${r.ms}ms）${r.note ?? ''}`)
-          : message.error(`✘ ${row.name} 不可用：${r.error}`),
+          ? message.success(`${row.name} 可用（${r.ms}ms）${r.note ?? ''}`)
+          : message.error(`${row.name} 不可用：${r.error}`),
       onError: (e) => message.error(String(e)),
     });
   };
@@ -86,11 +100,28 @@ export default function Accounts() {
       <PageHeader
         title="账号池"
         desc="粘性模式保住上游 prompt cache：只有账号级错误（key 失效 / 额度用完）才轮转到下一账号。"
+        actions={
+          editing ? (
+            <Space>
+              <Button type="primary" loading={save.isPending} onClick={persist}>
+                保存
+              </Button>
+              <Button onClick={discard}>取消</Button>
+            </Space>
+          ) : (
+            <Button type="primary" onClick={startEdit}>
+              编辑账号
+            </Button>
+          )
+        }
       />
-      <Space style={{ marginBottom: 16 }} wrap>
-        <Typography.Text type="secondary">模式：</Typography.Text>
+
+      <Space size={12} wrap style={{ marginBottom: 16 }}>
+        <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+          选择策略
+        </Typography.Text>
         <Select
-          style={{ width: 200 }}
+          style={{ width: 250 }}
           value={currentMode}
           disabled={!editing}
           onChange={(v) => setMode(v)}
@@ -100,145 +131,120 @@ export default function Accounts() {
             { value: 'roundrobin', label: '每请求轮转（牺牲缓存）' },
           ]}
         />
-        <Switch
-          checkedChildren="显示密钥"
-          unCheckedChildren="隐藏密钥"
-          checked={showKeys}
-          onChange={setShowKeys}
-          disabled={!editing}
-        />
-        {editing ? (
-          <>
-            <Button type="primary" loading={save.isPending} onClick={persist}>
-              保存
-            </Button>
-            <Button onClick={discard}>取消</Button>
-          </>
-        ) : (
-          <Button type="primary" onClick={startEdit}>
-            编辑账号
-          </Button>
-        )}
+        <Tooltip title="编辑时以明文显示输入框内容">
+          <Switch
+            checkedChildren="显示密钥"
+            unCheckedChildren="隐藏密钥"
+            checked={showKeys}
+            onChange={setShowKeys}
+            disabled={!editing}
+          />
+        </Tooltip>
       </Space>
 
-      <Table
-        rowKey={(_, i) => String(i)}
-        size="small"
-        loading={accounts.isLoading}
-        dataSource={rows}
-        pagination={false}
-        columns={[
-          {
-            title: '使用',
-            width: 60,
-            render: (_, __, i) => (
-              <Radio
-                checked={currentActive === i}
-                disabled={!editing || currentMode !== 'single'}
-                onChange={() => setActive(i)}
-              />
-            ),
-          },
-          {
-            title: '名称',
-            render: (_, row, i) =>
-              editing ? (
-                <Input
-                  size="small"
-                  style={{ width: 140 }}
-                  value={row.name}
-                  onChange={(e) => setEditing(rows.map((r, j) => (j === i ? { ...r, name: e.target.value } : r)))}
-                />
-              ) : (
-                row.name
-              ),
-          },
-          {
-            title: 'API Key',
-            render: (_, row, i) => {
-              const saved = row.existingIndex !== null ? data?.accounts[row.existingIndex] : undefined;
-              if (!editing) return <Typography.Text code>{saved?.keyMasked ?? '—'}</Typography.Text>;
-              return (
-                <Input.Password
-                  size="small"
-                  visibilityToggle={{ visible: showKeys }}
-                  placeholder={saved?.hasKey ? `已保存（末 4 位 ${saved.keyTail}），留空保持不变` : 'sk_...'}
-                  value={row.key}
-                  onChange={(e) => setEditing(rows.map((r, j) => (j === i ? { ...r, key: e.target.value } : r)))}
-                />
-              );
-            },
-          },
-          {
-            title: '启用',
-            width: 70,
-            render: (_, row, i) => (
-              <Switch
-                size="small"
-                checked={row.enabled}
-                disabled={!editing}
-                onChange={(v) => setEditing(rows.map((r, j) => (j === i ? { ...r, enabled: v } : r)))}
-              />
-            ),
-          },
-          {
-            title: '请求数',
-            width: 90,
-            render: (_, row) => {
-              const st =
-                row.existingIndex !== null ? data?.stats[data?.accounts[row.existingIndex]?.name ?? ''] : undefined;
-              return (
-                <>
-                  {st?.requests ?? 0}
-                  {st?.lastError ? (
-                    <div>
-                      <Tag color="red">最近有错误</Tag>
-                    </div>
-                  ) : null}
-                </>
-              );
-            },
-          },
-          {
-            title: '最近使用',
-            width: 120,
-            render: (_, row) => {
-              const st =
-                row.existingIndex !== null ? data?.stats[data?.accounts[row.existingIndex]?.name ?? ''] : undefined;
-              return st?.lastUsed ? new Date(st.lastUsed).toLocaleString() : '—';
-            },
-          },
-          {
-            title: '操作',
-            width: 140,
-            render: (_, __, i) => (
-              <Space size={4}>
-                <Button size="small" disabled={!editing} loading={testKey.isPending} onClick={() => testRow(i)}>
-                  测试
-                </Button>
-                <Button
-                  size="small"
-                  danger
-                  disabled={!editing}
-                  onClick={() => setEditing(rows.filter((_, j) => j !== i))}
-                >
-                  删除
-                </Button>
-              </Space>
-            ),
-          },
-        ]}
-      />
-      <div style={{ marginTop: 8 }}>
+      <div style={{ display: 'grid', gap: 12, maxWidth: 960 }}>
+        {rows.map((row, i) => {
+          const saved = row.existingIndex !== null ? data?.accounts[row.existingIndex] : undefined;
+          const st =
+            row.existingIndex !== null ? data?.stats[data?.accounts[row.existingIndex]?.name ?? ''] : undefined;
+          const isActive = currentActive === i && currentMode === 'single';
+          return (
+            <Card key={String(i)} size="small" style={{ borderColor: isActive ? token.colorPrimaryBorder : undefined }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                <Tooltip title={currentMode === 'single' ? '单账号模式使用的账号' : '「单账号」模式下才能指定'}>
+                  <Radio
+                    checked={isActive}
+                    disabled={!editing || currentMode !== 'single'}
+                    onChange={() => setActive(i)}
+                  />
+                </Tooltip>
+
+                <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 6 }}>
+                  {editing ? (
+                    <Input
+                      size="small"
+                      style={{ maxWidth: 220 }}
+                      value={row.name}
+                      placeholder="账号名称"
+                      onChange={(e) => patch(i, { name: e.target.value })}
+                    />
+                  ) : (
+                    <Typography.Text strong>{row.name || '（未命名）'}</Typography.Text>
+                  )}
+                  {editing ? (
+                    <Input.Password
+                      size="small"
+                      style={{ maxWidth: 400 }}
+                      visibilityToggle={{ visible: showKeys }}
+                      placeholder={saved?.hasKey ? `已保存（末 4 位 ${saved.keyTail}），留空保持不变` : 'sk_...'}
+                      value={row.key}
+                      onChange={(e) => patch(i, { key: e.target.value })}
+                    />
+                  ) : (
+                    <Typography.Text code style={{ fontSize: 12 }}>
+                      {saved?.keyMasked ?? '—'}
+                    </Typography.Text>
+                  )}
+                </div>
+
+                <div style={{ display: 'grid', gap: 2, justifyItems: 'end', minWidth: 118 }}>
+                  <Typography.Text style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
+                    请求 {st?.requests ?? 0}
+                  </Typography.Text>
+                  <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                    {st?.lastUsed ? fmtUsed(st.lastUsed) : '未使用'}
+                  </Typography.Text>
+                  {st?.lastError && (
+                    <Typography.Text type="danger" style={{ fontSize: 11 }} ellipsis={{ tooltip: st.lastError }}>
+                      最近有错误
+                    </Typography.Text>
+                  )}
+                </div>
+
+                <Tooltip title="停用后不参与选择">
+                  <Switch
+                    size="small"
+                    checked={row.enabled}
+                    disabled={!editing}
+                    onChange={(v) => patch(i, { enabled: v })}
+                  />
+                </Tooltip>
+
+                <Space size={4}>
+                  <Button size="small" disabled={!editing} loading={testKey.isPending} onClick={() => testRow(i)}>
+                    测试
+                  </Button>
+                  {editing && (
+                    <Button
+                      size="small"
+                      type="text"
+                      danger
+                      icon={<DeleteOutlined />}
+                      aria-label="删除账号"
+                      onClick={() => setEditing(rows.filter((_, j) => j !== i))}
+                    />
+                  )}
+                </Space>
+              </div>
+            </Card>
+          );
+        })}
+
         {editing && (
           <Button
-            size="small"
+            type="dashed"
+            icon={<PlusOutlined />}
+            style={{ height: 48 }}
             onClick={() =>
               setEditing([...rows, { name: `账号${rows.length + 1}`, key: '', enabled: true, existingIndex: null }])
             }
           >
-            <PlusOutlined /> 添加账号
+            添加账号
           </Button>
+        )}
+
+        {!editing && rows.length === 0 && (
+          <Typography.Text type="secondary">还没有账号：点右上角「编辑账号」→「添加账号」。</Typography.Text>
         )}
       </div>
     </div>

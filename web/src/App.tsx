@@ -15,7 +15,6 @@ import {
   TeamOutlined,
 } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
-import type { MenuProps } from 'antd';
 import {
   Alert,
   App as AntdApp,
@@ -24,7 +23,6 @@ import {
   ConfigProvider,
   Input,
   Layout,
-  Menu,
   Modal,
   Space,
   Tooltip,
@@ -46,24 +44,15 @@ import { useHostBridge } from './hostBridge.ts';
 import { Logo } from './logo.tsx';
 import { darkTheme, initialTheme, lightTheme, persistTheme, type ThemeMode } from './theme.ts';
 
-/** 主题状态在最外层；Console 在 ConfigProvider 内部才能拿到主题 token。 */
-export default function App() {
-  const [mode, setMode] = useState<ThemeMode>(initialTheme);
-
-  const toggleTheme = (): void => {
-    const next: ThemeMode = mode === 'dark' ? 'light' : 'dark';
-    setMode(next);
-    persistTheme(next);
-  };
-
-  return (
-    <ConfigProvider theme={mode === 'dark' ? darkTheme : lightTheme} locale={zhCN}>
-      <AntdApp>
-        <Console mode={mode} onToggleTheme={toggleTheme} />
-      </AntdApp>
-    </ConfigProvider>
-  );
-}
+/** 导航注册表：壳层只认这张表；页面增减只改这里。 */
+const PAGES: { key: string; label: string; icon: ComponentType; element: ComponentType }[] = [
+  { key: 'models', label: '订阅模型', icon: NodeIndexOutlined, element: Models },
+  { key: 'accounts', label: '账号池', icon: TeamOutlined, element: Accounts },
+  { key: 'playground', label: '测试台', icon: ExperimentOutlined, element: Playground },
+  { key: 'history', label: '请求历史', icon: HistoryOutlined, element: History },
+  { key: 'catalog', label: '完整目录', icon: AppstoreOutlined, element: Catalog },
+  { key: 'security', label: '访问与安全', icon: SafetyOutlined, element: Security },
+];
 
 const HOST_LABEL: Record<string, string> = {
   running: '运行中',
@@ -72,7 +61,41 @@ const HOST_LABEL: Record<string, string> = {
   stopped: '已停止',
 };
 
-/** 桌面壳模式下的服务控制簇（浏览器直开时不渲染）。 */
+/** 左侧图标导航：64px 窄栏，纵向空间全留给内容，悬停提示页面名。 */
+function SideNav({ nav, onNav }: { nav: string; onNav: (key: string) => void }) {
+  const { token } = theme.useToken();
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '12px 0', gap: 4 }}>
+      <Tooltip title="Cline Pass 控制台" placement="right">
+        <div style={{ marginBottom: 14 }}>
+          <Logo size={28} />
+        </div>
+      </Tooltip>
+      {PAGES.map((p) => {
+        const active = nav === p.key;
+        return (
+          <Tooltip key={p.key} title={p.label} placement="right">
+            <Button
+              type="text"
+              aria-label={p.label}
+              onClick={() => onNav(p.key)}
+              style={{
+                width: 44,
+                height: 44,
+                fontSize: 18,
+                color: active ? token.colorPrimary : token.colorTextSecondary,
+                background: active ? token.colorPrimaryBg : undefined,
+              }}
+              icon={<p.icon />}
+            />
+          </Tooltip>
+        );
+      })}
+    </div>
+  );
+}
+
+/** 状态栏里的服务控制簇（桌面壳模式渲染；浏览器直开时不显示）。 */
 function HostControls({ host }: { host: ReturnType<typeof useHostBridge> }) {
   const bridge = host.host;
   if (!bridge) return null;
@@ -84,22 +107,22 @@ function HostControls({ host }: { host: ReturnType<typeof useHostBridge> }) {
         <Badge
           status={stopped ? 'error' : status === 'running' ? 'success' : 'processing'}
           text={HOST_LABEL[status] ?? status}
+          style={{ fontSize: 12 }}
         />
       </Tooltip>
-      {stopped && (
+      {stopped ? (
         <Tooltip title="启动服务">
           <Button size="small" type="text" icon={<PlayCircleOutlined />} onClick={() => void bridge.start()} />
         </Tooltip>
-      )}
-      {!stopped && (
-        <Tooltip title="停止服务">
-          <Button size="small" type="text" icon={<PauseCircleOutlined />} onClick={() => void bridge.stop()} />
-        </Tooltip>
-      )}
-      {!stopped && (
-        <Tooltip title="重启服务">
-          <Button size="small" type="text" icon={<SyncOutlined />} onClick={() => void bridge.restart()} />
-        </Tooltip>
+      ) : (
+        <>
+          <Tooltip title="停止服务">
+            <Button size="small" type="text" icon={<PauseCircleOutlined />} onClick={() => void bridge.stop()} />
+          </Tooltip>
+          <Tooltip title="重启服务">
+            <Button size="small" type="text" icon={<SyncOutlined />} onClick={() => void bridge.restart()} />
+          </Tooltip>
+        </>
       )}
       <Tooltip title="打开日志目录">
         <Button size="small" type="text" icon={<FileTextOutlined />} onClick={() => void bridge.openLogs()} />
@@ -107,19 +130,6 @@ function HostControls({ host }: { host: ReturnType<typeof useHostBridge> }) {
     </Space>
   );
 }
-
-/** 导航注册表。 */
-const PAGES: { key: string; label: string; icon: ComponentType; element: ComponentType }[] = [
-  { key: 'models', label: '订阅模型', icon: NodeIndexOutlined, element: Models },
-  { key: 'accounts', label: '账号池', icon: TeamOutlined, element: Accounts },
-  { key: 'security', label: '访问与安全', icon: SafetyOutlined, element: Security },
-  { key: 'playground', label: '测试台', icon: ExperimentOutlined, element: Playground },
-  { key: 'history', label: '请求历史', icon: HistoryOutlined, element: History },
-  { key: 'catalog', label: '完整目录', icon: AppstoreOutlined, element: Catalog },
-];
-
-/** Menu 数据源：icon 传组件引用，由 Menu 渲染。 */
-const NAV_ITEMS: MenuProps['items'] = PAGES.map((p) => ({ key: p.key, label: p.label, icon: <p.icon /> }));
 
 function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () => void }) {
   const { token } = theme.useToken();
@@ -172,79 +182,98 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
     }
   };
 
+  const proxyBase = meta.data?.proxyBase;
+
   return (
     <>
-      <Layout style={{ minHeight: '100vh' }}>
-        <Layout.Header
+      {/* 桌面应用形态：固定侧栏 + 内容区内滚 + 常驻状态栏（窗口高度恒定，不整页滚） */}
+      <Layout style={{ height: '100vh' }}>
+        <Layout.Sider
+          width={64}
           style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 16,
-            flexWrap: 'wrap',
-            // antd 的 Layout.Header 默认深色底（亮色算法下也是 #001529 系），改为跟随主题
             background: token.colorBgContainer,
-            borderBottom: `1px solid ${token.colorBorderSecondary}`,
+            borderRight: `1px solid ${token.colorBorderSecondary}`,
           }}
         >
-          <Space size={8} align="center">
-            <Logo size={26} />
-            <Typography.Title level={5} style={{ margin: 0 }}>
-              Cline Pass 控制台
-            </Typography.Title>
-          </Space>
-          <Menu
-            mode="horizontal"
-            selectedKeys={[nav]}
-            onClick={(e) => setNav(e.key)}
-            items={NAV_ITEMS}
-            style={{ flex: 1, minWidth: 0, background: 'transparent' }}
-          />
-          <Space style={{ marginLeft: 'auto' }}>
+          <SideNav nav={nav} onNav={setNav} />
+        </Layout.Sider>
+
+        <Layout style={{ background: 'transparent', minWidth: 0 }}>
+          <Layout.Content style={{ overflow: 'auto', padding: '20px 24px 32px' }}>
+            <div style={{ maxWidth: 1400, margin: '0 auto' }}>
+              {meta.data && !meta.data.configured && (
+                <Alert
+                  type="error"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="尚未配置上游 API Key"
+                  description="在「账号池」里添加你的 Cline Pass 账号（sk_ 开头的 key）并保存；也可通过 CLINE_PASS_KEY 环境变量提供。"
+                  action={
+                    <Button size="small" danger onClick={() => setNav('accounts')}>
+                      去配置
+                    </Button>
+                  }
+                />
+              )}
+              {PAGES.map((p) => (
+                <div key={p.key} style={{ display: nav === p.key ? undefined : 'none' }}>
+                  <p.element />
+                </div>
+              ))}
+            </div>
+          </Layout.Content>
+
+          <Layout.Footer
+            style={{
+              height: 34,
+              padding: '0 14px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 14,
+              background: token.colorBgContainer,
+              borderTop: `1px solid ${token.colorBorderSecondary}`,
+            }}
+          >
             <HostControls host={host} />
-            <Tooltip title={mode === 'dark' ? '切换到亮色' : '切换到暗色'}>
-              <Button
-                size="small"
-                type="text"
-                icon={mode === 'dark' ? <SunOutlined /> : <MoonOutlined />}
-                onClick={onToggleTheme}
-              />
-            </Tooltip>
-            <Tooltip title="刷新全部数据">
-              <Button size="small" type="text" icon={<ReloadOutlined />} onClick={refresh} />
-            </Tooltip>
-            {authKey && (
-              <Tooltip title="清除本机保存的访问密钥">
+            {proxyBase && (
+              <Tooltip title="下游客户端使用的接入地址（点击复制）">
+                <Typography.Text type="secondary" style={{ fontSize: 12 }} copyable={{ text: proxyBase }}>
+                  {proxyBase}
+                </Typography.Text>
+              </Tooltip>
+            )}
+            <Space size={2} style={{ marginLeft: 'auto' }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                v{meta.data?.version ?? '…'}
+              </Typography.Text>
+              <Tooltip title={mode === 'dark' ? '切换到亮色' : '切换到暗色'}>
                 <Button
                   size="small"
                   type="text"
-                  icon={<LogoutOutlined />}
-                  onClick={() => {
-                    setAuthKey('');
-                    setKey('');
-                    qc.invalidateQueries();
-                  }}
+                  icon={mode === 'dark' ? <SunOutlined /> : <MoonOutlined />}
+                  onClick={onToggleTheme}
                 />
               </Tooltip>
-            )}
-          </Space>
-        </Layout.Header>
-
-        <Layout.Content style={{ padding: 24, maxWidth: 1360, margin: '0 auto', width: '100%' }}>
-          {meta.data && !meta.data.configured && (
-            <Alert
-              type="error"
-              showIcon
-              style={{ marginBottom: 16 }}
-              message="尚未配置上游 API Key"
-              description="在「账号池」里添加你的 Cline Pass 账号（sk_ 开头的 key）并保存；也可通过 CLINE_PASS_KEY 环境变量提供。"
-            />
-          )}
-          {PAGES.map((p) => (
-            <div key={p.key} style={{ display: nav === p.key ? undefined : 'none' }}>
-              <p.element />
-            </div>
-          ))}
-        </Layout.Content>
+              <Tooltip title="刷新全部数据">
+                <Button size="small" type="text" icon={<ReloadOutlined />} onClick={refresh} />
+              </Tooltip>
+              {authKey && (
+                <Tooltip title="清除本机保存的访问密钥">
+                  <Button
+                    size="small"
+                    type="text"
+                    icon={<LogoutOutlined />}
+                    onClick={() => {
+                      setAuthKey('');
+                      setKey('');
+                      qc.invalidateQueries();
+                    }}
+                  />
+                </Tooltip>
+              )}
+            </Space>
+          </Layout.Footer>
+        </Layout>
       </Layout>
 
       <Modal
@@ -270,5 +299,24 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
         </Space>
       </Modal>
     </>
+  );
+}
+
+/** 主题状态在最外层；Console 在 ConfigProvider 内部才能拿到主题 token。 */
+export default function App() {
+  const [mode, setMode] = useState<ThemeMode>(initialTheme);
+
+  const toggleTheme = (): void => {
+    const next: ThemeMode = mode === 'dark' ? 'light' : 'dark';
+    setMode(next);
+    persistTheme(next);
+  };
+
+  return (
+    <ConfigProvider theme={mode === 'dark' ? darkTheme : lightTheme} locale={zhCN}>
+      <AntdApp>
+        <Console mode={mode} onToggleTheme={toggleTheme} />
+      </AntdApp>
+    </ConfigProvider>
   );
 }
