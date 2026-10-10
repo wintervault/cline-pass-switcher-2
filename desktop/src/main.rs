@@ -60,10 +60,7 @@ fn main() {
             show_main(app);
         }))
         .setup(|app| {
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+            let (data_dir, portable) = resolve_data_dir(app.handle());
             let log_dir = data_dir.join("logs");
             std::fs::create_dir_all(&log_dir)?;
 
@@ -75,9 +72,18 @@ fn main() {
                 job: job.0 as isize,
                 data_dir,
                 entry,
-                log_dir,
+                log_dir: log_dir.clone(),
                 exiting: AtomicBool::new(false),
             }));
+
+            log_line(
+                &log_dir,
+                &format!(
+                    "[壳] 数据目录：{}（{}）",
+                    log_dir.parent().unwrap_or(&log_dir).display(),
+                    if portable { "便携模式：数据随 exe 目录" } else { "安装模式：%APPDATA%" }
+                ),
+            );
 
             build_tray(&handle)?;
 
@@ -487,6 +493,27 @@ fn wait_healthz(port: u16, timeout: Duration) -> bool {
 }
 
 // ---------- 工具 ----------
+
+/// 数据目录解析（VS Code Portable Mode 同款检测）：
+/// exe 旁存在 `data` 目录 → **便携模式**，数据（配置/密钥/日志）就地保存；
+/// 否则 → **安装模式**，用 `%APPDATA%`——安装目录会被升级/卸载流程清空，
+/// 数据混进去会被删（这是默认不能放安装目录的决定性原因，两种形态各得其所）。
+fn resolve_data_dir(app: &AppHandle) -> (PathBuf, bool) {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let portable = dir.join("data");
+            if portable.is_dir() {
+                return (portable, true);
+            }
+        }
+    }
+    (
+        app.path()
+            .app_data_dir()
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default()),
+        false,
+    )
+}
 
 fn find_node() -> Option<PathBuf> {
     // PATH 上有 node 就直接用

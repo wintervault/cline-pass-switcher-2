@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.2.0（2026-10-10）
+
+### 新增
+
+- **便携版（Portable）**：`npm run desktop:portable` 产出 zip——exe + 运行时 + `data/` 目录，
+  解压即用、数据就地。
+- **双形态数据目录检测**（VS Code Portable Mode 同款）：exe 旁存在 `data` 目录 → 便携模式
+  （数据就地，删目录即彻底清除）；否则安装模式（`%APPDATA%`）。安装版用户行为不变；
+  便携版的取舍已写进 `data/README.txt`：config.json 含密钥，介质丢失即泄露。
+
 ## 2.1.3（2026-10-10）
 
 撤销 2.1.2 的 NSIS 钩子（弄巧成拙，用户点名质疑后复盘）：

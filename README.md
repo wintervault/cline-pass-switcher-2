@@ -62,7 +62,13 @@ npm run desktop:build   # 产物在 desktop/target/{release,nsis}/
   （正常退出 / 崩溃 / 被任务管理器强杀），OS 都会终止整棵服务进程树，不会留下
   「界面关了进程还在」的幽灵
 - 控制台右上角有服务状态灯与启停/重启/日志按钮（仅桌面模式显示）
-- 数据目录：`%APPDATA%\com.wintervault.clinepass`；日志在其 `logs/` 子目录
+- **便携版**：`desktop/target/portable/cline-pass-switcher-<版本>-portable.zip`——
+  解压即用，数据（配置/密钥/日志）就地保存在解压目录的 `data/` 里，
+  **删除目录 = 彻底清除**。安全提示：config.json 含上游密钥，便携介质丢失即密钥泄露；
+- **双形态规则**（VS Code Portable Mode 同款检测）：exe 旁存在 `data` 目录 = 便携模式，
+  不存在 = 安装模式（数据走 `%APPDATA%\com.wintervault.clinepass`）。同一台机器上
+  便携版与安装版**不能同时运行**（同端口 + 单实例标识）；
+- 数据目录（安装模式）：`%APPDATA%\com.wintervault.clinepass`；日志在其 `logs/` 子目录
 - **卸载/升级**：安装包与卸载器会先优雅停服（落盘）再动文件，运行中直接卸载也安全；
   卸载**默认保留数据目录**（配置含密钥），彻底清除请手动删除上述目录
 - 前提：系统需安装 Node.js ≥ 20
