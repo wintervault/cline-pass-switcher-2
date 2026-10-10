@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { enabledAccounts, isConfigured, publicProxyBase } from '../src/config/derive.ts';
 import { applyEnvOverrides } from '../src/config/env.ts';
 import { defaultConfig } from '../src/config/schema.ts';
+import { mergeAccounts } from '../src/http/routes/api.ts';
 import { assertBindSafe, InsecureBindError } from '../src/security/bind.ts';
 import { isLoopbackHost, maskSecret, safeEqual } from '../src/security/compare.ts';
 
@@ -139,5 +140,60 @@ describe('derive', () => {
     cfg.bindHost = '0.0.0.0';
     cfg.port = 9000;
     expect(publicProxyBase(cfg)).toBe('http://0.0.0.0:9000/v1');
+  });
+});
+
+describe('mergeAccounts（key 归属防错位）', () => {
+  const existing = [
+    { name: 'A', key: 'sk_aaaa', enabled: true },
+    { name: 'B', key: 'sk_bbbb', enabled: true },
+    { name: 'C', key: 'sk_cccc', enabled: false },
+  ];
+
+  it('existingIndex 指定 key 归属：留空 = 继承旧 key', () => {
+    const merged = mergeAccounts(existing, [
+      { name: 'A改', existingIndex: 0, enabled: true },
+      { name: 'B', existingIndex: 1, enabled: true },
+    ]);
+    expect(merged.map((a) => a.key)).toEqual(['sk_aaaa', 'sk_bbbb']);
+  });
+
+  it('删除首行后，剩余行不会错位继承别人的 key（回归：按行号对位会拿错）', () => {
+    const merged = mergeAccounts(existing, [
+      { name: 'B', existingIndex: 1, enabled: true },
+      { name: 'C', existingIndex: 2, enabled: true },
+    ]);
+    expect(merged.map((a) => a.key)).toEqual(['sk_bbbb', 'sk_cccc']);
+  });
+
+  it('新增行（无 existingIndex）必须填 key', () => {
+    const merged = mergeAccounts(existing, [
+      { name: '新', key: 'sk_new', enabled: true },
+      { name: 'B', existingIndex: 1, enabled: true },
+    ]);
+    expect(merged.map((a) => a.key)).toEqual(['sk_new', 'sk_bbbb']);
+    // 没填 key 的新行被丢弃
+    const merged2 = mergeAccounts(existing, [{ name: '空', enabled: true }]);
+    expect(merged2).toEqual([]);
+  });
+
+  it('掩码串原样传回当作「未修改」处理，不覆盖密钥', () => {
+    const merged = mergeAccounts(existing, [{ name: 'A', key: '••••••••aaaa', existingIndex: 0, enabled: true }]);
+    expect(merged[0]?.key).toBe('sk_aaaa');
+  });
+
+  it('显式新 key 覆盖旧 key（换 key 场景）', () => {
+    const merged = mergeAccounts(existing, [{ name: 'A', key: 'sk_replaced', existingIndex: 0, enabled: true }]);
+    expect(merged[0]?.key).toBe('sk_replaced');
+  });
+
+  it('existingIndex 越界 = 视为无旧 key（不崩）', () => {
+    const merged = mergeAccounts(existing, [{ name: 'X', existingIndex: 99, enabled: true }]);
+    expect(merged).toEqual([]);
+  });
+
+  it('非数组输入 → 空结果', () => {
+    expect(mergeAccounts(existing, 'garbage')).toEqual([]);
+    expect(mergeAccounts(existing, null)).toEqual([]);
   });
 });

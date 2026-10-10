@@ -2,7 +2,7 @@ import type { IncomingMessage } from 'node:http';
 
 import { type AppContext, updateConfig } from '../../appContext.ts';
 import { isConfigured, publicProxyBase } from '../../config/derive.ts';
-import type { Config, PerModelConfig } from '../../config/schema.ts';
+import type { Account, Config, PerModelConfig } from '../../config/schema.ts';
 import type { ChainResult } from '../../proxy/chain.ts';
 import { maskSecret } from '../../security/compare.ts';
 import { fetchJSON } from '../../upstream/client.ts';
@@ -57,6 +57,29 @@ export function normalizePerModel(raw: unknown): PerModelConfig {
     pinMode: source['pinMode'] === 'preferred' ? 'preferred' : 'strict',
     sort: source['sort'] === 'cost' || source['sort'] === 'ttft' || source['sort'] === 'tps' ? source['sort'] : null,
   };
+}
+
+/**
+ * 账号列表合并（前端编辑结果 → 服务端账号池）。
+ *
+ * key 的归属由每行的 `existingIndex`（编辑开始时在旧列表里的下标）显式指定，
+ * **绝不能按当前行号对位**：删除一行会让后面的行错位继承别人的密钥（数据破坏）。
+ * 前端拿不到明文，留空 = 用 existingIndex 指向的旧 key；掩码串原样传回也当作「未修改」。
+ */
+export function mergeAccounts(existing: Account[], incoming: unknown): Account[] {
+  const rows = Array.isArray(incoming) ? incoming : [];
+  return rows
+    .map((raw, i) => {
+      const a = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+      const name = String(a['name'] ?? `账号${i + 1}`).slice(0, 50);
+      const key = String(a['key'] ?? '').trim();
+      const safeKey = /^[•*]+$/.test(key.slice(0, -4)) || key.includes('•') ? '' : key;
+      const keepIdx = a['existingIndex'];
+      const kept =
+        typeof keepIdx === 'number' && Number.isInteger(keepIdx) && keepIdx >= 0 ? (existing[keepIdx]?.key ?? '') : '';
+      return { name, key: safeKey || kept, enabled: a['enabled'] !== false };
+    })
+    .filter((a) => a.key);
 }
 
 /** 订阅模型 + 配置 + 观测数据（控制台主表数据源）。 */
@@ -233,22 +256,7 @@ export function registerApiRoutes(
       mode?: unknown;
       active?: unknown;
     };
-    const incoming = Array.isArray(payload.accounts) ? payload.accounts : [];
-    const existing = config().accounts;
-
-    const accounts = incoming
-      .map((raw, i) => {
-        const a = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-        const name = String(a['name'] ?? `账号${i + 1}`).slice(0, 50);
-        const key = String(a['key'] ?? '').trim();
-        // API 不回传明文 key（只给掩码），前端编辑时留空 = 保持原 key。
-        // 万一前端把掩码原样传回来（旧版页面缓存等），必须当作「未修改」处理，否则密钥会被掩码串覆盖
-        const safeKey = /^[•*]+$/.test(key.slice(0, -4)) || key.includes('•') ? '' : key;
-        const resolvedKey = safeKey || (i < existing.length ? (existing[i]?.key ?? '') : '');
-        return { name, key: resolvedKey, enabled: a['enabled'] !== false };
-      })
-      .filter((a) => a.key);
-
+    const accounts = mergeAccounts(config().accounts, payload.accounts);
     if (!accounts.length) return sendError(c.res, 400, '至少需要一个有效账号（key 非空）');
 
     updateConfig(ctx, (cfg) => {
@@ -268,7 +276,12 @@ export function registerApiRoutes(
   router.post('/api/accounts/test', async (c: Ctx) => {
     const body = await readJsonBody(c.req);
     if (!body.ok) return sendError(c.res, 400, body.reason === 'bad-json' ? 'invalid JSON body' : 'body too large');
-    const key = String((body.value as { key?: unknown })?.key ?? '').trim();
+    const payload = (body.value ?? {}) as { key?: unknown; index?: unknown };
+    // 两种用法：传 key（新增账号保存前测试）或传 index（测试已存账号——服务端取，前端拿不到明文）
+    let key = String(payload.key ?? '').trim();
+    if (!key && typeof payload.index === 'number' && Number.isInteger(payload.index)) {
+      key = config().accounts[payload.index]?.key ?? '';
+    }
     if (!key) return sendError(c.res, 400, 'key required');
 
     const started = Date.now();

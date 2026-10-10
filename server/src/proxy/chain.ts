@@ -93,7 +93,7 @@ type AttemptOutcome = AttemptSuccess | AttemptStream | AttemptError;
 const errorBody = (message: string): Record<string, unknown> => ({ error: { message, type: 'upstream_error' } });
 
 /** slug 等价比较：显示名差异（GMICloud/gmicloud、z-ai/zai）不应造成审计误判。 */
-function sameSlug(a: string, b: string): boolean {
+export function sameSlug(a: string, b: string): boolean {
   if (a === b) return true;
   return a.toLowerCase().replace(/[^a-z0-9]/g, '') === b.toLowerCase().replace(/[^a-z0-9]/g, '');
 }

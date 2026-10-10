@@ -100,8 +100,8 @@ export function useSaveAccounts() {
 
 export function useTestAccount() {
   return useMutation({
-    mutationFn: (key: string) =>
-      api<{ ok: boolean; ms: number; error?: string; note?: string }>('/api/accounts/test', { json: { key } }),
+    mutationFn: (payload: { key: string } | { index: number }) =>
+      api<{ ok: boolean; ms: number; error?: string; note?: string }>('/api/accounts/test', { json: payload }),
   });
 }
 

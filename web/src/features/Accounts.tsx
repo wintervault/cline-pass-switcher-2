@@ -9,6 +9,12 @@ interface EditRow {
   /** 空串 = 保持原 key（服务端拿不到明文） */
   key: string;
   enabled: boolean;
+  /**
+   * 编辑开始时该行在已存列表里的下标；新增行为 null。
+   * key 的归属由它指定——**不能按当前行号对位**：删除一行会让后面的行
+   * 错位继承别人的密钥（服务端按 existingIndex 取旧 key）。
+   */
+  existingIndex: number | null;
 }
 
 export default function Accounts() {
@@ -22,7 +28,8 @@ export default function Accounts() {
   const [active, setActive] = useState<number | null>(null);
 
   const data = accounts.data;
-  const rows: EditRow[] = editing ?? data?.accounts.map((a) => ({ name: a.name, key: '', enabled: a.enabled })) ?? [];
+  const rows: EditRow[] =
+    editing ?? data?.accounts.map((a, i) => ({ name: a.name, key: '', enabled: a.enabled, existingIndex: i })) ?? [];
   const currentMode = mode ?? data?.mode ?? 'sticky';
   const currentActive = active ?? data?.active ?? 0;
 
@@ -38,8 +45,7 @@ export default function Accounts() {
   };
 
   const persist = (): void => {
-    const effective = rows.filter((r) => r.key || data?.accounts[rows.indexOf(r)]?.hasKey);
-    if (!effective.length) {
+    if (!rows.some((r) => r.key || (r.existingIndex !== null && data?.accounts[r.existingIndex]?.hasKey))) {
       message.warning('至少需要一个账号');
       return;
     }
@@ -56,15 +62,19 @@ export default function Accounts() {
   };
 
   const testRow = (index: number): void => {
-    if (!rows[index]?.key) {
-      message.warning('请先填写该账号的 key（保存后才能用已存的 key 测试）');
+    const row = rows[index];
+    if (!row) return;
+    // 填了新 key 就测新 key；否则用已存的 key（服务端按下标取，前端拿不到明文）
+    const payload = row.key ? { key: row.key } : row.existingIndex !== null ? { index: row.existingIndex } : null;
+    if (!payload) {
+      message.warning('该账号还没有 key：请填写，或先保存过一次');
       return;
     }
-    testKey.mutate(rows[index]?.key ?? '', {
+    testKey.mutate(payload, {
       onSuccess: (r) =>
         r.ok
-          ? message.success(`✔ ${rows[index]?.name} 可用（${r.ms}ms）${r.note ?? ''}`)
-          : message.error(`✘ ${rows[index]?.name} 不可用：${r.error}`),
+          ? message.success(`✔ ${row.name} 可用（${r.ms}ms）${r.note ?? ''}`)
+          : message.error(`✘ ${row.name} 不可用：${r.error}`),
       onError: (e) => message.error(String(e)),
     });
   };
@@ -140,7 +150,7 @@ export default function Accounts() {
           {
             title: 'API Key',
             render: (_, row, i) => {
-              const saved = data?.accounts[i];
+              const saved = row.existingIndex !== null ? data?.accounts[row.existingIndex] : undefined;
               if (!editing) return <Typography.Text code>{saved?.keyMasked ?? '—'}</Typography.Text>;
               return (
                 <Input.Password
@@ -168,8 +178,9 @@ export default function Accounts() {
           {
             title: '请求数',
             width: 90,
-            render: (_, __, i) => {
-              const st = data?.stats[data?.accounts[i]?.name ?? ''];
+            render: (_, row) => {
+              const st =
+                row.existingIndex !== null ? data?.stats[data?.accounts[row.existingIndex]?.name ?? ''] : undefined;
               return (
                 <>
                   {st?.requests ?? 0}
@@ -185,8 +196,9 @@ export default function Accounts() {
           {
             title: '最近使用',
             width: 120,
-            render: (_, __, i) => {
-              const st = data?.stats[data?.accounts[i]?.name ?? ''];
+            render: (_, row) => {
+              const st =
+                row.existingIndex !== null ? data?.stats[data?.accounts[row.existingIndex]?.name ?? ''] : undefined;
               return st?.lastUsed ? new Date(st.lastUsed).toLocaleString() : '—';
             },
           },
@@ -215,7 +227,9 @@ export default function Accounts() {
         {editing && (
           <Button
             size="small"
-            onClick={() => setEditing([...rows, { name: `账号${rows.length + 1}`, key: '', enabled: true }])}
+            onClick={() =>
+              setEditing([...rows, { name: `账号${rows.length + 1}`, key: '', enabled: true, existingIndex: null }])
+            }
           >
             ＋ 添加账号
           </Button>

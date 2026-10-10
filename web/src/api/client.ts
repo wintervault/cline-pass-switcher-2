@@ -35,6 +35,21 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
   }
   const res = await fetch(path, { method: options.method ?? (body !== undefined ? 'POST' : 'GET'), headers, body });
   if (res.status === 401) throw new UnauthorizedError();
-  if (!res.ok) throw new Error(`${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+  if (!res.ok) {
+    // 服务端错误体形状不一：{error:{message}} / {error:"..."} / {error:...} / 纯文本——都归一成人话
+    const raw = await res.text().catch(() => '');
+    let detail = raw.slice(0, 300);
+    try {
+      const parsed = JSON.parse(raw) as { error?: unknown; message?: unknown };
+      if (typeof parsed.error === 'string') detail = parsed.error;
+      else if (parsed.error && typeof parsed.error === 'object') {
+        const m = (parsed.error as { message?: unknown }).message;
+        if (typeof m === 'string') detail = m;
+      } else if (typeof parsed.message === 'string') detail = parsed.message;
+    } catch {
+      /* 非 JSON 错误体，用原文 */
+    }
+    throw new Error(detail || `${res.status} ${res.statusText}`);
+  }
   return (await res.json()) as T;
 }

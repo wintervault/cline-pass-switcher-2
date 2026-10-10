@@ -1,7 +1,7 @@
 import { Readable } from 'node:stream';
 
 import type { AppContext } from '../../appContext.ts';
-import type { ChainStream } from '../../proxy/chain.ts';
+import { type ChainStream, sameSlug } from '../../proxy/chain.ts';
 import { RoutingTap } from '../../proxy/stream.ts';
 import { emptyRouting } from '../../upstream/routing.ts';
 import { sendError } from '../respond.ts';
@@ -138,8 +138,7 @@ function respondStream(ctx: AppContext, c: Ctx, modelId: string, result: ChainSt
     routing.canonicalSlug = canonical;
     // 流式钉住审计：只能标记不能撤回（内容已流出）——写入历史供 UI 红标（D3）
     const { enforced, strict, target } = result.pinAudit;
-    const pinMismatch =
-      enforced && strict && target !== null && provider !== null && provider.toLowerCase() !== target.toLowerCase();
+    const pinMismatch = enforced && strict && target !== null && provider !== null && !sameSlug(provider, target);
     recordHistory(ctx, modelId, { ...result, routing, outcome: result.outcome }, { stream: true, pinMismatch });
   });
 
