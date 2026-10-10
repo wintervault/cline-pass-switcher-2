@@ -32,6 +32,9 @@ export async function chainStream(): Promise<StreamFixture> {
   const metaOf = (over: Partial<ModelMeta> = {}): ModelMeta => ({
     pipeline: 'planner',
     pinnable: true,
+    pinState: 'enforced',
+    pinProbeAt: null,
+    pinDisabledReason: null,
     availableProviders: [],
     upstreams: ['ch1', 'ch2'],
     upstreamDetail: {},

@@ -116,10 +116,21 @@ export function registerApiRoutes(
     if (!body.ok) return sendError(c.res, 400, body.reason === 'bad-json' ? 'invalid JSON body' : 'body too large');
     const model = (body.value as { model?: unknown })?.model;
     if (typeof model !== 'string' || !model) return sendError(c.res, 400, 'model required');
-    const { results, upstreams } = await ctx.probe.validateUpstreams(model);
+    const outcome = await ctx.probe.validateUpstreams(model);
+    if (!outcome.ok) {
+      // 钉住参数被网关丢弃：校验结果是假绿，明确拒绝而不是输出全绿误导
+      sendJSON(c.res, 409, { ok: false, error: outcome.reason, pinState: outcome.pinState });
+      return;
+    }
     const summary: Record<string, number> = { ok: 0, limited: 0, bad: 0, auth: 0, unknown: 0 };
-    for (const r of Object.values(results)) summary[r.status] = (summary[r.status] ?? 0) + 1;
-    sendJSON(c.res, 200, { ok: true, summary, results, upstreams });
+    for (const r of Object.values(outcome.results)) summary[r.status] = (summary[r.status] ?? 0) + 1;
+    sendJSON(c.res, 200, {
+      ok: true,
+      summary,
+      results: outcome.results,
+      upstreams: outcome.upstreams,
+      pinState: outcome.pinState,
+    });
   });
 
   router.post('/api/fetch-official-models', async (c: Ctx) => {
@@ -363,7 +374,7 @@ export function recordHistory(
     message?: string;
     degraded?: boolean;
   },
-  options: { stream: boolean },
+  options: { stream: boolean; pinMismatch?: boolean },
 ): void {
   ctx.metaStore.update((meta) => {
     const entry = {
@@ -377,6 +388,7 @@ export function recordHistory(
       account: result.account?.name ?? null,
       attempts: result.trace.map((t) => t.upstream ?? 'auto'),
       trace: result.trace,
+      pinMismatch: options.pinMismatch ?? false,
     };
     meta.history.unshift(entry);
     if (meta.history.length > ctx.configStore.value.historyLimit)

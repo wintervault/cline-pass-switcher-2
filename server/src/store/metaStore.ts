@@ -31,6 +31,7 @@ const HistoryEntrySchema = z.object({
   account: z.string().nullable().catch(null).default(null),
   attempts: z.array(z.string()).catch([]).default([]),
   trace: z.array(TraceEntrySchema).catch([]).default([]),
+  pinMismatch: z.boolean().catch(false).default(false),
 });
 
 const UpstreamDetailSchema = z.object({
@@ -49,6 +50,9 @@ const UpstreamStatusSchema = z.object({
 const ModelMetaSchema = z.object({
   pipeline: z.enum(['planner', 'direct']).nullable().catch(null).default(null),
   pinnable: z.boolean().catch(false).default(false),
+  pinState: z.enum(['enforced', 'ignored', 'unknown']).catch('unknown').default('unknown'),
+  pinProbeAt: z.number().nullable().catch(null).default(null),
+  pinDisabledReason: z.string().nullable().catch(null).default(null),
   availableProviders: z.array(z.string()).catch([]).default([]),
   upstreams: z.array(z.string()).catch([]).default([]),
   upstreamDetail: z.record(z.string(), UpstreamDetailSchema).catch({}).default({}),

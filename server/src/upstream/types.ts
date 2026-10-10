@@ -3,6 +3,15 @@
 /** 两条路由管道（实测结论，README 有证据）。 */
 export type Pipeline = 'planner' | 'direct';
 
+/**
+ * 钉住参数是否被网关读取（探针判定，见 docs/pinning.md D1）。
+ * 网关行为按账号风控而异且随时间变化，代码不得硬编码，必须逐模型探测：
+ * - enforced：探针报错（参数被读取），注入有意义，可审计钉住结果
+ * - ignored：探针 200（参数被整体丢弃），注入空转，校验结果是假绿
+ * - unknown：探针失败或未探测过——保守处理：继续注入但不审计
+ */
+export type PinState = 'enforced' | 'ignored' | 'unknown';
+
 /** 渠道校验后的状态。 */
 export type UpstreamStatusKind = 'ok' | 'limited' | 'bad' | 'auth' | 'unknown';
 
@@ -35,6 +44,11 @@ export interface TraceEntry {
 export interface ModelMeta {
   pipeline: Pipeline | null;
   pinnable: boolean;
+  /** 钉住参数是否被网关读取（探针判定）。 */
+  pinState: PinState;
+  pinProbeAt: number | null;
+  /** pinState=ignored 时的原因说明（含探针实测到的实际路由）。 */
+  pinDisabledReason: string | null;
   /** 探测到的可用渠道清单（planner 来自报错文本，direct 来自 OpenRouter 404 元数据）。 */
   availableProviders: string[];
   /** 合并后的已知渠道清单（探测 + 学习），用于排除换算白名单。 */
@@ -63,6 +77,8 @@ export interface HistoryEntry {
   /** 旧版遗留字段：尝试序列（新记录用 trace）。 */
   attempts: string[];
   trace: TraceEntry[];
+  /** strict 钉住但网关实际由别的渠道提供服务（流式只能标记，不能撤回）。 */
+  pinMismatch: boolean;
 }
 
 export interface AccountStats {
@@ -108,6 +124,9 @@ export function blankModelMeta(): ModelMeta {
   return {
     pipeline: null,
     pinnable: false,
+    pinState: 'unknown',
+    pinProbeAt: null,
+    pinDisabledReason: null,
     availableProviders: [],
     upstreams: [],
     upstreamDetail: {},

@@ -50,6 +50,9 @@ const makeChain = (): ChatChain =>
 const metaOf = (over: Partial<ModelMeta> = {}): ModelMeta => ({
   pipeline: 'planner',
   pinnable: true,
+  pinState: 'enforced',
+  pinProbeAt: null,
+  pinDisabledReason: null,
   availableProviders: [],
   upstreams: ['ch1', 'ch2', 'ch3'],
   upstreamDetail: {},
@@ -406,5 +409,98 @@ describe('buildCandidates 候选生成', () => {
     });
     expect(plan.degraded).toBe(true);
     expect(plan.notes.join()).toContain('探测');
+  });
+});
+
+describe('ChatChain 钉住结果审计（docs/pinning.md D3）', () => {
+  it('strict + enforced + finalProvider 不符 → 该候选按失败处理，切下一个', async () => {
+    config.failover.retriesPerChannel = 0;
+    pool = new AccountPool(config);
+    upstream.script([
+      { status: 200, body: okBody('chX') }, // 网关不听话：目标 ch1，实际 chX
+      { status: 200, body: okBody('ch2') },
+    ]);
+    const chain = makeChain();
+    const ok = asSuccess(
+      await chain.run({ modelId: 'cline-pass/x', body: bodyOf(), cfg: cfgOf(), meta: metaOf(), stream: false }),
+    );
+    expect(upstream.count).toBe(2);
+    expect(ok.trace[0]?.note).toContain('钉住未生效');
+    expect(ok.trace[0]?.note).toContain('chX');
+    expect(ok.routing.finalProvider).toBe('ch2');
+    expect(health.isCooling('cline-pass/x', 'ch1')).toBe(true);
+  });
+
+  it('全部候选都不听话 → 失败，错误信息说明钉住未生效', async () => {
+    config.failover.retriesPerChannel = 0;
+    pool = new AccountPool(config);
+    upstream.script([
+      { status: 200, body: okBody('chX') },
+      { status: 200, body: okBody('chY') },
+    ]);
+    const chain = makeChain();
+    const r = await chain.run({ modelId: 'cline-pass/x', body: bodyOf(), cfg: cfgOf(), meta: metaOf(), stream: false });
+    expect(r.outcome).toBe('failure');
+    if (r.outcome === 'failure') expect(r.message).toContain('钉住未生效');
+  });
+
+  it('pinState=ignored（网关丢弃参数）→ 不审计，照常成功', async () => {
+    upstream.script([{ status: 200, body: okBody('chX') }]);
+    const chain = makeChain();
+    const r = await chain.run({
+      modelId: 'cline-pass/x',
+      body: bodyOf(),
+      cfg: cfgOf(),
+      meta: metaOf({ pinState: 'ignored' }),
+      stream: false,
+    });
+    expect(r.outcome).toBe('success');
+    expect(upstream.count).toBe(1);
+  });
+
+  it('pinState=unknown（未探测）→ 保守放行，不错杀', async () => {
+    upstream.script([{ status: 200, body: okBody('chX') }]);
+    const chain = makeChain();
+    const r = await chain.run({
+      modelId: 'cline-pass/x',
+      body: bodyOf(),
+      cfg: cfgOf(),
+      meta: metaOf({ pinState: 'unknown' }),
+      stream: false,
+    });
+    expect(r.outcome).toBe('success');
+  });
+
+  it('preferred 的最后一个候选放开回退 → 不审计', async () => {
+    upstream.script([{ status: 200, body: okBody('chX') }]);
+    const chain = makeChain();
+    const r = await chain.run({
+      modelId: 'cline-pass/x',
+      body: bodyOf(),
+      cfg: cfgOf({ pinMode: 'preferred', upstreams: ['ch1'] }),
+      meta: metaOf(),
+      stream: false,
+    });
+    expect(r.outcome).toBe('success');
+  });
+
+  it('响应无元数据（finalProvider 为空）→ 无法审计，放行', async () => {
+    upstream.script([{ status: 200, body: { choices: [{ message: { content: 'OK' } }] } }]);
+    const chain = makeChain();
+    const r = await chain.run({ modelId: 'cline-pass/x', body: bodyOf(), cfg: cfgOf(), meta: metaOf(), stream: false });
+    expect(r.outcome).toBe('success');
+  });
+
+  it('slug 等价（GMICloud vs gmicloud）不误判', async () => {
+    upstream.script([{ status: 200, body: okBody('Gmi Cloud') }]);
+    const chain = makeChain();
+    const r = await chain.run({
+      modelId: 'cline-pass/x',
+      body: bodyOf(),
+      cfg: cfgOf({ upstreams: ['gmicloud'] }),
+      meta: metaOf({ upstreams: ['gmicloud'] }),
+      stream: false,
+    });
+    expect(r.outcome).toBe('success');
   });
 });

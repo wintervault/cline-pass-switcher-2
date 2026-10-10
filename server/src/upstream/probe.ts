@@ -1,8 +1,8 @@
 import type { AccountPool } from '../accounts/pool.ts';
 import { fetchJSON } from './client.ts';
 import { classifyChannelStatus } from './errors.ts';
-import { parseRouting } from './routing.ts';
-import type { ModelMeta, UpstreamStatusKind } from './types.ts';
+import { parsePlannedChain, parseRouting } from './routing.ts';
+import { blankModelMeta, type ModelMeta, type PinState, type UpstreamStatusKind } from './types.ts';
 
 /** 探测与校验共用的上游访问依赖。 */
 export interface ProbeDeps {
@@ -27,50 +27,98 @@ export interface ProbeResult extends ModelMeta {
 const CHAT = '/chat/completions';
 
 /**
- * 零 token 探测：带一个不存在的 only，让网关在路由层报错并列出精确可用渠道。
- * - 直连管道（OpenRouter）：provider.only → 404 错误 JSON 里的 metadata.available_providers
- * - 规划器管道（Vercel AI Gateway）：providerOptions.gateway.only → 400 错误文本里的
- *   "Available providers are: ..."
- * 两条管道的清单不一致，必须分别取。
+ * 探针渠道名。必须是**合法 slug 形状**的不存在名字——下划线形状（如 `__probe__`）
+ * 会被网关静默丢弃，早在钉住功能还生效的时期就拿不到清单（docs/pinning.md 3.1）。
  */
-async function harvestAvailableProviders(
+const PROBE_SLUG = 'zzz-not-a-provider';
+
+const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+function parseSlugList(text: string): string[] {
+  return text
+    .split(/,\s*/)
+    .map((s) =>
+      s
+        .trim()
+        .replace(/^["']|["']$/g, '')
+        .toLowerCase(),
+    )
+    .filter((t) => SLUG_RE.test(t));
+}
+
+interface PinProbeOutcome {
+  pinState: PinState;
+  /** 探针报错时网关附带的可用渠道清单（仅 enforced 且报错带清单时非空）。 */
+  providers: string[] | null;
+  /** pinState=ignored 时本次探针被实际路由到的渠道（风控特征，如 openai-compatible-private）。 */
+  routedTo: string | null;
+}
+
+/**
+ * 钉住探针：带一个「格式合法但不存在」的渠道名发请求（docs/pinning.md D1 / 3.1）。
+ *
+ * - **报错且是路由层拒绝**（`Available providers are:` / `No allowed providers`）
+ *   → 参数仍被读取 → enforced，顺带拿到清单
+ * - **200 正常返回，或报 `empty response content`**（说明请求穿过路由层、执行到了模型——
+ *   推理模型在小 max_tokens 下把额度烧在思考上，网关回 HTTP 500，不是路由故障）
+ *   → 参数被整体丢弃 → ignored
+ * - **其他错误**（429 限流 / 网络失败）→ 无法判定 → unknown（保守：沿用既有状态）
+ */
+async function pinProbe(
   deps: ProbeDeps,
   modelId: string,
   pipeline: 'planner' | 'direct',
   key: string,
-): Promise<string[] | null> {
-  const base = { model: modelId, messages: [{ role: 'user', content: 'hi' }], max_tokens: 16 };
+): Promise<PinProbeOutcome> {
+  const base = { model: modelId, messages: [{ role: 'user', content: 'Reply with the word OK' }], max_tokens: 512 };
   const body =
     pipeline === 'planner'
-      ? { ...base, providerOptions: { gateway: { only: ['__probe__'] } } }
-      : { ...base, provider: { only: ['__probe__'] } };
-  const { json } = await fetchJSON(
-    `${deps.upstreamBase}${CHAT}`,
-    { method: 'POST', headers: authHeaders(key), body: JSON.stringify(body) },
-    60_000,
-  );
-  const err = (json as { error?: unknown } | null)?.error;
-  if (typeof err !== 'string') return null;
+      ? { ...base, providerOptions: { gateway: { only: [PROBE_SLUG] } } }
+      : { ...base, provider: { only: [PROBE_SLUG] } };
 
-  if (pipeline === 'planner') {
-    const match = /Available providers are:\s*([^.]+)/.exec(err);
-    if (!match?.[1]) return null;
-    // 错误文本里可能混有 JSON 片段（如 ","type":"invalid_request_error"），必须按 slug 格式过滤
-    const tokens = match[1]
-      .split(/,\s*/)
-      .map((s) => s.trim())
-      .filter((t) => /^[a-z0-9][a-z0-9-]*$/.test(t));
-    return tokens.length ? tokens : null;
-  }
-
-  const start = err.indexOf('{');
-  if (start < 0) return null;
+  let json: unknown = null;
   try {
-    const parsed = JSON.parse(err.slice(start)) as { error?: { metadata?: { available_providers?: string[] } } };
-    return parsed.error?.metadata?.available_providers ?? null;
+    const res = await fetchJSON(
+      `${deps.upstreamBase}${CHAT}`,
+      { method: 'POST', headers: authHeaders(key), body: JSON.stringify(body) },
+      90_000,
+    );
+    json = res.json;
   } catch {
-    return null;
+    return { pinState: 'unknown', providers: null, routedTo: null };
   }
+
+  const shaped = json as { error?: unknown; data?: { error?: unknown; choices?: unknown } } | null;
+  const message = extractErrorText(shaped);
+
+  if (message !== null) {
+    // 报错：先区分「路由层拒绝」与「执行到了模型」
+    if (/Available providers are:|No allowed providers/i.test(message)) {
+      const match = /Available providers are:\s*([^.]+)/i.exec(message);
+      const providers = match?.[1] ? parseSlugList(match[1]) : null;
+      return { pinState: 'enforced', providers: providers?.length ? providers : null, routedTo: null };
+    }
+    if (/empty response content/i.test(message)) {
+      // 请求穿过了路由层并执行——钉住参数没有被拦下，即参数未被读取
+      return { pinState: 'ignored', providers: null, routedTo: null };
+    }
+    // 其他错误（限流/鉴权波动等）：无法判定
+    return { pinState: 'unknown', providers: null, routedTo: null };
+  }
+
+  // 200：探针本应被路由层拒绝，却正常完成了 → 参数被丢弃
+  const routing = parseRouting(json);
+  return { pinState: 'ignored', providers: null, routedTo: routing.finalProvider };
+}
+
+function extractErrorText(shaped: { error?: unknown; data?: { error?: unknown } } | null): string | null {
+  if (!shaped || typeof shaped !== 'object') return null;
+  if (typeof shaped.error === 'string' && shaped.error) return shaped.error;
+  if (shaped.error && typeof shaped.error === 'object') return JSON.stringify(shaped.error);
+  const inner = shaped.data?.error;
+  if (typeof inner === 'string' && inner) return inner;
+  if (inner && typeof inner === 'object') return JSON.stringify(inner);
+  return null;
 }
 
 /** 规划器 tier-0 竞胜者（来自 planningReasoning，仅参考）。 */
@@ -90,14 +138,11 @@ const authHeaders = (key: string): Record<string, string> => ({
   ...(key ? { Authorization: `Bearer ${key}` } : {}),
 });
 
-/** 合并合并-学习工具：把网关报错里附带的最新渠道清单并进已知列表。 */
+/** 合并-学习工具：把网关报错里附带的最新渠道清单并进已知列表。 */
 export function mergeLearnedProviders(meta: ModelMeta, message: string): string[] {
   const match = /Available providers are:\s*([^.]+)/.exec(String(message || ''));
   if (!match?.[1]) return [];
-  const tokens = match[1]
-    .split(/,\s*/)
-    .map((s) => s.trim())
-    .filter((t) => /^[a-z0-9][a-z0-9-]*$/.test(t));
+  const tokens = parseSlugList(match[1]);
   const before = meta.upstreams.length;
   meta.upstreams = [...new Set([...meta.upstreams, ...tokens])];
   return meta.upstreams.length > before ? meta.upstreams : [];
@@ -110,7 +155,10 @@ export class ProbeService {
     this.#deps = deps;
   }
 
-  /** 探测单个模型：真实小请求回读管道类型，再零 token 拉渠道清单。 */
+  /**
+   * 探测单个模型：真实小请求回读管道类型与执行链，再用钉住探针判定参数是否被读取。
+   * 可钉性与账号风控相关（换个账号结果可能不同），结果只代表探测时刻、所用账号的状态。
+   */
   async probeModel(modelId: string): Promise<ProbeResult> {
     const account = this.#deps.pool.pick();
     const started = Date.now();
@@ -121,21 +169,19 @@ export class ProbeService {
       180_000,
     );
 
-    const shaped = json as { error?: unknown; data?: { error?: unknown } } | null;
-    const topError = shaped && typeof shaped === 'object' ? shaped.error : undefined;
-    const dataError =
-      shaped && typeof shaped === 'object' ? shaped.data && (shaped.data as { error?: unknown }).error : undefined;
-    if (topError && !shaped?.data) {
-      return { ...this.#blank(modelId), ok: false, ms: Date.now() - started, error: String(topError).slice(0, 400) };
-    }
-    if (dataError) {
-      return { ...this.#blank(modelId), ok: false, ms: Date.now() - started, error: String(dataError).slice(0, 400) };
+    const shaped = json as { error?: unknown; data?: { error?: unknown; choices?: unknown } } | null;
+    const probeError = extractErrorText(shaped);
+    if (probeError !== null && !shaped?.data?.choices) {
+      return { ...this.#blank(modelId), ok: false, ms: Date.now() - started, error: probeError.slice(0, 400) };
     }
 
     const routing = parseRouting(json);
-    let harvest: string[] | null = null;
-    if (routing.pipeline)
-      harvest = await harvestAvailableProviders(this.#deps, modelId, routing.pipeline, account?.key ?? '');
+
+    // 钉住探针（D1）：判定 providerOptions/provider 是否还被网关读取
+    let probe: PinProbeOutcome = { pinState: 'unknown', providers: null, routedTo: null };
+    if (routing.pipeline) {
+      probe = await pinProbe(this.#deps, modelId, routing.pipeline, account?.key ?? '');
+    }
 
     let endpoints: Array<{ slug: string; name?: string; endpoints?: number; context?: number; uptime?: number }> = [];
     let orSlug: string | null = null;
@@ -154,15 +200,35 @@ export class ProbeService {
     const detail: ModelMeta['upstreamDetail'] = { ...(prev?.upstreamDetail ?? {}) };
     for (const e of endpoints) detail[e.slug] = e;
 
-    const upstreams =
-      routing.pipeline === 'planner'
-        ? [...new Set([...(harvest ?? []), ...routing.fallbacks, ...(prev?.upstreams ?? [])])]
-        : [...new Set([...routing.fallbacks, ...(harvest ?? []), ...Object.keys(detail)])];
+    // 渠道清单（D2）：执行链（含链首）∪ 备选 ∪ 本次实际命中 ∪ 探针清单 ∪ 历史已知
+    const plannedChain = parsePlannedChain(routing.plan);
+    const upstreams = [
+      ...new Set([
+        ...plannedChain,
+        ...routing.fallbacks,
+        ...(routing.finalProvider ? [routing.finalProvider] : []),
+        ...(probe.providers ?? []),
+        ...(routing.pipeline === 'direct' ? Object.keys(detail) : []),
+        ...(prev?.upstreams ?? []),
+      ]),
+    ];
+
+    // pinState：探针给出确定性结论才更新；unknown 沿用旧值（保守）
+    const pinState: PinState = probe.pinState !== 'unknown' ? probe.pinState : (prev?.pinState ?? 'unknown');
+    const pinDisabledReason =
+      probe.pinState === 'ignored'
+        ? buildIgnoredReason(routing.finalProvider, probe.routedTo)
+        : probe.pinState === 'enforced'
+          ? null
+          : (prev?.pinDisabledReason ?? null);
 
     const meta: ModelMeta = {
       pipeline: routing.pipeline,
       pinnable: routing.pipeline !== null,
-      availableProviders: harvest ?? prev?.availableProviders ?? [],
+      pinState: routing.pipeline === null ? 'unknown' : pinState,
+      pinProbeAt: probe.pinState !== 'unknown' ? Date.now() : (prev?.pinProbeAt ?? null),
+      pinDisabledReason,
+      availableProviders: probe.providers ?? prev?.availableProviders ?? [],
       upstreams,
       upstreamDetail: detail,
       upstreamStatus: prev?.upstreamStatus ?? {},
@@ -178,14 +244,36 @@ export class ProbeService {
     return { ...meta, ok: true, ms: meta.lastMs ?? 0 };
   }
 
-  /** 批量校验：每个渠道各钉一次最小请求，标出真实可用性（✔可用/⏳限流/✘不可钉/🔑key错）。 */
-  async validateUpstreams(modelId: string): Promise<{
-    results: Record<string, { status: UpstreamStatusKind; ms: number; note: string }>;
-    upstreams: string[];
-  }> {
+  /**
+   * 批量校验：每个渠道各钉一次最小请求，标出真实可用性（✔可用/⏳限流/✘不可钉/🔑key错）。
+   *
+   * 钉住参数被网关丢弃时（pinState=ignored）拒绝执行：此时每个渠道的请求都会成功并返回
+   * `empty response content`（被判为 ok），输出全绿是误导（docs/pinning.md D5）。
+   */
+  async validateUpstreams(modelId: string): Promise<
+    | { ok: false; reason: string; pinState: PinState }
+    | {
+        ok: true;
+        results: Record<string, { status: UpstreamStatusKind; ms: number; note: string }>;
+        upstreams: string[];
+        pinState: PinState;
+      }
+  > {
     const meta = this.#deps.getMeta(modelId);
     const list = meta?.upstreams ?? [];
     const pipeline = meta?.pipeline;
+    const pinState: PinState = meta?.pinState ?? 'unknown';
+
+    if (pinState === 'ignored') {
+      return {
+        ok: false,
+        pinState,
+        reason:
+          meta?.pinDisabledReason ??
+          '网关忽略钉住参数（账号风控或策略变更）：每个渠道的请求都会“成功”，校验结果不可信。请先重新探测。',
+      };
+    }
+
     const account = this.#deps.pool.pick();
     const results: Record<string, { status: UpstreamStatusKind; ms: number; note: string }> = {};
 
@@ -194,7 +282,7 @@ export class ProbeService {
       await Promise.all(
         list.slice(i, i + batch).map(async (slug) => {
           const started = Date.now();
-          const base = { model: modelId, messages: [{ role: 'user', content: 'hi' }], max_tokens: 16 };
+          const base = { model: modelId, messages: [{ role: 'user', content: 'hi' }], max_tokens: 512 };
           const body =
             pipeline === 'planner'
               ? { ...base, providerOptions: { gateway: { only: [slug] } } }
@@ -232,27 +320,18 @@ export class ProbeService {
       updated.validatedAt = Date.now();
       this.#deps.setMeta(modelId, updated);
     }
-    return { results, upstreams: list };
+    return { ok: true, results, upstreams: list, pinState };
   }
 
   #blank(modelId: string): ModelMeta {
-    const prev = this.#deps.getMeta(modelId);
-    return (
-      prev ?? {
-        pipeline: null,
-        pinnable: false,
-        availableProviders: [],
-        upstreams: [],
-        upstreamDetail: {},
-        upstreamStatus: {},
-        tier0: [],
-        canonicalSlug: null,
-        openrouterSlug: null,
-        lastProvider: null,
-        lastMs: null,
-        probedAt: null,
-        validatedAt: null,
-      }
-    );
+    return this.#deps.getMeta(modelId) ?? blankModelMeta();
   }
+}
+
+/** ignored 的原因说明：点出风控特征（openai-compatible-private）比一句“失效了”有用得多。 */
+function buildIgnoredReason(mainProvider: string | null, probeRoutedTo: string | null): string {
+  const routed = probeRoutedTo ?? mainProvider;
+  const base = '网关忽略钉住参数（账号风控或策略变更，详见 docs/pinning.md）：钉住/排除/排序均不生效，校验已停用。';
+  if (routed) return `${base}探针实测被路由到 ${routed}。`;
+  return base;
 }

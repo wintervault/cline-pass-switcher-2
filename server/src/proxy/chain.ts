@@ -4,7 +4,7 @@ import { fetchJSON } from '../upstream/client.ts';
 import { classifyErrorKind } from '../upstream/errors.ts';
 import { unwrap } from '../upstream/response.ts';
 import { emptyRouting, injectPrefs, type RoutingInfo } from '../upstream/routing.ts';
-import type { ModelMeta, TraceEntry, UpstreamErrorKind } from '../upstream/types.ts';
+import type { ModelMeta, PinState, TraceEntry, UpstreamErrorKind } from '../upstream/types.ts';
 import { buildCandidates } from './candidates.ts';
 import type { ChannelHealth } from './health.ts';
 
@@ -54,6 +54,8 @@ export interface ChainStream extends ChainCommon {
   response: Response;
   /** 已从上游消费的首块（探测 SSE 合法性时读掉的），透传时必须先写回。 */
   head: Buffer;
+  /** 流式钉住审计所需信息：元数据在流末尾才出现，由调用方在流结束后比对（D3）。 */
+  pinAudit: { enforced: boolean; strict: boolean; target: string | null };
 }
 
 export interface ChainFailure extends ChainCommon {
@@ -89,6 +91,33 @@ interface AttemptError extends AttemptBase {
 type AttemptOutcome = AttemptSuccess | AttemptStream | AttemptError;
 
 const errorBody = (message: string): Record<string, unknown> => ({ error: { message, type: 'upstream_error' } });
+
+/** slug 等价比较：显示名差异（GMICloud/gmicloud、z-ai/zai）不应造成审计误判。 */
+function sameSlug(a: string, b: string): boolean {
+  if (a === b) return true;
+  return a.toLowerCase().replace(/[^a-z0-9]/g, '') === b.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * strict 钉住的结果审计（docs/pinning.md D3）。
+ * 返回 null = 通过或不适用；否则返回违规说明（作为该次尝试的失败理由）。
+ *
+ * - 只在「探针确认参数被读取（enforced）」时审计——ignored 时不注入也不审计，
+ *   unknown（未探测）保守放行，避免把能用的请求错杀成失败；
+ * - 响应不带元数据（finalProvider 为空，部分模型如此）时无法审计，放行；
+ * - preferred 的最后候选与自动模式本来就让网关自由回退，不审计。
+ */
+function pinMismatchNote(
+  target: string | null,
+  strict: boolean,
+  pinState: PinState,
+  actual: string | null,
+): string | null {
+  if (target === null || !strict || pinState !== 'enforced') return null;
+  if (actual === null) return null;
+  if (sameSlug(actual, target)) return null;
+  return `钉住未生效：目标 ${target}，网关实际由 ${actual} 提供服务`;
+}
 
 /**
  * 聊天请求的故障转移执行器。
@@ -177,6 +206,26 @@ export class ChatChain {
         const outcome = await this.#attempt(input, injected.body, account, timeoutMs);
 
         if (outcome.verdict === 'success') {
+          // 钉住结果审计（docs/pinning.md D3）：strict 钉住且探针确认参数被读取时，
+          // 网关自报的 finalProvider 必须等于目标渠道。不符视为该渠道确定性失败
+          // （重试同渠道无意义），直接进入下一个候选。
+          const mismatchNote = pinMismatchNote(
+            upstream,
+            !relax,
+            input.meta?.pinState ?? 'unknown',
+            outcome.routing.finalProvider,
+          );
+          if (mismatchNote !== null) {
+            trace.push({ upstream, status: 200, ms: outcome.ms, note: mismatchNote });
+            lastError = { status: 502, message: mismatchNote, kind: 'channel' };
+            if (upstream) {
+              this.#deps.health.markFailed(modelId, upstream, this.#deps.failover.cooldownMs);
+              if (!failedEarlier.includes(upstream)) failedEarlier.push(upstream);
+              this.#onChannelFailure?.(modelId, upstream, mismatchNote);
+            }
+            break; // 下一个候选
+          }
+
           if (upstream) this.#deps.health.markSuccess(modelId, upstream);
           trace.push({ upstream, status: 200, ms: outcome.ms, note: 'ok' });
           return {
@@ -196,6 +245,8 @@ export class ChatChain {
         if (outcome.verdict === 'stream') {
           if (upstream) this.#deps.health.markSuccess(modelId, upstream);
           trace.push({ upstream, status: 200, ms: outcome.ms, note: 'stream' });
+          // 流式的钉住审计只能在流结束后做（元数据在最后一帧），标记随结果带出，
+          // 由调用方写入历史——不撤回（docs/pinning.md D3 的诚实限制）
           return {
             outcome: 'stream',
             status: 200,
@@ -207,6 +258,11 @@ export class ChatChain {
             accountRotations: rotations,
             budgetExhausted,
             totalMs: Date.now() - startedAt,
+            pinAudit: {
+              enforced: (input.meta?.pinState ?? 'unknown') === 'enforced',
+              strict: !relax,
+              target: upstream,
+            },
           };
         }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   injectPrefs,
+  parsePlannedChain,
   parseRouting,
   SORT_KEYS,
   type SortKey,
@@ -232,5 +233,32 @@ describe('Pipeline 类型完备性', () => {
   it('只允许 planner / direct', () => {
     const valid: Pipeline[] = ['planner', 'direct'];
     expect(valid).toHaveLength(2);
+  });
+});
+
+describe('parsePlannedChain（docs/pinning.md D2）', () => {
+  it('解析 System credentials planned for + Total execution order，含链首', () => {
+    const plan =
+      'System credentials planned for: deepseek, alibaba, baseten. Total execution order: deepseek(system) → alibaba(system) → baseten(system)';
+    expect(parsePlannedChain(plan)).toEqual(['deepseek', 'alibaba', 'baseten']);
+  });
+
+  it('链首渠道也会出现在结果里（fallbacksAvailable 不含链首的缺陷由此补齐）', () => {
+    const plan =
+      'System credentials planned for: deepseek, alibaba. Total execution order: deepseek(system) → alibaba(system)';
+    const chain = parsePlannedChain(plan);
+    expect(chain).toContain('deepseek');
+    expect(chain[0]).toBe('deepseek');
+  });
+
+  it('非法 slug（含 JSON 片段）被过滤', () => {
+    const plan =
+      'System credentials planned for: deepseek, "type":"invalid_request_error", alibaba. Total execution order: deepseek(system) → alibaba(system)';
+    expect(parsePlannedChain(plan)).toEqual(['deepseek', 'alibaba']);
+  });
+
+  it('空/无匹配输入 → 空数组', () => {
+    expect(parsePlannedChain('')).toEqual([]);
+    expect(parsePlannedChain('no markers here')).toEqual([]);
   });
 });

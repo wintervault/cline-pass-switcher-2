@@ -136,7 +136,11 @@ function respondStream(ctx: AppContext, c: Ctx, modelId: string, result: ChainSt
     const routing = emptyRouting();
     routing.finalProvider = provider;
     routing.canonicalSlug = canonical;
-    recordHistory(ctx, modelId, { ...result, routing, outcome: result.outcome }, { stream: true });
+    // 流式钉住审计：只能标记不能撤回（内容已流出）——写入历史供 UI 红标（D3）
+    const { enforced, strict, target } = result.pinAudit;
+    const pinMismatch =
+      enforced && strict && target !== null && provider !== null && provider.toLowerCase() !== target.toLowerCase();
+    recordHistory(ctx, modelId, { ...result, routing, outcome: result.outcome }, { stream: true, pinMismatch });
   });
 
   if (result.head.length) c.res.write(result.head);

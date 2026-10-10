@@ -88,6 +88,41 @@ export function emptyRouting(): RoutingInfo {
   };
 }
 
+const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+/**
+ * 解析 planningReasoning 里的完整执行链（docs/pinning.md D2）。
+ *
+ * `fallbacksAvailable` 的语义是「执行链去掉链首」——网关把某渠道放链首后，
+ * 它就不在备选清单里，用它做渠道清单会系统性漏掉链首渠道（实测 deepseek 因此消失）。
+ * planningReasoning 的两个句式给出的是**完整候选池（含链首）**：
+ *
+ * - `System credentials planned for: a, b, c.`
+ * - `Total execution order: a(system) → b(system) → …`
+ */
+export function parsePlannedChain(plan: string): string[] {
+  const text = String(plan || '');
+  const out = new Set<string>();
+
+  const planned = /System credentials planned for:\s*([^.]+)\./i.exec(text);
+  if (planned?.[1]) {
+    for (const tok of planned[1].split(/,\s*/)) {
+      const slug = tok.trim().toLowerCase();
+      if (SLUG_RE.test(slug)) out.add(slug);
+    }
+  }
+
+  const order = /Total execution order:\s*(.+)$/i.exec(text);
+  if (order?.[1]) {
+    for (const match of order[1].matchAll(/([a-z0-9][a-z0-9-]*)\s*\((?:system|[^)]*)\)/gi)) {
+      const slug = (match[1] ?? '').toLowerCase();
+      if (SLUG_RE.test(slug)) out.add(slug);
+    }
+  }
+
+  return [...out];
+}
+
 // ---------- 钉住偏好注入 ----------
 
 export interface UpstreamPrefs {

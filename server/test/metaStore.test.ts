@@ -123,10 +123,14 @@ describe('MetaStore 写回', () => {
         account: 'A',
         attempts: ['alibaba'],
         trace: [{ upstream: 'alibaba', status: 200, ms: 2400, note: 'stream' }],
+        pinMismatch: false,
       });
       meta.models['cline-pass/glm-5.2'] = {
         pipeline: 'planner',
         pinnable: true,
+        pinState: 'enforced',
+        pinProbeAt: null,
+        pinDisabledReason: null,
         availableProviders: ['alibaba', 'baseten'],
         upstreams: ['alibaba', 'baseten'],
         upstreamDetail: {},
