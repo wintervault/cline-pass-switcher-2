@@ -18,6 +18,8 @@ export interface AppContext {
   chain: ChatChain;
   probe: ProbeService;
   catalog: CatalogService;
+  /** 优雅关停（桌面壳的启停控制走这里；与 SIGTERM 同一条路径）。由 index.ts 装配。 */
+  onShutdown?: (reason: string) => void;
 }
 
 /** 就地修改配置并安排落盘。 */

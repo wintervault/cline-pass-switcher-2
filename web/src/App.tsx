@@ -10,6 +10,7 @@ import {
   Modal,
   Space,
   Tabs,
+  Tag,
   Tooltip,
   Typography,
   theme,
@@ -25,6 +26,7 @@ import History from './features/History.tsx';
 import Models from './features/Models.tsx';
 import Playground from './features/Playground.tsx';
 import Security from './features/Security.tsx';
+import { useHostBridge } from './hostBridge.ts';
 import { darkTheme, initialTheme, lightTheme, persistTheme, type ThemeMode } from './theme.ts';
 
 /** 主题状态在最外层；Console 在 ConfigProvider 内部才能拿到主题 token。 */
@@ -46,11 +48,54 @@ export default function App() {
   );
 }
 
+const HOST_LABEL: Record<string, string> = {
+  running: '运行中',
+  starting: '启动中',
+  stopping: '停止中',
+  stopped: '已停止',
+};
+
+/** 桌面壳模式下的服务控制簇（浏览器直开时不渲染）。 */
+function HostControls({ host }: { host: ReturnType<typeof useHostBridge> }) {
+  const bridge = host.host;
+  if (!bridge) return null;
+  const { status } = host;
+  const color = status === 'running' ? 'green' : status === 'stopped' ? 'red' : 'orange';
+  return (
+    <Space size={4}>
+      <Tooltip title="桌面壳托管的服务状态（2 秒自动刷新）">
+        <Tag color={color} style={{ margin: 0 }}>
+          ● {HOST_LABEL[status] ?? status}
+        </Tag>
+      </Tooltip>
+      {status === 'stopped' && (
+        <Button size="small" onClick={() => void bridge.start()}>
+          启动
+        </Button>
+      )}
+      {status !== 'stopped' && (
+        <Button size="small" onClick={() => void bridge.stop()}>
+          停止
+        </Button>
+      )}
+      {status !== 'stopped' && (
+        <Button size="small" onClick={() => void bridge.restart()}>
+          重启
+        </Button>
+      )}
+      <Button size="small" onClick={() => void bridge.openLogs()}>
+        日志
+      </Button>
+    </Space>
+  );
+}
+
 function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () => void }) {
   const { token } = theme.useToken();
   const meta = useMeta();
   const refresh = useRefresh();
   const qc = useQueryClient();
+  const host = useHostBridge();
 
   const [authKey, setKey] = useState(getAuthKey());
   const [loginOpen, setLoginOpen] = useState(false);
@@ -120,6 +165,7 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
             </Typography.Text>
           )}
           <Space style={{ marginLeft: 'auto' }}>
+            <HostControls host={host} />
             <Tooltip title={mode === 'dark' ? '切换到亮色' : '切换到暗色'}>
               <Button
                 size="small"

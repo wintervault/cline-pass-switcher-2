@@ -355,6 +355,25 @@ export function registerApiRoutes(
     sendJSON(c.res, 200, { history: meta().history });
   });
 
+  // 桌面壳/UI 的启停通道。放行条件（三重，全部满足）：
+  // ① 来自回环地址——Docker/反代部署的远程请求来源不是 127.0.0.1，直接拒绝；
+  // ② 无 Origin 且无 Referer——浏览器的跨源 fetch 必带 Origin（被拦），本机恶意网页
+  //    打不到这里；非浏览器客户端（壳、curl）天然不带。本机恶意进程本来就能 taskkill，
+  //    这不引入新的攻击面。
+  // 鉴权不走 proxyKey：壳不应依赖用户的下游密钥配置。
+  router.post('/api/shutdown', async (c: Ctx) => {
+    const remote = c.req.socket.remoteAddress ?? '';
+    const loopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+    const browserLike = c.req.headers['origin'] !== undefined || c.req.headers['referer'] !== undefined;
+    if (!loopback || browserLike || !ctx.onShutdown) {
+      sendError(c.res, 404, 'not found', 'not_found');
+      return;
+    }
+    sendJSON(c.res, 200, { ok: true, message: '服务正在优雅关停' });
+    // 让响应先落到线上再关停
+    setTimeout(() => ctx.onShutdown?.('control-api'), 50);
+  });
+
   router.get('/api/config', (c: Ctx) => {
     const cfg: Config = config();
     sendJSON(c.res, 200, { port: cfg.port, perModel: cfg.perModel, knownModels: cfg.knownModels });

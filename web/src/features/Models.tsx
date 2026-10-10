@@ -417,6 +417,7 @@ export default function Models() {
         dataSource={rows}
         columns={columns}
         pagination={false}
+        scroll={{ x: 1160 }}
       />
     </div>
   );

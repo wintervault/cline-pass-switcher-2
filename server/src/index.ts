@@ -1,4 +1,5 @@
 import { AccountPool } from './accounts/pool.ts';
+import type { AppContext } from './appContext.ts';
 import { isConfigured, publicProxyBase } from './config/derive.ts';
 import { applyEnvOverrides } from './config/env.ts';
 import { loadConfig, writeConfig } from './config/load.ts';
@@ -108,7 +109,8 @@ async function main(): Promise<void> {
   });
   chain.onChannelFailure(learnFromFailure(configStore, metaStore));
 
-  const ctx = {
+  // onShutdown 在 server 创建之后回填（关停要引用 server；路由要先有 ctx 才能建 server）
+  const ctx: AppContext = {
     version: VERSION,
     startedAt,
     configStore,
@@ -148,8 +150,9 @@ async function main(): Promise<void> {
       originCheckMiddleware(() => configStore.value.corsOrigins),
       authMiddleware(
         () => configStore.value.proxyKey,
-        // 只保护 API 与 OpenAI 兼容端点；静态页面保持开放（见 middleware 注释）
-        (path) => isChatPath(path) || isModelsPath(path) || path.startsWith('/api/'),
+        // 只保护 API 与 OpenAI 兼容端点；静态页面保持开放（见 middleware 注释）；
+        // /api/shutdown 由随机控制 token 保护，不走 proxyKey（壳不应依赖下游密钥配置）
+        (path) => path !== '/api/shutdown' && (isChatPath(path) || isModelsPath(path) || path.startsWith('/api/')),
       ),
     ],
   });
@@ -185,14 +188,15 @@ async function main(): Promise<void> {
   }
 
   // ---- 生命周期 ----
+  // 优雅退出：信号与 /api/shutdown（桌面壳）共用同一条路径
   let shuttingDown = false;
-  const onSignal = (signal: string): void => {
+  const shutdownOnce = (reason: string): void => {
     if (shuttingDown) {
-      logger.warn({ signal }, '再次收到退出信号，立即退出');
-      process.exit(1);
+      logger.warn({ reason }, '关停已在进行，忽略重复请求');
+      return;
     }
     shuttingDown = true;
-    logger.info({ signal }, '收到退出信号，开始优雅退出');
+    logger.info({ reason }, '开始优雅退出');
     void shutdownServer(server, {
       onClose: async () => {
         configStore.close();
@@ -210,8 +214,17 @@ async function main(): Promise<void> {
         process.exit(1);
       });
   };
+  const onSignal = (signal: string): void => {
+    if (shuttingDown) {
+      logger.warn({ signal }, '再次收到退出信号，立即退出');
+      process.exit(1);
+    }
+    shutdownOnce(signal);
+  };
   process.on('SIGINT', () => onSignal('SIGINT'));
   process.on('SIGTERM', () => onSignal('SIGTERM'));
+
+  ctx.onShutdown = shutdownOnce;
 
   process.on('uncaughtException', (err) => {
     logger.fatal({ err }, '未捕获异常');
