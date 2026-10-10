@@ -20,6 +20,7 @@ use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Child;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -47,6 +48,9 @@ struct ServerState {
     data_dir: PathBuf,
     entry: PathBuf,
     log_dir: PathBuf,
+    /// 退出中：为 true 时窗口的 CloseRequested 不再被拦截（否则 app.exit 会被
+    /// 自己的「关窗进托盘」逻辑拖住——托盘退出卡顿的根因）
+    exiting: AtomicBool,
 }
 
 fn main() {
@@ -72,6 +76,7 @@ fn main() {
                 data_dir,
                 entry,
                 log_dir,
+                exiting: AtomicBool::new(false),
             }));
 
             build_tray(&handle)?;
@@ -97,8 +102,16 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // 关窗 = 隐藏进托盘（需求：退出点击自动进托盘）
+            // 关窗 = 隐藏进托盘（需求：退出点击自动进托盘）。
+            // 例外：壳正在退出时必须放行关闭——否则 app.exit 被这里拖住，退出明显卡顿。
             if let WindowEvent::CloseRequested { api, .. } = event {
+                let exiting = window
+                    .app_handle()
+                    .try_state::<Arc<ServerState>>()
+                    .is_some_and(|s| s.exiting.load(Ordering::SeqCst));
+                if exiting {
+                    return;
+                }
                 api.prevent_close();
                 let _ = window.hide();
             }
@@ -113,6 +126,17 @@ fn main() {
 // ---------- UI 桥（注入到控制台页面，重载/跳转后依然生效） ----------
 
 const BRIDGE_SCRIPT: &str = r#"(() => {
+  // 屏蔽 WebView2 默认右键菜单的打印/扩展项（「优质打印」预览的来源），
+  // 保留输入框的右键粘贴；拦截 Ctrl+P 打印预览。控制台不需要打印。
+  document.addEventListener('contextmenu', (e) => {
+    const t = e.target;
+    const editable = !!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable));
+    if (!editable) e.preventDefault();
+  }, true);
+  window.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'p' || e.key === 'P')) e.preventDefault();
+  }, true);
+
   const invoke = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
   if (!invoke) return;
   window.cpsHost = {
@@ -243,13 +267,19 @@ fn menu_restart(app: &AppHandle) {
     }
 }
 
-/// 托盘「退出」：优雅停服务 → 退出进程（Job Object 兜底）
+/// 托盘「退出」：先收窗（视觉即时反馈）→ 优雅停服务 → 退出进程（Job Object 兜底）
 fn quit_app(app: &AppHandle) {
-    {
-        let state = app.state::<Arc<ServerState>>();
-        let _ = stop_server(&state, GRACEFUL_STOP);
+    let state = app.state::<Arc<ServerState>>();
+    state.exiting.store(true, Ordering::SeqCst);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
     }
-    log_line(&app.state::<Arc<ServerState>>().log_dir, "[壳] 托盘退出，壳进程结束");
+    let started = Instant::now();
+    let _ = stop_server(&state, GRACEFUL_STOP);
+    log_line(
+        &state.log_dir,
+        &format!("[壳] 托盘退出：停服耗时 {}ms，壳进程结束", started.elapsed().as_millis()),
+    );
     app.exit(0);
 }
 
