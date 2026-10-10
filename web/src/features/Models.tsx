@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { App, Badge, Button, Collapse, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
+import { Alert, App, Badge, Button, Collapse, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useState } from 'react';
 import { qk, useFetchOfficial, useModels, useProbe, useSaveModelConfig, useTest, useValidate } from '../api/hooks.ts';
@@ -152,6 +152,18 @@ function UpstreamPanel({ row, onSave }: { row: SubscriptionRow; onSave: (patch: 
           label: <SummaryChips cfg={cfg} />,
           children: (
             <div style={{ minWidth: 460 }}>
+              {meta?.pinState === 'ignored' && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 8 }}
+                  message="网关已忽略钉住参数（账号风控或策略变更）"
+                  description={
+                    meta.pinDisabledReason ??
+                    '钉住/排除/排序均不生效；勾选仅保留意图，网关恢复执行后自动生效。换个账号或稍后重新探测可能恢复。'
+                  }
+                />
+              )}
               {ups.map((u) => (
                 <UpstreamRow key={u} upstream={u} cfg={cfg} meta={meta} onSave={onSave} />
               ))}
@@ -219,6 +231,11 @@ export default function Models() {
               <Tag color="green">可钉住 · {row.meta.pipeline === 'planner' ? 'Vercel' : 'OpenRouter'}</Tag>
             ) : (
               <Tag color="orange">请先探测</Tag>
+            )}
+            {row.meta?.pinState === 'ignored' && (
+              <Tooltip title={row.meta.pinDisabledReason ?? '网关忽略钉住参数，钉住/排除/排序均不生效'}>
+                <Tag color="red">⚠ 钉住参数被网关忽略</Tag>
+              </Tooltip>
             )}
           </div>
           {row.meta?.tier0?.length ? (
@@ -332,9 +349,16 @@ export default function Models() {
           >
             测试
           </Button>
-          <Tooltip title="把每个上游渠道各钉一次最小请求，标出可用/限流/不可钉">
+          <Tooltip
+            title={
+              row.meta?.pinState === 'ignored'
+                ? '网关已忽略钉住参数：钉不住时每个渠道都会“成功”，校验结果不可信（先重新探测）'
+                : '把每个上游渠道各钉一次最小请求，标出可用/限流/不可钉'
+            }
+          >
             <Button
               size="small"
+              disabled={row.meta?.pinState === 'ignored'}
               loading={validate.isPending && validate.variables === row.id}
               onClick={() =>
                 validate.mutate(row.id, {

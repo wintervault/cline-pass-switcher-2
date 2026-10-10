@@ -1,4 +1,4 @@
-import { Table, Tag, Typography } from 'antd';
+import { Table, Tag, Tooltip, Typography } from 'antd';
 
 import { useHistory } from '../api/hooks.ts';
 import type { HistoryEntry } from '../api/types.ts';
@@ -31,8 +31,17 @@ export default function History() {
         { title: '账号', width: 90, render: (_, r) => (r.account ? <Tag color="blue">{r.account}</Tag> : '—') },
         {
           title: '实际上游',
-          width: 110,
-          render: (_, r) => (r.provider ? <Tag color="purple">{r.provider}</Tag> : '—'),
+          width: 130,
+          render: (_, r) => (
+            <>
+              {r.provider ? <Tag color="purple">{r.provider}</Tag> : '—'}
+              {r.pinMismatch && (
+                <Tooltip title="strict 钉住未生效：网关实际由别的渠道提供服务（流式只能标记，不能撤回）">
+                  <Tag color="red">⚠ 钉住未生效</Tag>
+                </Tooltip>
+              )}
+            </>
+          ),
         },
         {
           title: '背后模型',

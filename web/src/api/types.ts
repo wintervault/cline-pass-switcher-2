@@ -1,6 +1,8 @@
 /** 与 server/src/http/routes 的响应形状一一对应。 */
 
 export type Pipeline = 'planner' | 'direct';
+/** 钉住参数是否被网关读取（探针判定，见 docs/pinning.md D1）。 */
+export type PinState = 'enforced' | 'ignored' | 'unknown';
 export type UpstreamStatusKind = 'ok' | 'limited' | 'bad' | 'auth' | 'unknown';
 export type PinMode = 'strict' | 'preferred';
 export type SortKey = 'cost' | 'ttft' | 'tps';
@@ -29,6 +31,9 @@ export interface TraceEntry {
 export interface ModelMeta {
   pipeline: Pipeline | null;
   pinnable: boolean;
+  pinState: PinState;
+  pinProbeAt: number | null;
+  pinDisabledReason: string | null;
   availableProviders: string[];
   upstreams: string[];
   upstreamDetail: Record<string, UpstreamDetail>;
@@ -111,6 +116,8 @@ export interface HistoryEntry {
   account: string | null;
   attempts: string[];
   trace: TraceEntry[];
+  /** strict 钉住但网关实际由别的渠道提供服务（流式只能标记，不能撤回）。 */
+  pinMismatch: boolean;
 }
 
 export interface TestResult {
