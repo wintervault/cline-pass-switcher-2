@@ -4,7 +4,7 @@ import type { AppContext } from '../../appContext.ts';
 import { type ChainStream, sameSlug } from '../../proxy/chain.ts';
 import { RoutingTap } from '../../proxy/stream.ts';
 import { emptyRouting } from '../../upstream/routing.ts';
-import { sendError } from '../respond.ts';
+import { canRespond, sendError } from '../respond.ts';
 import type { Ctx, Handler } from '../router.ts';
 import { readJsonBody, recordHistory } from './api.ts';
 
@@ -89,6 +89,7 @@ export function chatHandler(ctx: AppContext): Handler {
     }
 
     recordHistory(ctx, modelId, result, { stream: false });
+    if (!canRespond(c.res)) return;
 
     if (result.degraded) c.res.setHeader('X-Cline-Degraded', '1');
     c.res.writeHead(result.status, {

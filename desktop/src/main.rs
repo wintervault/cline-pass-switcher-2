@@ -86,7 +86,10 @@ fn main() {
                 }
                 let state = handle.state::<Arc<ServerState>>();
                 if !wait_healthz(PORT, HEALTHZ_TIMEOUT) {
-                    log_line(&state.log_dir, "[壳] 服务就绪检查超时，窗口仍将打开（可从托盘重试）");
+                    // 不打开窗口：对着 webview 错误页，用户不知道该点什么。
+                    // 托盘「打开控制台 / 启动服务」会重试，成功后窗口才出现。
+                    log_line(&state.log_dir, "[壳] 服务未能就绪：暂不打开窗口，可从托盘重试");
+                    return;
                 }
                 show_main(&handle);
             });
@@ -123,7 +126,20 @@ const BRIDGE_SCRIPT: &str = r#"(() => {
 })();
 "#;
 
+/// 打开控制台。先确保服务在跑（spawn 幂等 + 就绪等待）——
+/// 窗口永远指向活着的控制台，用户永远不该看到 webview 错误页。
 fn show_main(app: &AppHandle) {
+    {
+        let state = app.state::<Arc<ServerState>>();
+        if let Err(err) = spawn_server(&state) {
+            log_line(&state.log_dir, &format!("[壳] 打开控制台前启动服务失败：{err}"));
+            return;
+        }
+        if !wait_healthz(PORT, HEALTHZ_TIMEOUT) {
+            log_line(&state.log_dir, "[壳] 打开控制台前服务未就绪，稍后再试");
+            return;
+        }
+    }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
@@ -205,7 +221,9 @@ fn menu_start(app: &AppHandle) {
         log_line(&state.log_dir, &format!("[壳] 托盘启动失败：{err}"));
         return;
     }
-    let _ = wait_healthz(PORT, HEALTHZ_TIMEOUT);
+    if wait_healthz(PORT, HEALTHZ_TIMEOUT) {
+        show_main(app);
+    }
 }
 
 fn menu_stop(app: &AppHandle) {
@@ -220,7 +238,9 @@ fn menu_restart(app: &AppHandle) {
         log_line(&state.log_dir, &format!("[壳] 托盘重启失败：{err}"));
         return;
     }
-    let _ = wait_healthz(PORT, HEALTHZ_TIMEOUT);
+    if wait_healthz(PORT, HEALTHZ_TIMEOUT) {
+        show_main(app);
+    }
 }
 
 /// 托盘「退出」：优雅停服务 → 退出进程（Job Object 兜底）
