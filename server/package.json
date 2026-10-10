@@ -1,0 +1,16 @@
+{
+  "name": "@cline-pass/server",
+  "version": "2.0.0-dev",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "node --watch src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "pino": "^10.4.0",
+    "zod": "^4.6.5"
+  }
+}
