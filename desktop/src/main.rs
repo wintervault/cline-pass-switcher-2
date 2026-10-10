@@ -9,6 +9,7 @@
 //! 2. **优雅关停优先**：正常退出先请求服务端的 /api/shutdown（仅放行回环 + 无 Origin，
 //!    浏览器跨源被中间件拦截），等服务落盘退出（≤8s），超时才 TerminateJobObject 兜底。
 //! 3. **退出路径唯一**：托盘「退出」→ stop → app.exit(0)。关窗只是隐藏进托盘，不退出。
+//!    启动同理：仅驻留托盘、不自动弹窗；窗口只由用户动作（托盘 / 二次启动）唤起。
 //!
 //! IPC 约定：所有启停命令立即返回、后台线程执行，UI 通过 server_status 轮询推进状态。
 
@@ -87,22 +88,23 @@ fn main() {
 
             build_tray(&handle)?;
 
-            // 启动服务并等待就绪；就绪（或超时）后显示窗口
+            // 启动后仅驻留托盘：服务在后台就绪，窗口只在用户主动打开时出现。
+            // 就绪耗时写日志便于诊断；失败也不弹窗（托盘「打开控制台」会重试并留有日志）。
             std::thread::spawn(move || {
-                {
-                    let state = handle.state::<Arc<ServerState>>();
-                    if let Err(err) = spawn_server(&state) {
-                        log_line(&state.log_dir, &format!("[壳] 启动失败：{err}"));
-                    }
-                }
                 let state = handle.state::<Arc<ServerState>>();
-                if !wait_healthz(PORT, HEALTHZ_TIMEOUT) {
-                    // 不打开窗口：对着 webview 错误页，用户不知道该点什么。
-                    // 托盘「打开控制台 / 启动服务」会重试，成功后窗口才出现。
-                    log_line(&state.log_dir, "[壳] 服务未能就绪：暂不打开窗口，可从托盘重试");
+                if let Err(err) = spawn_server(&state) {
+                    log_line(&state.log_dir, &format!("[壳] 启动失败：{err}"));
                     return;
                 }
-                show_main(&handle);
+                let started = Instant::now();
+                if wait_healthz(PORT, HEALTHZ_TIMEOUT) {
+                    log_line(
+                        &state.log_dir,
+                        &format!("[壳] 服务就绪（{}ms），驻留托盘", started.elapsed().as_millis()),
+                    );
+                } else {
+                    log_line(&state.log_dir, "[壳] 服务未能就绪：可从托盘「打开控制台」重试");
+                }
             });
 
             Ok(())
@@ -181,10 +183,13 @@ fn show_main(app: &AppHandle) {
         .title("Cline Pass 上游控制台")
         .inner_size(1280.0, 860.0)
         .min_inner_size(960.0, 640.0)
+        .visible(false)
         .initialization_script(BRIDGE_SCRIPT)
         .build()
         .expect("failed to create main window");
-    let _ = window.hide(); // 显示时机由就绪检查线程控制
+    // 服务已就绪才走到这里；先隐藏构建、再一次性 show，避免空白闪烁
+    let _ = window.show();
+    let _ = window.set_focus();
 }
 
 // ---------- 托盘 ----------
