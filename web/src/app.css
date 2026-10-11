@@ -19,34 +19,44 @@ body {
 }
 
 :root {
-  --cps-thumb: rgba(127, 127, 127, 0.35);
-  --cps-thumb-hover: rgba(127, 127, 127, 0.55);
+  /* 滚动条：一条低对比度的细线，不抢视线（苹果那种「安静存在」的做法）。
+     比原值更淡，悬停才提亮。 */
+  --cps-thumb: rgba(127, 127, 127, 0.26);
+  --cps-thumb-hover: rgba(127, 127, 127, 0.48);
 }
 
-/* 细滚动条：内容区内滚是主场景，滚动条出现频率高。
-   宽度压到 6px 并带 2px 透明边——8px 的实心块在列表/侧栏里显得很重。 */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--cps-thumb) transparent;
-}
+/*
+ * 细滚动条。
+ *
+ * 注意：**不要**在这里写标准的 `scrollbar-width` / `scrollbar-color`——
+ * 一旦设了它们，Chromium 会忽略下面全部 `::-webkit-scrollbar` 规则，
+ * 退回系统原生滚动条（带两端的箭头按钮、还压不住轨道底色）。
+ * 这正是「双滚动条 + 箭头」那种粗糙观感的来源。标准的两个属性只留给
+ * 不支持 webkit 伪元素的浏览器（Firefox），见文件末尾的 @supports。
+ */
 *::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-*::-webkit-scrollbar-thumb {
-  background: var(--cps-thumb);
-  border-radius: 3px;
-}
-*::-webkit-scrollbar-thumb:hover {
-  background: var(--cps-thumb-hover);
+  width: 10px;
+  height: 10px;
+  background: transparent;
 }
 *::-webkit-scrollbar-track,
 *::-webkit-scrollbar-corner {
   background: transparent;
 }
-/* 同时出现纵横两条滚动条时，右下角不要留一个方块 */
-*::-webkit-scrollbar-corner {
-  background: transparent;
+/* 两端不加箭头按钮 */
+*::-webkit-scrollbar-button {
+  display: none;
+}
+/* 滑块：3px 透明边 + content-box，视觉上只剩中间 4px 的一条线 */
+*::-webkit-scrollbar-thumb {
+  background: var(--cps-thumb);
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--cps-thumb-hover);
+  background-clip: content-box;
 }
 
 /* ---------- 自绘标题栏（桌面壳） ---------- */
@@ -278,8 +288,11 @@ body {
 .cps-model-list {
   width: 292px;
   flex: 0 0 292px;
-  /* 列表自身滚动（而不是撑长整页）：避免页面滚动条与列表滚动条同时出现 */
-  max-height: calc(100vh - 250px);
+  /* 这一列**自己不做滚动容器**：滚动交给内部的列表（这样搜索框始终钉在顶部）。
+     这里再设 overflow 会和外层形成嵌套滚动 → 并排出现两条滚动条（v2.9.2 的回归）。 */
+}
+.cps-model-list-scroll {
+  /* 唯一的滚动容器 */
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -384,4 +397,16 @@ body {
   width: 2px;
   background: var(--ant-color-primary);
   opacity: 0.45;
+}
+
+/*
+ * 标准滚动条属性只留给不支持 ::-webkit-scrollbar 的浏览器（Firefox）。
+ * 放到 @supports 里是为了不让 Chromium 看到它们——它对这两个属性最敏感，
+ * 一见就退回原生滚动条（见文件上方注释）。
+ */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--cps-thumb) transparent;
+  }
 }

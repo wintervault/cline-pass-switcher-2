@@ -413,7 +413,11 @@ export default function Models() {
               value={modelFilter}
               onChange={(e) => setModelFilter(e.target.value)}
             />
-            <div style={{ display: 'grid', gap: 8, maxHeight: 'calc(100vh - 250px)', overflow: 'auto' }}>
+            {/* 唯一滚动容器：只有列表滚，搜索框钉在上面。外面那层不要再设 overflow。 */}
+            <div
+              className="cps-model-list-scroll"
+              style={{ display: 'grid', gap: 8, maxHeight: 'calc(100vh - 250px)' }}
+            >
               {filteredRows.map((r) => (
                 <ModelItem key={r.id} row={r} active={current?.id === r.id} onClick={() => setSelectedId(r.id)} />
               ))}
