@@ -31,7 +31,7 @@ function TraceChain({ trace, attempts }: { trace?: TraceEntry[]; attempts: strin
           key={`${t.upstream ?? 'auto'}|${t.status}|${t.ms}`}
           title={`${t.upstream ?? '自动'} · HTTP ${t.status} · ${t.ms}ms${t.note && t.note !== 'ok' ? ` · ${t.note}` : ''}`}
         >
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
             {i > 0 && <span style={{ color: token.colorTextQuaternary }}>›</span>}
             <Badge status={dotStatus(t.status)} />
             <span style={{ fontFamily: 'monospace' }}>{t.upstream ?? 'auto'}</span>
