@@ -1,6 +1,6 @@
 {
   "name": "@cline-pass/web",
-  "version": "2.9.1",
+  "version": "2.9.2",
   "private": true,
   "type": "module",
   "scripts": {

@@ -25,6 +25,7 @@ Thumbs.db
 .claude/
 .playwright-mcp/
 .serena/
+.wintertemp/
 
 # 桌面壳构建产物
 desktop/target/
