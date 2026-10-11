@@ -1,29 +1,37 @@
-import { App, Button, Divider, Input, Popconfirm, Space, Switch, Tag, Typography } from 'antd';
+import { DeleteOutlined, EyeInvisibleOutlined, EyeTwoTone, SaveOutlined } from '@ant-design/icons';
+import { App, Button, Divider, Input, Popconfirm, Space, Switch, Tag, Typography, theme } from 'antd';
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 
 import { useMeta, useSaveSecurity, useSecurity } from '../api/hooks.ts';
-import { PageHeader } from '../pageHeader.tsx';
+import { GAP_SECTION } from '../layout.ts';
+import { PageHeader, SectionTitle } from '../pageHeader.tsx';
 
-/** 设置区块：标题 + 说明 + 控件；区块之间用分隔线，不用同尺寸卡片堆叠。 */
-function Section({ title, desc, children }: { title: string; desc?: string; children: ReactNode }) {
+/**
+ * 设置行的统一版式：左标签（固定宽） + 右控件（弹性）。
+ *
+ * 上一版每块自己定控件宽度（480 / 480 / 480），说明文字与控件左右不对齐，
+ * 窗口一放大整页就散。现在只有这一个栅格：标签列宽固定，控件列统一铺满。
+ */
+function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   return (
-    <div>
-      <Typography.Title level={5} style={{ margin: 0 }}>
-        {title}
-      </Typography.Title>
-      {desc && (
-        <Typography.Text type="secondary" style={{ fontSize: 13, display: 'block', marginTop: 4 }}>
-          {desc}
-        </Typography.Text>
-      )}
-      <div style={{ marginTop: 12 }}>{children}</div>
+    <div className="cps-field">
+      <div className="cps-field-label">
+        <Typography.Text style={{ fontSize: 13 }}>{label}</Typography.Text>
+        {hint && (
+          <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
+            {hint}
+          </Typography.Text>
+        )}
+      </div>
+      <div className="cps-field-body">{children}</div>
     </div>
   );
 }
 
 export default function Security() {
   const { message } = App.useApp();
+  const { token } = theme.useToken();
   const security = useSecurity();
   const meta = useMeta();
   const save = useSaveSecurity();
@@ -58,116 +66,146 @@ export default function Security() {
   };
 
   const data = security.data;
+  const accessBase = meta.data?.proxyBase ?? '—';
 
   return (
-    <div style={{ maxWidth: 720, margin: '0 auto' }}>
-      <PageHeader title="访问与安全" desc="下游接入地址、代理密钥与跨源防护。低频配置，改完记得保存。" />
+    <div style={{ maxWidth: 760 }}>
+      <PageHeader title="访问与安全" desc="下游怎么连、用什么密钥连、跨源怎么放行。低频配置，改完点保存。" />
 
-      <Section
-        title="接入地址"
-        desc="下游客户端（Cline、任意 OpenAI 兼容工具）的 Base URL。本地部署即回环地址；公网部署填好下方「公网代理地址」后这里会同步展示。"
+      {/* 接入区：地址与密钥是同一个问题的两面，放在一起才读得懂 */}
+      <div
+        style={{
+          border: `1px solid ${token.colorBorderSecondary}`,
+          borderLeft: `3px solid ${token.colorPrimary}`,
+          borderRadius: token.borderRadiusLG,
+          background: token.colorBgContainer,
+          padding: 20,
+          marginBottom: GAP_SECTION,
+          display: 'grid',
+          gap: 18,
+        }}
       >
-        <Typography.Text code copyable style={{ fontSize: 13 }}>
-          {meta.data?.proxyBase ?? '—'}
-        </Typography.Text>
-      </Section>
+        <Field label="接入地址" hint="下游客户端（Cline / 任意 OpenAI 兼容工具）填这个 Base URL">
+          <Input
+            readOnly
+            value={accessBase}
+            addonAfter={
+              <Typography.Text
+                copyable={{ text: accessBase, tooltips: ['复制地址', '已复制'] }}
+                style={{ fontSize: 13 }}
+              >
+                复制
+              </Typography.Text>
+            }
+            style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 13 }}
+          />
+        </Field>
 
-      <Divider style={{ margin: '24px 0' }} />
-
-      <Section title="公网代理地址（展示用）" desc="门户与状态栏展示的公网地址；本地使用留空。">
-        <Input
-          style={{ maxWidth: 480 }}
-          placeholder="如 https://pass.example.com（本地留空）"
-          value={publicBase}
-          onChange={(e) => setPublicBase(e.target.value)}
-        />
-      </Section>
-
-      <Divider style={{ margin: '24px 0' }} />
-
-      <Section
-        title="下游代理密钥"
-        desc="客户端用这把密钥访问代理（Authorization: Bearer …）。修改后客户端需同步更新；绑定非回环地址且密钥为空时服务会拒绝启动。"
-      >
-        <Space align="center" style={{ marginBottom: 8 }}>
-          {data?.authRequired ? (
-            <Tag color="green">鉴权已开启</Tag>
-          ) : (
-            <Tag color="orange">鉴权关闭（仅限本机绑定）</Tag>
-          )}
-          {data?.hasProxyKey && (
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              已设置，留空保持不变
-            </Typography.Text>
-          )}
-        </Space>
-        <Input.Password
-          style={{ maxWidth: 480 }}
-          placeholder={data?.hasProxyKey ? '留空保持不变' : '尚未设置'}
-          value={proxyKey}
-          onChange={(e) => setProxyKey(e.target.value)}
-        />
-        {data?.hasProxyKey && (
-          <div style={{ marginTop: 8 }}>
-            <Popconfirm
-              title="清除代理密钥？"
-              description="清除后代理不再鉴权（仅回环绑定时安全）；公网部署不要这样做。"
-              okText="清除"
-              okButtonProps={{ danger: true }}
-              cancelText="取消"
-              onConfirm={() =>
-                save.mutate({ proxyKey: null }, { onSuccess: () => message.success('密钥已清除（代理不再鉴权）') })
-              }
-            >
-              <Button size="small" danger type="text">
-                清除密钥
+        <Field label="访问密钥" hint="客户端请求头带上：Authorization: Bearer <密钥>">
+          <div style={{ display: 'grid', gap: 8 }}>
+            <Space size={8} align="center" wrap>
+              {data?.authRequired ? (
+                <Tag color="green" style={{ margin: 0 }}>
+                  鉴权已开启
+                </Tag>
+              ) : (
+                <Tag color="orange" style={{ margin: 0 }}>
+                  未开启（仅限本机绑定）
+                </Tag>
+              )}
+              {data?.hasProxyKey ? (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  已设置密钥；输入新值可覆盖，留空保持不变
+                </Typography.Text>
+              ) : (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  尚未设置——下游无需密钥即可访问（只有本机可达时是安全的）
+                </Typography.Text>
+              )}
+            </Space>
+            <Space.Compact style={{ width: '100%', maxWidth: 460 }}>
+              <Input.Password
+                placeholder={data?.hasProxyKey ? '留空保持不变' : '设置一把密钥（建议 24 位以上随机串）'}
+                value={proxyKey}
+                onChange={(e) => setProxyKey(e.target.value)}
+                iconRender={(visible) => (visible ? <EyeTwoTone /> : <EyeInvisibleOutlined />)}
+              />
+              <Button
+                disabled={!proxyKey.trim()}
+                onClick={() =>
+                  void navigator.clipboard?.writeText(proxyKey.trim()).then(() => message.success('已复制'))
+                }
+              >
+                复制
               </Button>
-            </Popconfirm>
+            </Space.Compact>
+            {data?.hasProxyKey && (
+              <div>
+                <Popconfirm
+                  title="清除代理密钥？"
+                  description="清除后代理不再鉴权（仅回环绑定时安全）；公网部署不要这样做。"
+                  okText="清除"
+                  okButtonProps={{ danger: true }}
+                  cancelText="取消"
+                  onConfirm={() =>
+                    save.mutate({ proxyKey: null }, { onSuccess: () => message.success('密钥已清除（代理不再鉴权）') })
+                  }
+                >
+                  <Button size="small" danger type="text" icon={<DeleteOutlined />}>
+                    清除密钥
+                  </Button>
+                </Popconfirm>
+              </div>
+            )}
           </div>
-        )}
-      </Section>
+        </Field>
+      </div>
 
-      <Divider style={{ margin: '24px 0' }} />
+      <SectionTitle title="部署" />
+      <div style={{ display: 'grid', gap: 18, marginBottom: GAP_SECTION }}>
+        <Field label="公网代理地址" hint="门户与状态栏展示用；本机自用留空">
+          <Input
+            style={{ maxWidth: 460 }}
+            placeholder="如 https://pass.example.com（本地留空）"
+            value={publicBase}
+            onChange={(e) => setPublicBase(e.target.value)}
+          />
+        </Field>
+        <Field label="CORS 白名单" hint="每行一个 Origin；留空 = 不发跨域头（同源足够）">
+          <Input.TextArea
+            rows={3}
+            style={{ maxWidth: 460 }}
+            placeholder={'默认为空\n如需放行其他前端：https://your-app.example.com'}
+            value={corsOrigins}
+            onChange={(e) => setCorsOrigins(e.target.value)}
+          />
+        </Field>
+      </div>
 
-      <Section
-        title="跨源访问（CORS 白名单）"
-        desc="每行一个 Origin。默认空 = 不发跨域头（同源访问足够）；白名单外的跨源写请求会被直接拒绝（防本地 CSRF），非浏览器客户端不受影响。"
-      >
-        <Input.TextArea
-          rows={2}
-          style={{ maxWidth: 480 }}
-          placeholder={'默认为空\n如需放行其他前端：https://your-app.example.com'}
-          value={corsOrigins}
-          onChange={(e) => setCorsOrigins(e.target.value)}
-        />
-      </Section>
-
-      <div style={{ marginTop: 24 }}>
-        <Button type="primary" loading={save.isPending} onClick={persist}>
-          保存以上修改
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: GAP_SECTION }}>
+        <Button type="primary" icon={<SaveOutlined />} loading={save.isPending} onClick={persist}>
+          保存修改
         </Button>
-        <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 12 }}>
-          接入地址 / 公网地址 / 密钥 / CORS 一并保存
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          公网地址与 CORS 白名单一起保存
         </Typography.Text>
       </div>
 
-      <Divider style={{ margin: '24px 0' }} />
+      <Divider style={{ margin: `0 0 ${GAP_SECTION}px` }} />
 
-      <Section
-        title="目录暴露"
-        desc="把完整目录模型加入 /v1/models。默认关闭：客户端只看到订阅模型。开关即时生效，无需点保存。"
-      >
+      <SectionTitle title="目录暴露" />
+      <Field label="/v1/models" hint="开关即时生效，无需保存">
         <Space align="center">
           <Switch
             checked={data?.exposeCatalog ?? false}
             onChange={(v) => save.mutate({ exposeCatalog: v })}
             loading={save.isPending}
           />
-          <Typography.Text style={{ fontSize: 14 }}>
-            {data?.exposeCatalog ? '已开启：/v1/models 包含完整目录' : '已关闭：只暴露订阅模型'}
+          <Typography.Text style={{ fontSize: 13 }}>
+            {data?.exposeCatalog ? '已开启：/v1/models 返回完整目录' : '已关闭：只返回订阅模型（推荐）'}
           </Typography.Text>
         </Space>
-      </Section>
+      </Field>
     </div>
   );
 }

@@ -23,18 +23,19 @@ body {
   --cps-thumb-hover: rgba(127, 127, 127, 0.55);
 }
 
-/* 细滚动条：内容区内滚是主场景，滚动条出现频率高 */
+/* 细滚动条：内容区内滚是主场景，滚动条出现频率高。
+   宽度压到 6px 并带 2px 透明边——8px 的实心块在列表/侧栏里显得很重。 */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--cps-thumb) transparent;
 }
 *::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 *::-webkit-scrollbar-thumb {
   background: var(--cps-thumb);
-  border-radius: 4px;
+  border-radius: 3px;
 }
 *::-webkit-scrollbar-thumb:hover {
   background: var(--cps-thumb-hover);
@@ -42,6 +43,123 @@ body {
 *::-webkit-scrollbar-track,
 *::-webkit-scrollbar-corner {
   background: transparent;
+}
+/* 同时出现纵横两条滚动条时，右下角不要留一个方块 */
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ---------- 自绘标题栏（桌面壳） ---------- */
+.cps-titlebar {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 36px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  background: var(--ant-color-bg-container);
+  border-bottom: 1px solid var(--ant-color-border-secondary);
+  user-select: none;
+}
+.cps-titlebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  font-size: 13px;
+  color: var(--ant-color-text-secondary);
+  white-space: nowrap;
+}
+.cps-titlebar-gap {
+  flex: 1;
+  height: 100%;
+}
+.cps-titlebar-actions {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+.cps-wbtn {
+  width: 46px;
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+  padding: 0;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+.cps-wbtn:hover {
+  background: var(--ant-color-fill-secondary);
+  color: var(--ant-color-text);
+}
+.cps-wbtn-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+/* ---------- 设置行（访问与安全等表单页的统一栅格） ----------
+   左标签固定列宽、右控件铺满剩余：控件左侧对齐，说明文字有确定位置。
+   窄窗口下改为上下堆叠（标签在上），避免标签列把控件挤成一条。 */
+.cps-field {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.cps-field-label {
+  padding-top: 5px;
+}
+.cps-field-body {
+  min-width: 0;
+}
+@media (max-width: 860px) {
+  .cps-field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .cps-field-label {
+    padding-top: 0;
+  }
+}
+
+/* 表格：模型名 / 账号 / 渠道这类标识列不允许折行（折了行高参差，扫读变慢） */
+.cps-nowrap {
+  white-space: nowrap;
+}
+
+/* 响应内容预览（测试台）：固定高度内滚，别把整页撑长 */
+.cps-pre {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--ant-color-fill-quaternary);
+  border-radius: var(--ant-border-radius);
+  font-size: 12px;
+  line-height: 1.6;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 侧栏底部：最近打开（除导航与钉住外的第三条到达路径） */
+.cps-recent {
+  padding: 0 12px;
+  display: grid;
+  gap: 2px;
+}
+.cps-recent-title {
+  font-size: 11px;
+  color: var(--ant-color-text-quaternary);
+  padding: 0 8px 4px;
+  letter-spacing: 0.04em;
 }
 
 ::selection {
@@ -140,10 +258,16 @@ body {
 /* 模型列表：窄窗口下收窄，避免挤压右侧详情区 */
 .cps-model-list {
   width: 292px;
+  flex: 0 0 292px;
+  /* 列表自身滚动（而不是撑长整页）：避免页面滚动条与列表滚动条同时出现 */
+  max-height: calc(100vh - 250px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 @media (max-width: 1200px) {
   .cps-model-list {
     width: 244px;
+    flex-basis: 244px;
   }
 }
 

@@ -4,6 +4,7 @@ import { useState } from 'react';
 
 import { useModels, useProbe } from '../api/hooks.ts';
 import type { PinState, Pipeline } from '../api/types.ts';
+import { GAP_SECTION } from '../layout.ts';
 import { PageHeader } from '../pageHeader.tsx';
 
 /** 本页探测的结果（失败也留痕）。目录模型多半不在订阅清单里，结果就地展示，不再「存了却无处可看」。 */
@@ -23,7 +24,8 @@ export default function Catalog() {
   const [probes, setProbes] = useState<Record<string, ProbeOutcome>>({});
 
   const catalog = models.data?.catalog ?? [];
-  const filtered = catalog.filter((id) => !filter || id.toLowerCase().includes(filter.toLowerCase())).slice(0, 400);
+  const matched = catalog.filter((id) => !filter || id.toLowerCase().includes(filter.toLowerCase()));
+  const filtered = matched.slice(0, 400);
 
   const runProbe = (id: string): void => {
     probe.mutate(id, {
@@ -45,7 +47,16 @@ export default function Catalog() {
   return (
     <div>
       <PageHeader title="完整目录" desc="Cline 公开目录的全部模型；:free 变体可精确钉住上游。探测结果就地显示。" />
-      <Space style={{ marginBottom: 16 }} wrap>
+      {/* 工具栏：搜索 + 计数同高一行，计数靠右——以前两者挤在一起，长宽比也不一致 */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          marginBottom: GAP_SECTION,
+          flexWrap: 'wrap',
+        }}
+      >
         <Input
           style={{ width: 320 }}
           prefix={<SearchOutlined />}
@@ -54,10 +65,12 @@ export default function Catalog() {
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          共 {models.data?.catalogCount ?? 0} 个目录模型（显示前 400 条）
+        <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 'auto' }}>
+          {filter
+            ? `匹配 ${matched.length} / ${models.data?.catalogCount ?? 0} 个（显示前 400 条）`
+            : `共 ${models.data?.catalogCount ?? 0} 个目录模型（显示前 400 条）`}
         </Typography.Text>
-      </Space>
+      </div>
       {models.isError ? (
         <Alert
           type="error"

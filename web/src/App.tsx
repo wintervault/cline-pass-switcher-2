@@ -1,30 +1,19 @@
 import {
   AppstoreOutlined,
   ExperimentOutlined,
-  FileTextOutlined,
   HistoryOutlined,
-  KeyOutlined,
-  LockOutlined,
-  LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
-  MoonOutlined,
   NodeIndexOutlined,
-  PauseCircleOutlined,
-  PlayCircleOutlined,
   PushpinFilled,
   PushpinOutlined,
-  ReloadOutlined,
   SafetyOutlined,
-  SunOutlined,
-  SyncOutlined,
   TeamOutlined,
 } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   App as AntdApp,
-  Badge,
   Button,
   ConfigProvider,
   Input,
@@ -36,7 +25,7 @@ import {
   theme,
 } from 'antd';
 import zhCN from 'antd/es/locale/zh_CN';
-import { type ComponentType, useEffect, useState } from 'react';
+import { type ComponentType, useCallback, useEffect, useState } from 'react';
 
 import { getAuthKey, setAuthKey } from './api/client.ts';
 import { useMeta, useRefresh } from './api/hooks.ts';
@@ -47,9 +36,13 @@ import History from './features/History.tsx';
 import Models from './features/Models.tsx';
 import Playground from './features/Playground.tsx';
 import Security from './features/Security.tsx';
-import { useHostBridge } from './hostBridge.ts';
+import { useHostControl } from './hostBridge.ts';
+import { PAGE_GUTTER, PAGE_WIDTH } from './layout.ts';
 import { Logo } from './logo.tsx';
+import { ServiceBanner } from './serviceBanner.tsx';
+import { StatusBar } from './statusBar.tsx';
 import { darkTheme, initialTheme, lightTheme, persistTheme, type ThemeMode } from './theme.ts';
+import { TITLEBAR_HEIGHT, TitleBar } from './titleBar.tsx';
 
 /** 钉住页面的持久化键：打开控制台时默认落到被钉住的页面。 */
 const PIN_KEY = 'cps_pinned_page';
@@ -64,13 +57,6 @@ const PAGES: { key: string; label: string; icon: ComponentType; element: Compone
   { key: 'catalog', label: '完整目录', icon: AppstoreOutlined, element: Catalog },
   { key: 'security', label: '访问与安全', icon: SafetyOutlined, element: Security },
 ];
-
-const HOST_LABEL: Record<string, string> = {
-  running: '运行中',
-  starting: '启动中',
-  stopping: '停止中',
-  stopped: '已停止',
-};
 
 /** 左侧导航：可折叠（64px 图标 ⇄ 200px 图标+文字）；悬停可钉住页面（打开时默认落到此页）。 */
 function SideNav({
@@ -179,48 +165,13 @@ function SideNav({
   );
 }
 
-/** 状态栏里的服务控制簇（桌面壳模式渲染；浏览器直开时不显示）。 */
-function HostControls({ host }: { host: ReturnType<typeof useHostBridge> }) {
-  const bridge = host.host;
-  if (!bridge) return null;
-  const { status } = host;
-  const stopped = status === 'stopped';
-  return (
-    <Space size={4}>
-      <Tooltip title="桌面壳托管的服务状态（2 秒自动刷新）">
-        <Badge
-          status={stopped ? 'error' : status === 'running' ? 'success' : 'processing'}
-          text={HOST_LABEL[status] ?? status}
-          style={{ fontSize: 13 }}
-        />
-      </Tooltip>
-      {stopped ? (
-        <Tooltip title="启动服务">
-          <Button size="small" type="text" icon={<PlayCircleOutlined />} onClick={() => void bridge.start()} />
-        </Tooltip>
-      ) : (
-        <>
-          <Tooltip title="停止服务">
-            <Button size="small" type="text" icon={<PauseCircleOutlined />} onClick={() => void bridge.stop()} />
-          </Tooltip>
-          <Tooltip title="重启服务">
-            <Button size="small" type="text" icon={<SyncOutlined />} onClick={() => void bridge.restart()} />
-          </Tooltip>
-        </>
-      )}
-      <Tooltip title="打开日志目录">
-        <Button size="small" type="text" icon={<FileTextOutlined />} onClick={() => void bridge.openLogs()} />
-      </Tooltip>
-    </Space>
-  );
-}
-
 function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () => void }) {
   const { token } = theme.useToken();
   const meta = useMeta();
   const refresh = useRefresh();
   const qc = useQueryClient();
-  const host = useHostBridge();
+  /** 服务由壳托管：状态、启停动作、失败原因都在这里（状态栏与提示条共用同一份）。 */
+  const host = useHostControl(useCallback(() => qc.invalidateQueries(), [qc]));
   /** 钉住的页面：打开控制台时默认落在这里（用户可把高频页钉住，省一次点击）。 */
   const [pinned, setPinned] = useState<string | null>(() => localStorage.getItem(PIN_KEY));
   const [nav, setNav] = useState(() => localStorage.getItem(PIN_KEY) ?? 'models');
@@ -299,8 +250,9 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
 
   return (
     <>
-      {/* 桌面应用形态：固定侧栏 + 内容区内滚 + 常驻状态栏（窗口高度恒定，不整页滚） */}
-      <Layout style={{ height: '100vh' }}>
+      {/* 桌面应用形态：自绘标题栏 + 固定侧栏 + 内容区内滚 + 常驻状态栏（窗口高度恒定，不整页滚） */}
+      <TitleBar />
+      <Layout style={{ height: '100vh', paddingTop: TITLEBAR_HEIGHT }}>
         <Layout.Sider
           width={collapsed ? 64 : 200}
           style={{
@@ -319,22 +271,9 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
         </Layout.Sider>
 
         <Layout style={{ background: 'transparent', minWidth: 0 }}>
-          <Layout.Content style={{ overflow: 'auto', padding: '24px 24px 32px' }}>
-            <div style={{ maxWidth: 1400, margin: '0 auto' }}>
-              {host.host && host.status === 'stopped' && (
-                <Alert
-                  type="warning"
-                  showIcon
-                  style={{ marginBottom: 16 }}
-                  message="服务已停止：页面显示的是上次缓存的数据"
-                  description="从状态栏或托盘「启动服务」恢复；恢复后页面会自动重新加载。"
-                  action={
-                    <Button size="small" onClick={() => void host.host?.start()}>
-                      启动服务
-                    </Button>
-                  }
-                />
-              )}
+          <Layout.Content style={{ overflow: 'auto', padding: `24px ${PAGE_GUTTER}px 32px` }}>
+            <div style={{ maxWidth: PAGE_WIDTH, margin: '0 auto' }}>
+              <ServiceBanner control={host} />
               {meta.data && !meta.data.configured && (
                 <Alert
                   type="error"
@@ -357,73 +296,22 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
             </div>
           </Layout.Content>
 
-          <Layout.Footer
-            style={{
-              height: 40,
-              padding: '0 20px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 16,
-              background: token.colorBgContainer,
-              borderTop: `1px solid ${token.colorBorderSecondary}`,
+          <StatusBar
+            control={host}
+            proxyBase={proxyBase}
+            authRequired={meta.data?.authRequired}
+            version={meta.data?.version}
+            onOpenSecurity={() => setNav('security')}
+            mode={mode}
+            onToggleTheme={onToggleTheme}
+            onRefresh={refresh}
+            loggedIn={Boolean(authKey)}
+            onLogout={() => {
+              setAuthKey('');
+              setKey('');
+              qc.invalidateQueries();
             }}
-          >
-            <HostControls host={host} />
-            {proxyBase && (
-              <Space size={10} align="center">
-                <Typography.Text type="secondary" style={{ fontSize: 13 }} copyable={{ text: proxyBase }}>
-                  {proxyBase}
-                </Typography.Text>
-                <Tooltip
-                  title={
-                    meta.data?.authRequired
-                      ? '已开启鉴权：客户端需带这把密钥访问；点击进入设置'
-                      : '当前未鉴权（仅限本机绑定）；点击设置代理密钥'
-                  }
-                >
-                  <Button
-                    size="small"
-                    type="link"
-                    icon={meta.data?.authRequired ? <LockOutlined /> : <KeyOutlined />}
-                    style={{ fontSize: 13 }}
-                    onClick={() => setNav('security')}
-                  >
-                    {meta.data?.authRequired ? '密钥已开启' : '未设密钥'}
-                  </Button>
-                </Tooltip>
-              </Space>
-            )}
-            <Space size={4} style={{ marginLeft: 'auto' }}>
-              <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-                v{meta.data?.version ?? '…'}
-              </Typography.Text>
-              <Tooltip title={mode === 'dark' ? '切换到亮色' : '切换到暗色'}>
-                <Button
-                  size="small"
-                  type="text"
-                  icon={mode === 'dark' ? <SunOutlined /> : <MoonOutlined />}
-                  onClick={onToggleTheme}
-                />
-              </Tooltip>
-              <Tooltip title="刷新全部数据">
-                <Button size="small" type="text" icon={<ReloadOutlined />} onClick={refresh} />
-              </Tooltip>
-              {authKey && (
-                <Tooltip title="清除本机保存的访问密钥">
-                  <Button
-                    size="small"
-                    type="text"
-                    icon={<LogoutOutlined />}
-                    onClick={() => {
-                      setAuthKey('');
-                      setKey('');
-                      qc.invalidateQueries();
-                    }}
-                  />
-                </Tooltip>
-              )}
-            </Space>
-          </Layout.Footer>
+          />
         </Layout>
       </Layout>
 

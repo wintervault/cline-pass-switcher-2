@@ -1,4 +1,4 @@
-import { CopyOutlined } from '@ant-design/icons';
+import { CopyOutlined, ReloadOutlined } from '@ant-design/icons';
 import {
   Alert,
   App,
@@ -6,6 +6,7 @@ import {
   Button,
   Empty,
   Segmented,
+  Select,
   Skeleton,
   Space,
   Table,
@@ -14,11 +15,20 @@ import {
   Typography,
   theme,
 } from 'antd';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { useHistory } from '../api/hooks.ts';
 import type { HistoryEntry, TraceEntry } from '../api/types.ts';
+import { GAP_SECTION } from '../layout.ts';
 import { PageHeader } from '../pageHeader.tsx';
+
+/** 自动刷新间隔（毫秒）；0 = 关闭。 */
+const REFRESH_OPTIONS = [
+  { value: 0, label: '自动刷新：关' },
+  { value: 5_000, label: '每 5 秒' },
+  { value: 15_000, label: '每 15 秒' },
+  { value: 30_000, label: '每 30 秒' },
+];
 
 /** 相对时间：一眼知道「多久之前」，悬停看完整时间。 */
 function relTime(ts: number): string {
@@ -27,6 +37,23 @@ function relTime(ts: number): string {
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
   return `${Math.floor(diff / 86_400_000)} 天前`;
+}
+
+/** 账号显示：邮箱很长，只留首段 + 尾段，完整值进悬停与复制。 */
+function AccountCell({ account }: { account: string | null }) {
+  if (!account) return <Typography.Text type="secondary">—</Typography.Text>;
+  const at = account.indexOf('@');
+  const name = at > 0 ? account.slice(0, at) : account;
+  const domain = at > 0 ? account.slice(at) : '';
+  const head = name.length > 10 ? `${name.slice(0, 9)}…` : name;
+  return (
+    <Tooltip title={account}>
+      <Tag color="blue" style={{ margin: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {head}
+        {domain && <span style={{ opacity: 0.7 }}>{domain}</span>}
+      </Tag>
+    </Tooltip>
+  );
 }
 
 /** 尝试状态 → 圆点语义。 */
@@ -77,6 +104,15 @@ export default function History() {
   const rows = history.data?.history ?? [];
   /** 排查场景的快捷筛选：全部 / 成功 / 失败。 */
   const [view, setView] = useState<'all' | 'ok' | 'fail'>('all');
+  const [interval, setIntervalMs] = useState(0);
+
+  // 自动刷新：轮询时保持上一次数据可见（isFetching 而非 isLoading），不闪白
+  useEffect(() => {
+    if (!interval) return;
+    const timer = window.setInterval(() => void history.refetch(), interval);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [interval, history.refetch]);
 
   const okRows = rows.filter((r) => !r.error);
   const failed = rows.length - okRows.length;
@@ -105,23 +141,42 @@ export default function History() {
       ) : (
         <>
           {rows.length > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 32, marginBottom: 16, flexWrap: 'wrap' }}>
+            <div
+              style={{ display: 'flex', alignItems: 'center', gap: 24, marginBottom: GAP_SECTION, flexWrap: 'wrap' }}
+            >
               <Space size={32} wrap>
                 <Stat label="成功" value={String(okRows.length)} tone={token.colorSuccess} />
                 <Stat label="失败" value={String(failed)} tone={failed ? token.colorError : undefined} />
                 <Stat label="平均耗时" value={`${avgMs}ms`} />
                 <Stat label="流式占比" value={`${streamPct}%`} />
               </Space>
-              <Segmented
-                style={{ marginLeft: 'auto' }}
-                value={view}
-                onChange={(v) => setView(v as typeof view)}
-                options={[
-                  { value: 'all', label: '全部' },
-                  { value: 'ok', label: '成功' },
-                  { value: 'fail', label: '失败' },
-                ]}
-              />
+              {/* 刷新控制：手动一次 / 按间隔自动（失败排查时开着它最省事） */}
+              <Space size={8} style={{ marginLeft: 'auto' }}>
+                <Tooltip title="立即刷新">
+                  <Button
+                    size="small"
+                    icon={<ReloadOutlined spin={history.isFetching} />}
+                    onClick={() => void history.refetch()}
+                  />
+                </Tooltip>
+                <Select
+                  size="small"
+                  style={{ width: 132 }}
+                  value={interval}
+                  onChange={setIntervalMs}
+                  options={REFRESH_OPTIONS}
+                />
+                <Segmented
+                  size="small"
+                  value={view}
+                  onChange={(v) => setView(v as typeof view)}
+                  options={[
+                    { value: 'all', label: `全部 ${rows.length}` },
+                    { value: 'ok', label: `成功 ${okRows.length}` },
+                    { value: 'fail', label: `失败 ${failed}` },
+                  ]}
+                />
+              </Space>
             </div>
           )}
           <Table<HistoryEntry>
@@ -130,33 +185,45 @@ export default function History() {
             sticky
             loading={history.isLoading}
             dataSource={visible}
+            scroll={{ x: 1000 }}
             locale={{
               emptyText: (
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无请求记录：agent 发出请求后会出现在这里" />
               ),
             }}
-            pagination={{ pageSize: 20, hideOnSinglePage: true }}
+            pagination={{ pageSize: 20, hideOnSinglePage: true, showSizeChanger: false }}
             onRow={(r) => ({ style: r.error ? { background: token.colorErrorBg } : undefined })}
             columns={[
               {
                 title: '时间',
-                width: 100,
+                width: 92,
                 render: (_, r) => (
                   <Tooltip title={new Date(r.ts).toLocaleString()}>
-                    <Typography.Text type="secondary">{relTime(r.ts)}</Typography.Text>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {relTime(r.ts)}
+                    </Typography.Text>
                   </Tooltip>
                 ),
               },
               {
                 title: '模型',
                 dataIndex: 'model',
-                width: 240,
-                render: (v: string) => <Typography.Text code>{v}</Typography.Text>,
+                width: 230,
+                className: 'cps-nowrap',
+                render: (v: string) => (
+                  <Typography.Text
+                    code
+                    copyable={{ text: v, tooltips: ['复制模型名', '已复制'] }}
+                    className="cps-nowrap"
+                  >
+                    {v}
+                  </Typography.Text>
+                ),
               },
-              { title: '账号', width: 84, render: (_, r) => (r.account ? <Tag color="blue">{r.account}</Tag> : '—') },
+              { title: '账号', width: 168, render: (_, r) => <AccountCell account={r.account} /> },
               {
                 title: '实际渠道',
-                width: 140,
+                width: 132,
                 render: (_, r) => (
                   <Space size={4} wrap>
                     {r.provider ? <Tag color="geekblue">{r.provider}</Tag> : '—'}
@@ -170,23 +237,31 @@ export default function History() {
               },
               {
                 title: '耗时',
-                width: 88,
+                width: 84,
                 align: 'right',
                 render: (_, r) =>
                   r.ms != null ? (
-                    <Typography.Text style={{ fontVariantNumeric: 'tabular-nums' }}>{r.ms} ms</Typography.Text>
+                    <Typography.Text style={{ fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>
+                      {r.ms} ms
+                    </Typography.Text>
                   ) : (
                     '—'
                   ),
               },
-              { title: '方式', width: 66, render: (_, r) => (r.stream ? '流式' : '非流式') },
+              {
+                title: '方式',
+                width: 62,
+                render: (_, r) => <span style={{ fontSize: 12 }}>{r.stream ? '流式' : '非流式'}</span>,
+              },
               {
                 title: '尝试序列',
                 render: (_, r) =>
                   r.error ? (
-                    <Typography.Text type="danger" style={{ fontSize: 12 }}>
-                      {r.error.slice(0, 90)}
-                    </Typography.Text>
+                    <Tooltip title={r.error}>
+                      <Typography.Text type="danger" style={{ fontSize: 12 }}>
+                        {r.error.length > 48 ? `${r.error.slice(0, 48)}…` : r.error}
+                      </Typography.Text>
+                    </Tooltip>
                   ) : (
                     <TraceChain trace={r.trace} attempts={r.attempts} />
                   ),
