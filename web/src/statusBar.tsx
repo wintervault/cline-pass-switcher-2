@@ -174,12 +174,12 @@ export function StatusBar({
             </Typography.Text>
           )}
         </Field>
-        <Field label="访问密钥">
+        <Field label="API Key">
           <Tooltip
             title={
               authRequired
-                ? '已开启鉴权：下游客户端需带这把密钥；点击进入设置'
-                : '当前未设密钥（仅限本机绑定）；点击设置'
+                ? '已设置：下游客户端访问 /v1 需带上它（本机打开控制台不需要）。点击查看或重设'
+                : '未设置：下游客户端无需密钥即可调用代理。点击设置'
             }
           >
             <Button
@@ -189,7 +189,7 @@ export function StatusBar({
               style={{ fontSize: 13, padding: 0, height: 'auto' }}
               onClick={onOpenSecurity}
             >
-              {authRequired ? '已开启 · 查看' : '未设置 · 去设置'}
+              {authRequired ? '已设置 · 查看' : '未设置 · 去设置'}
             </Button>
           </Tooltip>
         </Field>

@@ -148,13 +148,16 @@ async function main(): Promise<void> {
     middleware: [
       corsResponseHeaders(() => configStore.value.corsOrigins),
       originCheckMiddleware(() => configStore.value.corsOrigins),
-      authMiddleware(
-        () => configStore.value.proxyKey,
+      authMiddleware(() => configStore.value.proxyKey, {
         // 只保护 API 与 OpenAI 兼容端点；静态页面保持开放（见 middleware 注释）；
-        // /api/shutdown 不走 proxyKey（壳不应依赖下游密钥配置），由「回环来源 +
+        // /api/shutdown 不走密钥（壳不应依赖下游密钥配置），由「回环来源 +
         // 无 Origin/Referer」三重放行保护（见 routes/api.ts 的注释）
-        (path) => path !== '/api/shutdown' && (isChatPath(path) || isModelsPath(path) || path.startsWith('/api/')),
-      ),
+        needsAuth: (path) =>
+          path !== '/api/shutdown' && (isChatPath(path) || isModelsPath(path) || path.startsWith('/api/')),
+        // 控制台 API 允许本机免密钥；下游代理端点（/v1/*）不在此列 ——
+        // 客户端无论从哪来都要带密钥，那正是密钥的用途（见 middleware 注释）
+        consolePath: (path) => path.startsWith('/api/'),
+      }),
     ],
   });
 

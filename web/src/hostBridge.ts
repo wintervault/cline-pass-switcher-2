@@ -83,17 +83,48 @@ export interface HostControl {
   openLogs: () => void;
 }
 
+type NoticeKind = 'ok' | 'fail' | 'info';
+
+export interface HostControlOptions {
+  /** 控制动作落地后调用（如让查询缓存失效） */
+  onChanged?: () => void;
+  /**
+   * 动作结果的回执。启停服务要等好几秒，只在「按下了」这一刻提示不够——
+   * 所以真正的成功提示在**状态真的变过去之后**才发（见 awaiting）。
+   */
+  onNotice?: (text: string, kind: NoticeKind) => void;
+}
+
 /**
- * 服务状态轮询 + 控制动作。所有动作都带回执：失败一定变成可见的错误文案，
- * 绝不静默——「点了没反应」正是上一版最糟的地方。
+ * 服务状态轮询 + 控制动作。
+ *
+ * 回执是两段的：按下时立刻说「正在重启…」，等轮询确认到目标状态再说「已重启」。
+ * 上一版什么都不提示，用户按完只能猜——这正是「不知道到底成了没有」的来源。
  */
-export function useHostControl(onChanged?: () => void): HostControl {
+export function useHostControl(options: HostControlOptions = {}): HostControl {
   const host = getHostBridge();
   const [status, setStatus] = useState<HostStatus>({ state: 'running' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const changed = useRef(onChanged);
-  changed.current = onChanged;
+  const changed = useRef(options.onChanged);
+  changed.current = options.onChanged;
+  const notify = useRef(options.onNotice);
+  notify.current = options.onNotice;
+  /** 正在等待的目标状态（动作返回时还没到位，由轮询确认） */
+  const awaiting = useRef<{ target: HostStatus['state']; okText: string } | null>(null);
+
+  const settle = useCallback((next: HostStatus): void => {
+    const pending = awaiting.current;
+    if (!pending) return;
+    if (next.state === pending.target) {
+      awaiting.current = null;
+      notify.current?.(pending.okText, 'ok');
+      changed.current?.();
+    } else if (next.state === 'error') {
+      awaiting.current = null;
+      notify.current?.(next.error ?? '服务启动失败', 'fail');
+    }
+  }, []);
 
   const poll = useCallback(async (): Promise<HostStatus['state'] | 'unknown'> => {
     if (!host) return 'unknown';
@@ -101,13 +132,14 @@ export function useHostControl(onChanged?: () => void): HostControl {
       const next = await host.status();
       setStatus(next);
       setError(null);
+      settle(next);
       return next.state;
     } catch (err) {
       setStatus({ state: 'error', error: (err as Error).message });
       setError((err as Error).message);
       return 'error';
     }
-  }, [host]);
+  }, [host, settle]);
 
   useEffect(() => {
     if (!host) return;
@@ -126,16 +158,29 @@ export function useHostControl(onChanged?: () => void): HostControl {
   }, [host, poll]);
 
   const act = useCallback(
-    async (fn: (bridge: HostBridge) => Promise<HostStatus>): Promise<void> => {
+    async (
+      fn: (bridge: HostBridge) => Promise<HostStatus>,
+      target: HostStatus['state'],
+      okText: string,
+      pendingText: string,
+    ): Promise<void> => {
       if (!host) return;
       setBusy(true);
+      notify.current?.(pendingText, 'info');
       try {
         const next = await fn(host);
         setStatus(next);
         setError(null);
-        changed.current?.();
+        if (next.state === target) {
+          notify.current?.(okText, 'ok');
+          changed.current?.();
+        } else if (next.state === 'error') {
+          notify.current?.(next.error ?? '操作失败', 'fail');
+        } else {
+          awaiting.current = { target, okText };
+        }
       } catch (err) {
-        setError((err as Error).message);
+        notify.current?.((err as Error).message, 'fail');
       } finally {
         setBusy(false);
       }
@@ -148,9 +193,12 @@ export function useHostControl(onChanged?: () => void): HostControl {
     status,
     busy,
     error,
-    start: useCallback(() => act((b) => b.start()), [act]),
-    stop: useCallback(() => act((b) => b.stop()), [act]),
-    restart: useCallback(() => act((b) => b.restart()), [act]),
+    start: useCallback(() => act((b) => b.start(), 'running', '服务已启动', '正在启动服务…'), [act]),
+    stop: useCallback(
+      () => act((b) => b.stop(), 'stopped', '服务已停止（下游客户端此刻无法连接）', '正在停止服务…'),
+      [act],
+    ),
+    restart: useCallback(() => act((b) => b.restart(), 'running', '服务已重启', '正在重启服务…'), [act]),
     openLogs: useCallback(() => {
       void host?.openLogs().catch((err: unknown) => setError((err as Error).message));
     }, [host]),

@@ -11,22 +11,10 @@ import {
   TeamOutlined,
 } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
-import {
-  Alert,
-  App as AntdApp,
-  Button,
-  ConfigProvider,
-  Input,
-  Layout,
-  Modal,
-  Space,
-  Tooltip,
-  Typography,
-  theme,
-} from 'antd';
+import { Alert, App as AntdApp, Button, ConfigProvider, Layout, Tooltip, Typography, theme } from 'antd';
 import zhCN from 'antd/es/locale/zh_CN';
 import { type ComponentType, useCallback, useEffect, useState } from 'react';
-
+import { AccessGate } from './accessGate.tsx';
 import { getAuthKey, setAuthKey } from './api/client.ts';
 import { useMeta, useRefresh } from './api/hooks.ts';
 import './app.css';
@@ -36,6 +24,7 @@ import History from './features/History.tsx';
 import Models from './features/Models.tsx';
 import Playground from './features/Playground.tsx';
 import Security from './features/Security.tsx';
+import { useFeedback } from './feedback.ts';
 import { useHostControl } from './hostBridge.ts';
 import { PAGE_GUTTER, PAGE_WIDTH } from './layout.ts';
 import { Logo } from './logo.tsx';
@@ -170,8 +159,22 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
   const meta = useMeta();
   const refresh = useRefresh();
   const qc = useQueryClient();
-  /** 服务由壳托管：状态、启停动作、失败原因都在这里（状态栏与提示条共用同一份）。 */
-  const host = useHostControl(useCallback(() => qc.invalidateQueries(), [qc]));
+  const fb = useFeedback();
+  /**
+   * 服务由壳托管：状态、启停动作、失败原因都在这里（状态栏与提示条共用同一份）。
+   * 启停/重启都有回执——按下时说「正在…」，状态真的变过去后说「已完成」。
+   */
+  const host = useHostControl({
+    onChanged: useCallback(() => void qc.invalidateQueries(), [qc]),
+    onNotice: useCallback(
+      (text: string, kind: 'ok' | 'fail' | 'info') => {
+        if (kind === 'ok') fb.ok(text);
+        else if (kind === 'fail') fb.fail(text);
+        else fb.info(text);
+      },
+      [fb],
+    ),
+  });
   /** 钉住的页面：打开控制台时默认落在这里（用户可把高频页钉住，省一次点击）。 */
   const [pinned, setPinned] = useState<string | null>(() => localStorage.getItem(PIN_KEY));
   const [nav, setNav] = useState(() => localStorage.getItem(PIN_KEY) ?? 'models');
@@ -185,18 +188,31 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
   };
 
   const togglePin = (key: string): void => {
+    const label = PAGES.find((p) => p.key === key)?.label ?? key;
     setPinned((p) => {
       const next = p === key ? null : key;
       if (next) localStorage.setItem(PIN_KEY, next);
       else localStorage.removeItem(PIN_KEY);
+      fb.ok(next ? `已钉住「${label}」：下次打开控制台直接进这里` : `已取消钉住「${label}」`);
       return next;
     });
   };
 
   const [authKey, setKey] = useState(getAuthKey());
-  const [loginOpen, setLoginOpen] = useState(false);
-  const [loginInput, setLoginInput] = useState('');
-  const [loginErr, setLoginErr] = useState('');
+  /**
+   * 需要密钥才能读控制台 API（只可能出现在**远端访问**的部署上）。
+   *
+   * 这里是 v2.9.2 真实反馈的修复点：以前一设密钥就弹一个关不掉的模态框，
+   * 密钥忘了/输了错的就永远进不去——用下发给客户端的密钥把机器主人锁在门外。
+   * 现在两件事都改了：
+   * 1. 服务端把「本机访问控制台」判定为最高权限，本机永远不发 401（见 security/local.ts）；
+   * 2. 页面侧不再用模态框硬拦，改成一块**常驻、可重试、给出恢复路径**的面板——
+   *    不可能出现「关不掉的弹窗」这种死循环。
+   */
+  const [needKey, setNeedKey] = useState(false);
+  const [keyDraft, setKeyDraft] = useState('');
+  const [keyChecking, setKeyChecking] = useState(false);
+  const [keyError, setKeyError] = useState<string | null>(null);
 
   // 页面底色跟随主题（Layout 之外的区域由 body 承担）
   useEffect(() => {
@@ -204,17 +220,12 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
     document.body.style.colorScheme = mode;
   }, [token.colorBgLayout, mode]);
 
-  // 服务端开启了鉴权而本地没有密钥 → 弹登录框
-  useEffect(() => {
-    if (meta.data?.authRequired && !authKey) setLoginOpen(true);
-  }, [meta.data, authKey]);
-
-  // 任何查询/变更遇到 401（密钥被改、过期）→ 重新弹登录
+  // 遇到 401（远端部署且密钥缺失/失效）→ 记下状态，由面板承担输入
   useEffect(() => {
     const handler = (): void => {
       setAuthKey('');
       setKey('');
-      setLoginOpen(true);
+      setNeedKey(true);
     };
     window.addEventListener('cps:unauthorized', handler);
     return () => window.removeEventListener('cps:unauthorized', handler);
@@ -230,19 +241,27 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
     return () => window.removeEventListener('cps:navigate', handler);
   }, []);
 
-  const tryLogin = async (): Promise<void> => {
-    const candidate = loginInput.trim();
-    if (!candidate) return;
+  const tryKey = async (): Promise<void> => {
+    const candidate = keyDraft.trim();
+    if (!candidate) {
+      setKeyError('请先填入访问密钥');
+      return;
+    }
+    setKeyChecking(true);
+    setKeyError(null);
     try {
       const res = await fetch('/api/models', { headers: { 'X-Admin-Key': candidate } });
-      if (!res.ok) throw new Error(String(res.status));
+      if (!res.ok) throw new Error(res.status === 401 ? '密钥不正确' : `服务端返回 ${res.status}`);
       setAuthKey(candidate);
       setKey(candidate);
-      setLoginOpen(false);
-      setLoginErr('');
-      qc.invalidateQueries();
-    } catch {
-      setLoginErr('密钥错误，请重试');
+      setNeedKey(false);
+      setKeyDraft('');
+      void qc.invalidateQueries();
+      fb.ok('密钥有效，已进入控制台');
+    } catch (err) {
+      setKeyError((err as Error).message);
+    } finally {
+      setKeyChecking(false);
     }
   };
 
@@ -273,26 +292,38 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
         <Layout style={{ background: 'transparent', minWidth: 0 }}>
           <Layout.Content style={{ overflow: 'auto', padding: `24px ${PAGE_GUTTER}px 32px` }}>
             <div style={{ maxWidth: PAGE_WIDTH, margin: '0 auto' }}>
-              <ServiceBanner control={host} />
-              {meta.data && !meta.data.configured && (
-                <Alert
-                  type="error"
-                  showIcon
-                  style={{ marginBottom: 16 }}
-                  message="尚未配置上游 API Key"
-                  description="在「账号池」里添加你的 Cline Pass 账号（sk_ 开头的 key）并保存；也可通过 CLINE_PASS_KEY 环境变量提供。"
-                  action={
-                    <Button size="small" danger onClick={() => setNav('accounts')}>
-                      去配置
-                    </Button>
-                  }
+              {needKey ? (
+                <AccessGate
+                  value={keyDraft}
+                  onChange={setKeyDraft}
+                  onSubmit={() => void tryKey()}
+                  checking={keyChecking}
+                  error={keyError}
                 />
+              ) : (
+                <>
+                  <ServiceBanner control={host} />
+                  {meta.data && !meta.data.configured && (
+                    <Alert
+                      type="error"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                      message="尚未配置上游 API Key"
+                      description="在「账号池」里添加你的 Cline Pass 账号（sk_ 开头的 key）并保存；也可通过 CLINE_PASS_KEY 环境变量提供。"
+                      action={
+                        <Button size="small" danger onClick={() => setNav('accounts')}>
+                          去配置
+                        </Button>
+                      }
+                    />
+                  )}
+                  {PAGES.map((p) => (
+                    <div key={p.key} style={{ display: nav === p.key ? undefined : 'none' }}>
+                      <p.element />
+                    </div>
+                  ))}
+                </>
               )}
-              {PAGES.map((p) => (
-                <div key={p.key} style={{ display: nav === p.key ? undefined : 'none' }}>
-                  <p.element />
-                </div>
-              ))}
             </div>
           </Layout.Content>
 
@@ -304,39 +335,20 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
             onOpenSecurity={() => setNav('security')}
             mode={mode}
             onToggleTheme={onToggleTheme}
-            onRefresh={refresh}
+            onRefresh={() => {
+              refresh();
+              fb.ok('已刷新全部数据');
+            }}
             loggedIn={Boolean(authKey)}
             onLogout={() => {
               setAuthKey('');
               setKey('');
-              qc.invalidateQueries();
+              void qc.invalidateQueries();
+              fb.info('已清除本机保存的访问密钥');
             }}
           />
         </Layout>
       </Layout>
-
-      <Modal
-        open={loginOpen}
-        title="此部署已启用代理密钥保护"
-        okText="进入控制台"
-        cancelButtonProps={{ style: { display: 'none' } }}
-        onOk={() => void tryLogin()}
-        onCancel={() => setLoginOpen(false)}
-      >
-        <Space direction="vertical" style={{ width: '100%' }}>
-          <Typography.Text type="secondary">
-            请输入代理密钥（服务端 config.json 的 proxyKey，或部署时设置的 PROXY_KEY）。
-          </Typography.Text>
-          <Input.Password
-            autoFocus
-            value={loginInput}
-            onChange={(e) => setLoginInput(e.target.value)}
-            onPressEnter={() => void tryLogin()}
-            placeholder="代理密钥"
-          />
-          {loginErr && <Typography.Text type="danger">{loginErr}</Typography.Text>}
-        </Space>
-      </Modal>
     </>
   );
 }

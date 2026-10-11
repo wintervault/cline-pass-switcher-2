@@ -2,9 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { enabledAccounts, isConfigured, publicProxyBase } from '../src/config/derive.ts';
 import { applyEnvOverrides } from '../src/config/env.ts';
 import { defaultConfig } from '../src/config/schema.ts';
+import { sendError, sendJSON } from '../src/http/respond.ts';
+import { type Ctx, Router } from '../src/http/router.ts';
 import { applySecurityPatch, mergeAccounts } from '../src/http/routes/api.ts';
+import { createHttpServer } from '../src/http/server.ts';
 import { assertBindSafe, InsecureBindError } from '../src/security/bind.ts';
 import { isLoopbackHost, maskSecret, safeEqual } from '../src/security/compare.ts';
+import { hostHeaderName, isTrustedLocal } from '../src/security/local.ts';
+import { authMiddleware } from '../src/security/middleware.ts';
+import { listen, request } from './helpers/http.ts';
 
 describe('safeEqual', () => {
   it('相等返回 true，不等返回 false', () => {
@@ -226,5 +232,110 @@ describe('mergeAccounts（key 归属防错位）', () => {
   it('非数组输入 → 空结果', () => {
     expect(mergeAccounts(existing, 'garbage')).toEqual([]);
     expect(mergeAccounts(existing, null)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 控制台鉴权语义（v2.9.3）：本机访问控制台 = 最高权限，不需要任何密钥
+// ---------------------------------------------------------------------------
+
+/** 用假的 IncomingMessage 片段喂给判定函数（只用到 socket.remoteAddress 与 headers.host）。 */
+const fakeReq = (remoteAddress: string, host: string | undefined) =>
+  ({ socket: { remoteAddress }, headers: host === undefined ? {} : { host } }) as never;
+
+describe('isTrustedLocal：本机访问判定', () => {
+  it('回环对端 + 回环 Host（含带端口 / IPv6 / localhost）→ 本机', () => {
+    expect(isTrustedLocal(fakeReq('127.0.0.1', '127.0.0.1:3123'))).toBe(true);
+    expect(isTrustedLocal(fakeReq('::1', '[::1]:3123'))).toBe(true);
+    expect(isTrustedLocal(fakeReq('::ffff:127.0.0.1', 'localhost:3123'))).toBe(true);
+  });
+
+  it('远程对端一律不是本机（公网 / 局域网 / 反代背后）', () => {
+    expect(isTrustedLocal(fakeReq('203.0.113.9', '127.0.0.1:3123'))).toBe(false);
+    expect(isTrustedLocal(fakeReq('192.168.1.10', 'localhost:3123'))).toBe(false);
+    expect(isTrustedLocal(fakeReq('172.17.0.1', '127.0.0.1:3123'))).toBe(false); // Docker 网关
+  });
+
+  it('DNS rebinding：对端是回环但 Host 是外部域名 → 不是本机', () => {
+    expect(isTrustedLocal(fakeReq('127.0.0.1', 'evil.example.com'))).toBe(false);
+    expect(isTrustedLocal(fakeReq('127.0.0.1', 'evil.example.com:3123'))).toBe(false);
+  });
+
+  it('没有 Host 头 → 不是本机（HTTP/1.1 必须带，缺了就不信任）', () => {
+    expect(isTrustedLocal(fakeReq('127.0.0.1', undefined))).toBe(false);
+    expect(isTrustedLocal(fakeReq('127.0.0.1', ''))).toBe(false);
+  });
+
+  it('hostHeaderName 正确剥离端口', () => {
+    expect(hostHeaderName('127.0.0.1:3123')).toBe('127.0.0.1');
+    expect(hostHeaderName('[::1]:3123')).toBe('::1');
+    expect(hostHeaderName('example.com')).toBe('example.com');
+  });
+});
+
+describe('authMiddleware：控制台免密钥、代理端点仍要密钥', () => {
+  /** 起一个带鉴权的迷你服务；isLocal 决定「对端是不是本机」。 */
+  async function authServer(key: string, isLocal: boolean) {
+    const router = new Router();
+    router.get('/api/models', (c: Ctx) => sendJSON(c.res, 200, { ok: 'console' }));
+    router.get('/v1/models', (c: Ctx) => sendJSON(c.res, 200, { ok: 'proxy' }));
+    const server = createHttpServer({
+      handler: (c: Ctx) => {
+        const route = router.resolve(c.method, c.path);
+        if (route) return route(c);
+        sendError(c.res, 404, 'no route', 'not_found');
+      },
+      middleware: [
+        authMiddleware(() => key, {
+          needsAuth: (p) => p.startsWith('/api/') || p.startsWith('/v1/'),
+          consolePath: (p) => p.startsWith('/api/'),
+          isLocal: () => isLocal,
+        }),
+      ],
+    });
+    return listen(server);
+  }
+
+  it('本机访问控制台 API：不设密钥也能进（回归：设了密钥把自己锁在门外）', async () => {
+    const s = await authServer('sk_mysetkey', true);
+    try {
+      expect((await request(s.port, '/api/models')).status).toBe(200);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('远端访问控制台 API：必须带正确密钥，错误/缺失 401', async () => {
+    const s = await authServer('sk_mysetkey', false);
+    try {
+      expect((await request(s.port, '/api/models')).status).toBe(401);
+      expect((await request(s.port, '/api/models', { headers: { 'x-admin-key': 'wrong' } })).status).toBe(401);
+      expect((await request(s.port, '/api/models', { headers: { 'x-admin-key': 'sk_mysetkey' } })).status).toBe(200);
+      expect((await request(s.port, '/api/models', { headers: { authorization: 'Bearer sk_mysetkey' } })).status).toBe(
+        200,
+      );
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('下游代理端点 /v1/*：本机也要密钥（密钥是给客户端的，不是给控制台的）', async () => {
+    const s = await authServer('sk_mysetkey', true);
+    try {
+      expect((await request(s.port, '/v1/models')).status).toBe(401);
+      expect((await request(s.port, '/v1/models', { headers: { 'x-admin-key': 'sk_mysetkey' } })).status).toBe(200);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('未设密钥：两端都放行（启动闸门已保证非回环绑定必须设密钥）', async () => {
+    const s = await authServer('', false);
+    try {
+      expect((await request(s.port, '/api/models')).status).toBe(200);
+      expect((await request(s.port, '/v1/models')).status).toBe(200);
+    } finally {
+      await s.close();
+    }
   });
 });

@@ -1,19 +1,44 @@
 import { sendError } from '../http/respond.ts';
-import type { Middleware } from '../http/router.ts';
+import type { Ctx, Middleware } from '../http/router.ts';
 import { safeEqual } from './compare.ts';
+import { isTrustedLocal } from './local.ts';
+
+export interface AuthOptions {
+  /** 该路径是否需要密钥（静态页面永远不需要——它不含任何敏感数据）。 */
+  needsAuth: (path: string) => boolean;
+  /**
+   * 该路径是否属于「控制台」（可被本机免密钥放行）。
+   * 下游代理端点（`/v1/*`）**不在此列**：客户端无论从哪来都得带密钥，
+   * 那正是密钥存在的意义。
+   */
+  consolePath: (path: string) => boolean;
+  /** 可注入，便于测试。 */
+  isLocal?: (req: Ctx['req']) => boolean;
+}
 
 /**
- * 下游代理密钥鉴权。未设置密钥 = 不鉴权（启动闸门已保证这种配置只可能出现在回环地址）。
- * 比较用恒定时间函数——直接 `===` 会在首个不同字符短路，可被逐字节计时猜出。
+ * 下游代理密钥鉴权。
  *
- * 只保护 API 路径（由 needsAuth 判定）：控制台页面本身保持开放——它不含任何敏感数据，
- * 数据由带鉴权的 /api/* 提供；页面也被拦的话连登录框都加载不出来。
+ * 两档放行：
+ * 1. **本机访问控制台**（回环对端 + 回环 Host）→ 直接放行，不需要任何密钥。
+ *    控制台是机器主人的工具，本机用户就是最高权限；用下发给客户端的密钥去锁控制台
+ *    会把主人自己锁在门外（忘了密钥就是死循环，v2.9.2 的真实反馈）。
+ * 2. 其余请求按路径判定：`/v1/*`（下游契约）与远端访问的控制台 API 都要密钥。
+ *
+ * 未设置密钥时一律放行——启动闸门（security/bind.ts）已保证「绑定非回环却没有密钥」
+ * 根本起不来，所以那种状态只可能是本机自用。
+ *
+ * 比较用恒定时间函数：直接 `===` 会在首个不同字符短路，可被逐字节计时猜出。
  */
-export function authMiddleware(getProxyKey: () => string, needsAuth: (path: string) => boolean): Middleware {
+export function authMiddleware(getProxyKey: () => string, options: AuthOptions): Middleware {
+  const isLocal = options.isLocal ?? isTrustedLocal;
   return async (ctx, next) => {
+    if (!options.needsAuth(ctx.path)) return next();
+    // 本机访问控制台 = 最高权限，不看密钥
+    if (options.consolePath(ctx.path) && isLocal(ctx.req)) return next();
+
     const key = getProxyKey();
     if (!key) return next();
-    if (!needsAuth(ctx.path)) return next();
 
     const bearer = String(ctx.req.headers['authorization'] ?? '')
       .replace(/^Bearer\s+/i, '')
@@ -21,7 +46,7 @@ export function authMiddleware(getProxyKey: () => string, needsAuth: (path: stri
     const admin = String(ctx.req.headers['x-admin-key'] ?? '').trim();
     if ((bearer && safeEqual(bearer, key)) || (admin && safeEqual(admin, key))) return next();
 
-    sendError(ctx.res, 401, 'unauthorized: 代理密钥缺失或错误', 'auth_error');
+    sendError(ctx.res, 401, 'unauthorized: 访问密钥缺失或错误', 'auth_error');
   };
 }
 

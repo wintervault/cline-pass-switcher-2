@@ -69,6 +69,15 @@ web/src/      api/{client,types,hooks} / features/* / theme.ts
 - **配置一律走 schema**：给 config/metadata 加字段时同步改 `config/schema.ts` /
   `store/metaStore.ts`（记得 zod 4 陷阱：对象默认值要 `.catch(() => Schema.parse({})).prefault({})`）。
 - **客户端断开即止损**：长耗时操作都接 `ctx.abortSignal`。
+- **控制台不受下游密钥管辖**（v2.9.3 的设计修正）：`proxyKey` 是**下发给客户端的**
+  凭据，只守 `/v1/*` 与**远端**的控制台访问；**本机访问控制台永远免密钥**——
+  能坐在本机前面的人就是最高权限。判定是「回环对端 + 回环 Host」两条缺一不可
+  （`security/local.ts`：只看对端挡不住 DNS rebinding；只看 Host 挡不住伪造；
+  本机网页的跨源 fetch 由 Origin 校验兜住）。**不要再把控制台和密钥绑在一起**：
+  那会让主人忘了密钥就再也进不去控制台。
+- **写操作的回执在 mutation 里，不在调用点**（`web/src/api/hooks.ts` +
+  `feedback.ts`）：调用点不可能「忘了弹」。失败必带原因，长耗时给「进行中 →
+  结果」两段。新加 mutation 时照这个模式写，别只 return mutate。
 
 ## 已知坑（避免重踩）
 
