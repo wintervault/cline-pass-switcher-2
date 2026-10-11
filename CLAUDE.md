@@ -52,7 +52,14 @@ server/src/
   proxy/      candidates(候选生成纯函数) / chain(故障转移执行器) / health(冷却) / stream(增量解析)
   http/       server(生命周期) / router / respond / routes/{api,chat,static}
   security/   compare(timingSafeEqual/掩码) / bind(启动闸门) / middleware(鉴权/Origin/CORS)
-web/src/      api/{client,types,hooks} / features/* / theme.ts
+web/src/      api/{client,types,hooks} / features/* / panel.tsx(区块容器) / theme.ts
+```
+
+**界面结构只有一种拼法**：页面 = 页头 + 若干个 `Panel` 区块（`panel.tsx`）。
+区块自带「面 + 标题栏 + 分隔线」，这是「区域划分清楚」的唯一手段——
+只靠留白和标题分级会变成「零件散落」（v2.9.2 试过，v2.9.5 全部改回区块）。
+新增页面/区块时先用 `Panel`，不要自己拼 div 边框；控件宽度、字段栅格（`.cps-field`）、
+间隔常量都取 `layout.ts`，不要在局部写死数值。
 ```
 
 **分层规则**：`upstream/` 与 `proxy/candidates` 是纯函数（不读全局状态，依赖注入）——

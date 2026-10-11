@@ -4,7 +4,6 @@ import {
   Alert,
   App,
   Button,
-  Card,
   Empty,
   Input,
   Modal,
@@ -16,13 +15,13 @@ import {
   Switch,
   Tooltip,
   Typography,
-  theme,
 } from 'antd';
 import { useState } from 'react';
 
 import { qk, useAccounts, useSaveAccounts, useTestAccount } from '../api/hooks.ts';
 import type { AccountMode, AccountsResponse } from '../api/types.ts';
 import { PageHeader } from '../pageHeader.tsx';
+import { Panel, PanelHint } from '../panel.tsx';
 
 /** 提交给服务端的账号行；key 空串 = 保持原 key（服务端拿不到明文）。 */
 interface DraftAccount {
@@ -56,7 +55,6 @@ function fmtUsed(ts: number): string {
 
 export default function Accounts() {
   const { message } = App.useApp();
-  const { token } = theme.useToken();
   const qc = useQueryClient();
   const accounts = useAccounts();
   const save = useSaveAccounts();
@@ -147,157 +145,167 @@ export default function Accounts() {
         }
       />
 
-      <Space size={12} wrap style={{ marginBottom: 16 }}>
-        <Typography.Text type="secondary" style={{ fontSize: 14 }}>
-          选择策略
-        </Typography.Text>
-        <Select
-          style={{ width: 250 }}
-          value={mode}
-          onChange={(v) =>
-            commit(
-              { mode: v },
-              {
-                sticky: '已切换为粘性模式：保住上游 prompt cache',
-                single: '已切换为单账号模式：由你手动指定使用哪一个',
-                roundrobin: '已切换为每请求轮转（会牺牲 prompt cache）',
-              }[v as AccountMode],
-            )
-          }
-          options={[
-            { value: 'sticky', label: '粘性（推荐 · 保 prompt cache）' },
-            { value: 'single', label: '单账号（手动指定）' },
-            { value: 'roundrobin', label: '每请求轮转（牺牲缓存）' },
-          ]}
-        />
-        {mode === 'single' && (
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            点账号卡左侧圆点指定使用哪一个
-          </Typography.Text>
-        )}
-      </Space>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* 区域一：策略（决定下面这份名单怎么被使用） */}
+        <Panel title="选择策略" extra={<PanelHint>改动即时保存</PanelHint>}>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <Select
+              style={{ width: 280 }}
+              value={mode}
+              onChange={(v) =>
+                commit(
+                  { mode: v },
+                  {
+                    sticky: '已切换为粘性模式：保住上游 prompt cache',
+                    single: '已切换为单账号模式：由你手动指定使用哪一个',
+                    roundrobin: '已切换为每请求轮转（会牺牲 prompt cache）',
+                  }[v as AccountMode],
+                )
+              }
+              options={[
+                { value: 'sticky', label: '粘性（推荐 · 保 prompt cache）' },
+                { value: 'single', label: '单账号（手动指定）' },
+                { value: 'roundrobin', label: '每请求轮转（牺牲缓存）' },
+              ]}
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12, lineHeight: '18px' }}>
+              {mode === 'single'
+                ? '点下方账号左侧圆点，指定实际使用哪一个'
+                : mode === 'sticky'
+                  ? '持续使用当前账号；只有 key 失效 / 额度用完这类账号级错误才轮转到下一个'
+                  : '每个请求都换一个账号——上游 prompt cache 会全部失效，成本明显更高'}
+            </Typography.Text>
+          </div>
+        </Panel>
 
-      {accounts.isError ? (
-        <Alert
-          type="error"
-          showIcon
-          message="账号池加载失败"
-          description="服务可能正在重启；稍候重试，或用状态栏的刷新按钮。"
-          action={
-            <Button size="small" onClick={() => void accounts.refetch()}>
-              重试
-            </Button>
-          }
-        />
-      ) : accounts.isLoading && !data ? (
-        <Skeleton active paragraph={{ rows: 4 }} />
-      ) : (
-        <div style={{ display: 'grid', gap: 12 }}>
-          {rows.map((a, i) => {
-            const st = data?.stats[a.name];
-            const isActive = active === i && mode === 'single';
-            return (
-              <Card
-                key={`${a.name}-${a.keyMasked}`}
-                size="small"
-                style={{ borderColor: isActive ? token.colorPrimaryBorder : undefined }}
+        {/* 区域二：账号名单 */}
+        <Panel title="账号" extra={<PanelHint>{rows.length} 个</PanelHint>} flush>
+          {accounts.isError ? (
+            <Alert
+              type="error"
+              showIcon
+              style={{ margin: 16 }}
+              message="账号池加载失败"
+              description="服务可能正在重启；稍候重试，或用状态栏的刷新按钮。"
+              action={
+                <Button size="small" onClick={() => void accounts.refetch()}>
+                  重试
+                </Button>
+              }
+            />
+          ) : accounts.isLoading && !data ? (
+            <div style={{ padding: 16 }}>
+              <Skeleton active paragraph={{ rows: 4 }} />
+            </div>
+          ) : rows.length === 0 ? (
+            <div style={{ padding: '32px 16px' }}>
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="还没有账号：添加 Cline Pass 的 API Key 后即可开始代理"
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                  <Tooltip title={mode === 'single' ? '单账号模式使用的账号' : '「单账号」模式下才能指定'}>
-                    <Radio
-                      checked={isActive}
-                      disabled={mode !== 'single'}
-                      onChange={() => commit({ active: i }, `已指定「${a.name}」为当前使用的账号`)}
-                    />
-                  </Tooltip>
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={() => setModal({ index: null, name: '', key: '' })}
+                >
+                  添加账号
+                </Button>
+              </Empty>
+            </div>
+          ) : (
+            <div>
+              {rows.map((a, i) => {
+                const st = data?.stats[a.name];
+                const isActive = active === i && mode === 'single';
+                return (
+                  <div
+                    key={`${a.name}-${a.keyMasked}`}
+                    className={isActive ? 'cps-list-row cps-list-row-active' : 'cps-list-row'}
+                  >
+                    {/* width:100% 让名字列（flex:1）吃掉空白，操作按钮才落在右缘 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 16, width: '100%' }}>
+                      <Tooltip title={mode === 'single' ? '单账号模式使用的账号' : '「单账号」模式下才能指定'}>
+                        <Radio
+                          checked={isActive}
+                          disabled={mode !== 'single'}
+                          onChange={() => commit({ active: i }, `已指定「${a.name}」为当前使用的账号`)}
+                        />
+                      </Tooltip>
 
-                  <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 8 }}>
-                    <Typography.Text strong>{a.name || '（未命名）'}</Typography.Text>
-                    <Typography.Text code style={{ fontSize: 12 }}>
-                      {a.keyMasked}
-                    </Typography.Text>
+                      <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 8 }}>
+                        <Typography.Text strong>{a.name || '（未命名）'}</Typography.Text>
+                        <Typography.Text code style={{ fontSize: 12 }}>
+                          {a.keyMasked}
+                        </Typography.Text>
+                      </div>
+
+                      <div style={{ display: 'grid', gap: 4, justifyItems: 'end', minWidth: 118 }}>
+                        <Typography.Text style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
+                          请求 {st?.requests ?? 0}
+                        </Typography.Text>
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          {st?.lastUsed ? fmtUsed(st.lastUsed) : '未使用'}
+                        </Typography.Text>
+                        {st?.lastError && (
+                          <Typography.Text type="danger" style={{ fontSize: 12 }} ellipsis={{ tooltip: st.lastError }}>
+                            最近有错误
+                          </Typography.Text>
+                        )}
+                      </div>
+
+                      <Tooltip title={a.enabled ? '已启用：参与账号选择' : '已停用：不参与账号选择'}>
+                        <Switch
+                          size="small"
+                          checked={a.enabled}
+                          onChange={(v) => {
+                            const draft = draftFromServer();
+                            draft[i] = { ...(draft[i] as DraftAccount), enabled: v };
+                            commit({ accounts: draft }, v ? `已启用「${a.name}」` : `已停用「${a.name}」`);
+                          }}
+                        />
+                      </Tooltip>
+
+                      <Space size={4}>
+                        <Button
+                          size="small"
+                          loading={
+                            testKey.isPending &&
+                            testKey.variables !== undefined &&
+                            'index' in testKey.variables.payload &&
+                            testKey.variables.payload.index === i
+                          }
+                          onClick={() => testAccount(i, a.name)}
+                        >
+                          测试
+                        </Button>
+                        <Tooltip title="编辑名称与密钥">
+                          <Button
+                            size="small"
+                            type="text"
+                            icon={<EditOutlined />}
+                            aria-label="编辑账号"
+                            onClick={() => setModal({ index: i, name: a.name, key: '' })}
+                          />
+                        </Tooltip>
+                        <Popconfirm
+                          title={`删除账号「${a.name}」？`}
+                          description="删除后其密钥将从配置中移除，无法恢复。"
+                          okText="删除"
+                          okButtonProps={{ danger: true }}
+                          cancelText="取消"
+                          onConfirm={() => removeAccount(i)}
+                        >
+                          <Button size="small" type="text" danger icon={<DeleteOutlined />} aria-label="删除账号" />
+                        </Popconfirm>
+                      </Space>
+                    </div>
                   </div>
-
-                  <div style={{ display: 'grid', gap: 4, justifyItems: 'end', minWidth: 118 }}>
-                    <Typography.Text style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
-                      请求 {st?.requests ?? 0}
-                    </Typography.Text>
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      {st?.lastUsed ? fmtUsed(st.lastUsed) : '未使用'}
-                    </Typography.Text>
-                    {st?.lastError && (
-                      <Typography.Text type="danger" style={{ fontSize: 12 }} ellipsis={{ tooltip: st.lastError }}>
-                        最近有错误
-                      </Typography.Text>
-                    )}
-                  </div>
-
-                  <Tooltip title={a.enabled ? '已启用：参与账号选择' : '已停用：不参与账号选择'}>
-                    <Switch
-                      size="small"
-                      checked={a.enabled}
-                      onChange={(v) => {
-                        const draft = draftFromServer();
-                        draft[i] = { ...(draft[i] as DraftAccount), enabled: v };
-                        commit({ accounts: draft }, v ? `已启用「${a.name}」` : `已停用「${a.name}」`);
-                      }}
-                    />
-                  </Tooltip>
-
-                  <Space size={4}>
-                    <Button
-                      size="small"
-                      loading={
-                        testKey.isPending &&
-                        testKey.variables !== undefined &&
-                        'index' in testKey.variables.payload &&
-                        testKey.variables.payload.index === i
-                      }
-                      onClick={() => testAccount(i, a.name)}
-                    >
-                      测试
-                    </Button>
-                    <Tooltip title="编辑名称与密钥">
-                      <Button
-                        size="small"
-                        type="text"
-                        icon={<EditOutlined />}
-                        aria-label="编辑账号"
-                        onClick={() => setModal({ index: i, name: a.name, key: '' })}
-                      />
-                    </Tooltip>
-                    <Popconfirm
-                      title={`删除账号「${a.name}」？`}
-                      description="删除后其密钥将从配置中移除，无法恢复。"
-                      okText="删除"
-                      okButtonProps={{ danger: true }}
-                      cancelText="取消"
-                      onConfirm={() => removeAccount(i)}
-                    >
-                      <Button size="small" type="text" danger icon={<DeleteOutlined />} aria-label="删除账号" />
-                    </Popconfirm>
-                  </Space>
-                </div>
-              </Card>
-            );
-          })}
-
-          {rows.length === 0 && (
-            <Empty
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description="还没有账号：添加 Cline Pass 的 API Key 后即可开始代理"
-            >
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={() => setModal({ index: null, name: '', key: '' })}
-              >
-                添加账号
-              </Button>
-            </Empty>
+                );
+              })}
+            </div>
           )}
-        </div>
-      )}
+        </Panel>
+      </div>
 
       <Modal
         open={modal !== null}

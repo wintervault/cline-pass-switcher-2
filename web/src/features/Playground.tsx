@@ -3,7 +3,6 @@ import {
   Alert,
   Badge,
   Button,
-  Card,
   Descriptions,
   Empty,
   InputNumber,
@@ -14,7 +13,6 @@ import {
   Tag,
   Tooltip,
   Typography,
-  theme,
 } from 'antd';
 import { useState } from 'react';
 
@@ -22,8 +20,8 @@ import { useModels, useSaveModelConfig, useTest } from '../api/hooks.ts';
 import type { ModelMeta, PerModelConfig, TestResult, TraceEntry } from '../api/types.ts';
 import { STATUS_TAG } from '../api/types.ts';
 import { useFeedback } from '../feedback.ts';
-import { GAP_SECTION } from '../layout.ts';
 import { PageHeader } from '../pageHeader.tsx';
+import { Panel, PanelHint } from '../panel.tsx';
 
 /**
  * 当前路由策略面板。
@@ -50,10 +48,7 @@ function RoutingPanel({ model, cfg, meta }: { model: string; cfg: PerModelConfig
   }));
 
   return (
-    <Card
-      size="small"
-      style={{ marginBottom: GAP_SECTION }}
-      styles={{ body: { padding: 16 } }}
+    <Panel
       title={
         <Space size={8}>
           <SettingOutlined />
@@ -185,7 +180,7 @@ function RoutingPanel({ model, cfg, meta }: { model: string; cfg: PerModelConfig
           ]}
         />
       )}
-    </Card>
+    </Panel>
   );
 }
 
@@ -236,7 +231,6 @@ export default function Playground() {
   const models = useModels();
   const test = useTest();
   const fb = useFeedback();
-  const { token } = theme.useToken();
   const [model, setModel] = useState('');
   const [upstream, setUpstream] = useState('');
   const [maxTokens, setMaxTokens] = useState(256);
@@ -266,13 +260,13 @@ export default function Playground() {
     (!result.targets.length || result.actual === result.targets[0] || result.actualName === result.targets[0]);
 
   return (
-    <div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <PageHeader
         title="测试台"
         desc="任选模型与渠道发一次最小请求，看网关实际路由到哪个渠道、每个候选花了多久。不指定渠道时按该模型的路由策略走。"
       />
 
-      <Card size="small" style={{ marginBottom: GAP_SECTION }} styles={{ body: { padding: 16 } }}>
+      <Panel title="测试参数" extra={<PanelHint>发一次最小请求，看网关实际怎么走</PanelHint>}>
         <Space wrap size={16} align="center">
           <Space size={6} align="center">
             <Typography.Text type="secondary" style={{ fontSize: 13 }}>
@@ -322,38 +316,19 @@ export default function Playground() {
             发送测试
           </Button>
         </Space>
-      </Card>
+      </Panel>
 
       {active && <RoutingPanel model={active} cfg={cfg} meta={activeRow?.meta ?? null} />}
 
-      {/* 结果区：始终占位（空态虚线框），避免「点完才长出一块」的跳动 */}
-      {!result ? (
-        <div
-          style={{
-            border: `1px dashed ${token.colorBorder}`,
-            borderRadius: token.borderRadiusLG,
-            padding: '44px 0',
-          }}
-        >
-          <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={
-              <Space direction="vertical" size={2}>
-                <span>还没有测试结果</span>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  点「发送测试」发一次真实请求（消耗极小额度）
-                </Typography.Text>
-              </Space>
-            }
-          />
-        </div>
-      ) : (
-        <Card
-          size="small"
-          title={
+      {/* 结果区：始终在位（空态也属于这块区域），避免「点完才长出一块」的跳动 */}
+      <Panel
+        title={
+          result ? (
             <Space size={8}>
               {result.ok ? <Tag color="green">成功</Tag> : <Tag color="red">失败</Tag>}
-              <Typography.Text code>{active}</Typography.Text>
+              <Typography.Text code style={{ fontSize: 13 }}>
+                {active}
+              </Typography.Text>
               {result.ok && <Tag color={hit ? 'green' : 'orange'}>{hit ? '命中首个目标' : '未命中首个目标'}</Tag>}
               {result.degraded && (
                 <Tooltip title="本地清单与网关实际可用渠道不一致，已按降级策略处理">
@@ -361,8 +336,12 @@ export default function Playground() {
                 </Tooltip>
               )}
             </Space>
-          }
-          extra={
+          ) : (
+            <span>测试结果</span>
+          )
+        }
+        extra={
+          result ? (
             <Tooltip title="复制完整结果（含每次尝试）">
               <Button
                 size="small"
@@ -377,56 +356,68 @@ export default function Playground() {
                 }
               />
             </Tooltip>
-          }
-        >
-          {!result.ok ? (
-            <Alert type="error" showIcon message={`请求失败：${result.error ?? '未知错误'}`} />
-          ) : (
-            <div style={{ display: 'grid', gap: 16 }}>
-              <Descriptions
-                size="small"
-                column={3}
-                items={[
-                  { key: 'actual', label: '实际渠道', children: result.actual ?? result.actualName ?? '—' },
-                  { key: 'ms', label: '总耗时', children: result.ms != null ? `${result.ms} ms` : '—' },
-                  { key: 'account', label: '使用账号', children: result.account ?? '—' },
-                  {
-                    key: 'targets',
-                    label: '目标渠道',
-                    children: result.targets.length ? result.targets.join(' → ') : '未指定（按策略）',
-                  },
-                  {
-                    key: 'pipeline',
-                    label: '管道',
-                    children: result.pipeline ? `/${result.pipeline}` : '未识别',
-                  },
-                  {
-                    key: 'pin',
-                    label: '可钉住',
-                    children: result.pinnable == null ? '未知' : result.pinnable ? '是' : '否',
-                  },
-                ]}
-              />
-              {result.content && (
-                <div>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    响应内容
-                  </Typography.Text>
-                  <pre className="cps-pre">{result.content}</pre>
-                </div>
-              )}
+          ) : undefined
+        }
+      >
+        {!result ? (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={
+              <Space direction="vertical" size={2}>
+                <span>还没有测试结果</span>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  点「发送测试」发一次真实请求（消耗极小额度）
+                </Typography.Text>
+              </Space>
+            }
+          />
+        ) : !result.ok ? (
+          <Alert type="error" showIcon message={`请求失败：${result.error ?? '未知错误'}`} />
+        ) : (
+          <div style={{ display: 'grid', gap: 16 }}>
+            <Descriptions
+              size="small"
+              column={3}
+              items={[
+                { key: 'actual', label: '实际渠道', children: result.actual ?? result.actualName ?? '—' },
+                { key: 'ms', label: '总耗时', children: result.ms != null ? `${result.ms} ms` : '—' },
+                { key: 'account', label: '使用账号', children: result.account ?? '—' },
+                {
+                  key: 'targets',
+                  label: '目标渠道',
+                  children: result.targets.length ? result.targets.join(' → ') : '未指定（按策略）',
+                },
+                {
+                  key: 'pipeline',
+                  label: '管道',
+                  children: result.pipeline ? `/${result.pipeline}` : '未识别',
+                },
+                {
+                  key: 'pin',
+                  label: '可钉住',
+                  children: result.pinnable == null ? '未知' : result.pinnable ? '是' : '否',
+                },
+              ]}
+            />
+            {result.content && (
               <div>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  候选尝试序列
+                  响应内容
                 </Typography.Text>
-                <div style={{ marginTop: 6 }}>
-                  <TraceTable trace={result.trace} targets={result.targets} />
-                </div>
+                <pre className="cps-pre">{result.content}</pre>
+              </div>
+            )}
+            <div>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                候选尝试序列
+              </Typography.Text>
+              <div style={{ marginTop: 6 }}>
+                <TraceTable trace={result.trace} targets={result.targets} />
               </div>
             </div>
-          )}
-        </Card>
-      )}
+          </div>
+        )}
+      </Panel>
     </div>
   );
 }

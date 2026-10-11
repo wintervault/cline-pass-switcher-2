@@ -19,8 +19,8 @@ import { useEffect, useState } from 'react';
 import { useHistory } from '../api/hooks.ts';
 import type { HistoryEntry, TraceEntry } from '../api/types.ts';
 import { useFeedback } from '../feedback.ts';
-import { GAP_SECTION } from '../layout.ts';
 import { PageHeader } from '../pageHeader.tsx';
+import { Panel } from '../panel.tsx';
 
 /** 自动刷新间隔（毫秒）；0 = 关闭。 */
 const REFRESH_OPTIONS = [
@@ -126,7 +126,7 @@ export default function History() {
   const visible = view === 'all' ? rows : view === 'ok' ? okRows : rows.filter((r) => r.error);
 
   return (
-    <div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <PageHeader title="请求历史" desc="每次请求的实际渠道、耗时与尝试序列；失败行整行标红，便于排查。" />
       {history.isError ? (
         <Alert
@@ -143,51 +143,51 @@ export default function History() {
       ) : history.isLoading && !history.data ? (
         <Skeleton active paragraph={{ rows: 8 }} />
       ) : (
-        <>
-          {rows.length > 0 && (
-            <div
-              style={{ display: 'flex', alignItems: 'center', gap: 24, marginBottom: GAP_SECTION, flexWrap: 'wrap' }}
-            >
-              <Space size={32} wrap>
-                <Stat label="成功" value={String(okRows.length)} tone={token.colorSuccess} />
-                <Stat label="失败" value={String(failed)} tone={failed ? token.colorError : undefined} />
-                <Stat label="平均耗时" value={`${avgMs}ms`} />
-                <Stat label="流式占比" value={`${streamPct}%`} />
-              </Space>
-              {/* 刷新控制：手动一次 / 按间隔自动（失败排查时开着它最省事） */}
-              <Space size={8} style={{ marginLeft: 'auto' }}>
-                <Tooltip title="立即刷新">
-                  <Button
-                    size="small"
-                    icon={<ReloadOutlined spin={history.isFetching} />}
-                    onClick={() => {
-                      void history.refetch().then((r) => {
-                        if (r.isError) fb.fail('刷新失败', r.error);
-                        else fb.ok(`已刷新：共 ${r.data?.history.length ?? 0} 条记录`);
-                      });
-                    }}
-                  />
-                </Tooltip>
-                <Select
+        <Panel
+          flush
+          title={
+            <Space size={32} wrap>
+              <Stat label="成功" value={String(okRows.length)} tone={token.colorSuccess} />
+              <Stat label="失败" value={String(failed)} tone={failed ? token.colorError : undefined} />
+              <Stat label="平均耗时" value={`${avgMs}ms`} />
+              <Stat label="流式占比" value={`${streamPct}%`} />
+            </Space>
+          }
+          extra={
+            /* 刷新控制：手动一次 / 按间隔自动（失败排查时开着它最省事） */
+            <Space size={8}>
+              <Tooltip title="立即刷新">
+                <Button
                   size="small"
-                  style={{ width: 132 }}
-                  value={interval}
-                  onChange={setIntervalMs}
-                  options={REFRESH_OPTIONS}
+                  icon={<ReloadOutlined spin={history.isFetching} />}
+                  onClick={() => {
+                    void history.refetch().then((r) => {
+                      if (r.isError) fb.fail('刷新失败', r.error);
+                      else fb.ok(`已刷新：共 ${r.data?.history.length ?? 0} 条记录`);
+                    });
+                  }}
                 />
-                <Segmented
-                  size="small"
-                  value={view}
-                  onChange={(v) => setView(v as typeof view)}
-                  options={[
-                    { value: 'all', label: `全部 ${rows.length}` },
-                    { value: 'ok', label: `成功 ${okRows.length}` },
-                    { value: 'fail', label: `失败 ${failed}` },
-                  ]}
-                />
-              </Space>
-            </div>
-          )}
+              </Tooltip>
+              <Select
+                size="small"
+                style={{ width: 132 }}
+                value={interval}
+                onChange={setIntervalMs}
+                options={REFRESH_OPTIONS}
+              />
+              <Segmented
+                size="small"
+                value={view}
+                onChange={(v) => setView(v as typeof view)}
+                options={[
+                  { value: 'all', label: `全部 ${rows.length}` },
+                  { value: 'ok', label: `成功 ${okRows.length}` },
+                  { value: 'fail', label: `失败 ${failed}` },
+                ]}
+              />
+            </Space>
+          }
+        >
           <Table<HistoryEntry>
             rowKey={(r) => `${r.ts}-${r.model}-${r.attempts.join('|')}`}
             size="small"
@@ -299,7 +299,7 @@ export default function History() {
               },
             ]}
           />
-        </>
+        </Panel>
       )}
     </div>
   );

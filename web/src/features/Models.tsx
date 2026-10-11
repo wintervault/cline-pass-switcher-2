@@ -36,6 +36,7 @@ import {
   type UpstreamStatusKind,
 } from '../api/types.ts';
 import { PageHeader } from '../pageHeader.tsx';
+import { Panel, PanelHint } from '../panel.tsx';
 
 const EMPTY_CFG: PerModelConfig = { upstreams: [], exclude: [], pinMode: 'strict', sort: null };
 
@@ -402,225 +403,256 @@ export default function Models() {
           </div>
         </Card>
       ) : (
-        <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
-          {/* 左：模型列表（常驻可见，状态一屏扫完；多项可过滤、超出高度自滚） */}
-          <div className="cps-model-list" style={{ flexShrink: 0, position: 'sticky', top: 0 }}>
-            <Input
-              style={{ marginBottom: 8 }}
-              prefix={<SearchOutlined />}
-              allowClear
-              placeholder="过滤模型…"
-              value={modelFilter}
-              onChange={(e) => setModelFilter(e.target.value)}
-            />
-            {/* 唯一滚动容器：只有列表滚，搜索框钉在上面。外面那层不要再设 overflow。 */}
-            <div
-              className="cps-model-list-scroll"
-              style={{ display: 'grid', gap: 8, maxHeight: 'calc(100vh - 250px)' }}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/*
+            两列主体：**固定高度、各自内部滚动**。
+            这样页面本身不滚（右侧那条多余的滚动条随之消失），路由策略挪到下方整行。
+            扣掉的是窗口固定件 + 页头 + 路由策略区块 + 间隔的实测总高（多留一点余量，
+            宁可两列矮一点，也不要再冒出页面级滚动条）。
+          */}
+          <div style={{ display: 'flex', gap: 16, height: 'calc(100vh - 448px)', minHeight: 300 }}>
+            {/* 左：模型列表（区域一） */}
+            <Panel
+              title="模型列表"
+              extra={<PanelHint>{filteredRows.length} 个</PanelHint>}
+              style={{ width: 292, flex: '0 0 292px' }}
             >
-              {filteredRows.map((r) => (
-                <ModelItem key={r.id} row={r} active={current?.id === r.id} onClick={() => setSelectedId(r.id)} />
-              ))}
-              {filteredRows.length === 0 && (
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  无匹配模型
-                </Typography.Text>
-              )}
-            </div>
-          </div>
-
-          {/* 右：详情与渠道配置 */}
-          {current && (
-            <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                <Typography.Title
-                  level={4}
-                  style={{ margin: 0 }}
-                  copyable={{ text: current.id, tooltips: ['复制模型 ID', '已复制'] }}
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, gap: 8 }}>
+                <Input
+                  prefix={<SearchOutlined />}
+                  allowClear
+                  placeholder="过滤模型…"
+                  value={modelFilter}
+                  onChange={(e) => setModelFilter(e.target.value)}
+                />
+                {/* 唯一的滚动容器：只有列表滚，搜索框钉在上面 */}
+                <div
+                  className="cps-model-list-scroll"
+                  style={{ flex: 1, minHeight: 0, display: 'grid', gap: 6, alignContent: 'start' }}
                 >
-                  {current.id}
-                </Typography.Title>
-                {meta?.pinnable && (
-                  <Tag color="green">{meta.pipeline === 'planner' ? '规划器 · Vercel' : '直连 · OpenRouter'}</Tag>
-                )}
-                <Space size={8} style={{ marginLeft: 'auto' }}>
-                  <Tooltip title="发一次探针请求：判断网关是否接受钉住参数，并列出该模型的可用渠道">
-                    <Button size="small" type="primary" loading={probe.isPending} onClick={runProbe}>
-                      探测渠道
-                    </Button>
-                  </Tooltip>
-                  <Tooltip title="按当前配置发一次最小请求，看实际命中哪个渠道">
-                    <Button size="small" loading={test.isPending} onClick={runTest}>
-                      试发一次
-                    </Button>
-                  </Tooltip>
-                  <Tooltip
-                    title={
-                      pinIgnored
-                        ? '网关已忽略钉住参数：钉不住时每个渠道都会“成功”，校验结果不可信（先重新探测）'
-                        : `对清单内每个渠道各发一次最小请求（消耗 ${ups.length} 次最小额度），标注可用 / 限流 / 不可钉`
-                    }
-                  >
-                    <Button
-                      size="small"
-                      disabled={pinIgnored || ups.length === 0}
-                      loading={validate.isPending}
-                      onClick={runValidate}
-                    >
-                      {validate.isPending ? '校验中…' : `校验${ups.length ? ` ${ups.length} 个渠道` : ''}`}
-                    </Button>
-                  </Tooltip>
-                </Space>
+                  {filteredRows.map((r) => (
+                    <ModelItem key={r.id} row={r} active={current?.id === r.id} onClick={() => setSelectedId(r.id)} />
+                  ))}
+                  {filteredRows.length === 0 && (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      无匹配模型
+                    </Typography.Text>
+                  )}
+                </div>
               </div>
+            </Panel>
 
-              {/*
+            {/* 右：所选模型的渠道清单（区域二） */}
+            {current && (
+              <Panel
+                style={{ flex: 1, minWidth: 0 }}
+                title={
+                  <>
+                    <Typography.Text
+                      code
+                      style={{ fontSize: 13 }}
+                      copyable={{ text: current.id, tooltips: ['复制模型 ID', '已复制'] }}
+                    >
+                      {current.id}
+                    </Typography.Text>
+                    {meta?.pinnable && (
+                      <Tag color="green" style={{ margin: 0 }}>
+                        {meta.pipeline === 'planner' ? '规划器 · Vercel' : '直连 · OpenRouter'}
+                      </Tag>
+                    )}
+                  </>
+                }
+                extra={
+                  <Space size={8}>
+                    <Tooltip title="发一次探针请求：判断网关是否接受钉住参数，并列出该模型的可用渠道">
+                      <Button size="small" type="primary" loading={probe.isPending} onClick={runProbe}>
+                        探测渠道
+                      </Button>
+                    </Tooltip>
+                    <Tooltip title="按当前配置发一次最小请求，看实际命中哪个渠道">
+                      <Button size="small" loading={test.isPending} onClick={runTest}>
+                        试发一次
+                      </Button>
+                    </Tooltip>
+                    <Tooltip
+                      title={
+                        pinIgnored
+                          ? '网关已忽略钉住参数：钉不住时每个渠道都会“成功”，校验结果不可信（先重新探测）'
+                          : `对清单内每个渠道各发一次最小请求（消耗 ${ups.length} 次最小额度），标注可用 / 限流 / 不可钉`
+                      }
+                    >
+                      <Button
+                        size="small"
+                        disabled={pinIgnored || ups.length === 0}
+                        loading={validate.isPending}
+                        onClick={runValidate}
+                      >
+                        {validate.isPending ? '校验中…' : '校验'}
+                      </Button>
+                    </Tooltip>
+                  </Space>
+                }
+              >
+                <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, gap: 12 }}>
+                  {/*
                 钉住被网关忽略：一行紧凑提示（此前用 Alert，占掉四行高度，
                 把「渠道优先级」挤到首屏之外）。原因放进悬停，需要时再看。
               */}
-              {pinIgnored && (
-                <Tooltip
-                  title={
-                    meta?.pinDisabledReason ??
-                    '钉住/排除/排序均不生效；勾选仅保留意图，网关恢复执行后自动生效。换个账号或稍后重新探测可能恢复。'
-                  }
-                >
-                  <div className="cps-notice cps-notice-warn">
-                    <ExclamationCircleFilled />
-                    <span>网关已忽略钉住参数：当前按网关默认路由，勾选与排序暂不生效</span>
-                  </div>
-                </Tooltip>
-              )}
-
-              {/* 元信息行：自由折行，窄窗口下自动换行而不互相挤压 */}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 28px', fontSize: 12 }}>
-                {meta?.canonicalSlug && (
-                  <span>
-                    <Typography.Text type="secondary">背后模型 </Typography.Text>
-                    <Typography.Text code style={{ fontSize: 12 }}>
-                      {meta.canonicalSlug}
-                    </Typography.Text>
-                  </span>
-                )}
-                {meta?.lastProvider && (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                    <Typography.Text type="secondary">最近命中 </Typography.Text>
-                    <Tag color="geekblue" style={{ margin: 0 }}>
-                      {meta.lastProvider}
-                    </Tag>
-                    {meta.lastMs ? (
-                      <Typography.Text type="secondary" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                        {meta.lastMs}ms
-                      </Typography.Text>
-                    ) : null}
-                  </span>
-                )}
-                {meta?.tier0?.length ? (
-                  <span>
-                    <Typography.Text type="secondary">tier-0 </Typography.Text>
-                    {meta.tier0.join('、')}
-                  </span>
-                ) : null}
-                <span>
-                  <Typography.Text type="secondary">探测 </Typography.Text>
-                  {fmtTime(meta?.probedAt)}
-                  {meta?.validatedAt ? (
-                    <>
-                      <Typography.Text type="secondary"> · 校验 </Typography.Text>
-                      {fmtTime(meta.validatedAt)}
-                    </>
-                  ) : null}
-                </span>
-              </div>
-
-              <section>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                  <Typography.Text strong style={{ fontSize: 14 }}>
-                    渠道优先级
-                  </Typography.Text>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    {ups.length} 个渠道
-                  </Typography.Text>
-                  <Space size={8} style={{ marginLeft: 'auto' }}>
-                    <Button
-                      size="small"
-                      onClick={() => {
-                        const list = ups.filter((u) => !cfg.exclude.includes(u));
-                        saveConfig(
-                          current.id,
-                          { upstreams: list, exclude: cfg.exclude },
-                          `已把 ${list.length} 个渠道全部加入清单`,
-                        );
-                      }}
-                    >
-                      全部使用
-                    </Button>
-                    <Button
-                      size="small"
-                      onClick={() =>
-                        saveConfig(current.id, { upstreams: [], exclude: [] }, '已清空渠道清单（改为完全由网关选择）')
+                  {pinIgnored && (
+                    <Tooltip
+                      title={
+                        meta?.pinDisabledReason ??
+                        '钉住/排除/排序均不生效；勾选仅保留意图，网关恢复执行后自动生效。换个账号或稍后重新探测可能恢复。'
                       }
                     >
-                      清空清单
-                    </Button>
-                  </Space>
-                </div>
-                {ups.length ? (
-                  <>
-                    <ul className="cps-chain">
-                      {chainRows.map((u) => {
-                        const rowOrder = cfg.upstreams.indexOf(u);
-                        return (
-                          <UpstreamRow
-                            key={u}
-                            upstream={u}
-                            cfg={cfg}
-                            meta={meta}
-                            onSave={(patch, note) => saveConfig(current.id, patch, note)}
-                            drag={{
-                              isDragging: dragFrom !== null && dragFrom === rowOrder,
-                              isDropTarget: dragTo !== null && dragTo === rowOrder && dragFrom !== rowOrder,
-                              onDragStartRow: (o) => setDragFrom(o),
-                              onDragOverRow: (o) => setDragTo((cur) => (cur === o ? cur : o)),
-                              onDropRow: (o) => {
-                                if (dragFrom !== null && dragFrom !== o) {
-                                  const list = [...cfg.upstreams];
-                                  const [item] = list.splice(dragFrom, 1);
-                                  if (item) {
-                                    list.splice(o, 0, item);
-                                    saveConfig(current.id, { upstreams: list }, `${item} 已拖到第 ${o + 1} 位`);
-                                  }
-                                }
-                                setDragFrom(null);
-                                setDragTo(null);
-                              },
-                              onDragEndRow: () => {
-                                setDragFrom(null);
-                                setDragTo(null);
-                              },
-                            }}
-                          />
-                        );
-                      })}
-                    </ul>
-                    <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 12 }}>
-                      勾选「使用」的渠道按序号依次尝试，异常自动顺切；标「排除」的渠道即使网关回退也不使用。
-                    </Typography.Text>
-                  </>
-                ) : (
-                  <Empty
-                    image={Empty.PRESENTED_IMAGE_SIMPLE}
-                    description={pinIgnored ? '钉住参数被忽略，渠道清单不可信' : '尚未探测到渠道，点上方「探测渠道」'}
-                  />
-                )}
-              </section>
+                      <div className="cps-notice cps-notice-warn">
+                        <ExclamationCircleFilled />
+                        <span>网关已忽略钉住参数：当前按网关默认路由，勾选与排序暂不生效</span>
+                      </div>
+                    </Tooltip>
+                  )}
 
-              <section>
-                <Typography.Text strong style={{ fontSize: 14, display: 'block', marginBottom: 12 }}>
-                  路由策略
-                </Typography.Text>
-                <div style={{ display: 'grid', gap: 12 }}>
-                  <Space size={12} align="center" wrap>
-                    <Typography.Text type="secondary" style={{ width: 72, textAlign: 'right' }}>
+                  {/* 元信息行：自由折行，窄窗口下自动换行而不互相挤压 */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 28px', fontSize: 12 }}>
+                    {meta?.canonicalSlug && (
+                      <span>
+                        <Typography.Text type="secondary">背后模型 </Typography.Text>
+                        <Typography.Text code style={{ fontSize: 12 }}>
+                          {meta.canonicalSlug}
+                        </Typography.Text>
+                      </span>
+                    )}
+                    {meta?.lastProvider && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        <Typography.Text type="secondary">最近命中 </Typography.Text>
+                        <Tag color="geekblue" style={{ margin: 0 }}>
+                          {meta.lastProvider}
+                        </Tag>
+                        {meta.lastMs ? (
+                          <Typography.Text type="secondary" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                            {meta.lastMs}ms
+                          </Typography.Text>
+                        ) : null}
+                      </span>
+                    )}
+                    {meta?.tier0?.length ? (
+                      <span>
+                        <Typography.Text type="secondary">tier-0 </Typography.Text>
+                        {meta.tier0.join('、')}
+                      </span>
+                    ) : null}
+                    <span>
+                      <Typography.Text type="secondary">探测 </Typography.Text>
+                      {fmtTime(meta?.probedAt)}
+                      {meta?.validatedAt ? (
+                        <>
+                          <Typography.Text type="secondary"> · 校验 </Typography.Text>
+                          {fmtTime(meta.validatedAt)}
+                        </>
+                      ) : null}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}>
+                    <Typography.Text strong style={{ fontSize: 13 }}>
+                      渠道优先级
+                    </Typography.Text>
+                    <PanelHint>{ups.length} 个渠道</PanelHint>
+                    <Space size={8} style={{ marginLeft: 'auto' }}>
+                      <Button
+                        size="small"
+                        onClick={() => {
+                          const list = ups.filter((u) => !cfg.exclude.includes(u));
+                          saveConfig(
+                            current.id,
+                            { upstreams: list, exclude: cfg.exclude },
+                            `已把 ${list.length} 个渠道全部加入清单`,
+                          );
+                        }}
+                      >
+                        全部使用
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={() =>
+                          saveConfig(current.id, { upstreams: [], exclude: [] }, '已清空渠道清单（改为完全由网关选择）')
+                        }
+                      >
+                        清空清单
+                      </Button>
+                    </Space>
+                  </div>
+                  {/* 渠道链自己滚：右栏唯一的滚动条（列表长，但不该带着整页一起滚） */}
+                  <div style={{ flex: 1, minHeight: 0, overflow: 'auto', overscrollBehavior: 'contain' }}>
+                    {ups.length ? (
+                      <>
+                        <ul className="cps-chain">
+                          {chainRows.map((u) => {
+                            const rowOrder = cfg.upstreams.indexOf(u);
+                            return (
+                              <UpstreamRow
+                                key={u}
+                                upstream={u}
+                                cfg={cfg}
+                                meta={meta}
+                                onSave={(patch, note) => saveConfig(current.id, patch, note)}
+                                drag={{
+                                  isDragging: dragFrom !== null && dragFrom === rowOrder,
+                                  isDropTarget: dragTo !== null && dragTo === rowOrder && dragFrom !== rowOrder,
+                                  onDragStartRow: (o) => setDragFrom(o),
+                                  onDragOverRow: (o) => setDragTo((cur) => (cur === o ? cur : o)),
+                                  onDropRow: (o) => {
+                                    if (dragFrom !== null && dragFrom !== o) {
+                                      const list = [...cfg.upstreams];
+                                      const [item] = list.splice(dragFrom, 1);
+                                      if (item) {
+                                        list.splice(o, 0, item);
+                                        saveConfig(current.id, { upstreams: list }, `${item} 已拖到第 ${o + 1} 位`);
+                                      }
+                                    }
+                                    setDragFrom(null);
+                                    setDragTo(null);
+                                  },
+                                  onDragEndRow: () => {
+                                    setDragFrom(null);
+                                    setDragTo(null);
+                                  },
+                                }}
+                              />
+                            );
+                          })}
+                        </ul>
+                        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 12 }}>
+                          勾选「使用」的渠道按序号依次尝试，异常自动顺切；标「排除」的渠道即使网关回退也不使用。
+                        </Typography.Text>
+                      </>
+                    ) : (
+                      <Empty
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        description={
+                          pinIgnored ? '钉住参数被忽略，渠道清单不可信' : '尚未探测到渠道，点上方「探测渠道」'
+                        }
+                      />
+                    )}
+                  </div>
+                </div>
+              </Panel>
+            )}
+          </div>
+
+          {/* 路由策略：整行放在两列之下 —— 右侧那一列因此不再需要任何外层滚动条 */}
+          {current && (
+            <Panel title="路由策略" extra={<PanelHint>改动即时保存</PanelHint>}>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
+                  gap: '16px 40px',
+                }}
+              >
+                <div>
+                  <Space size={12} align="center">
+                    <Typography.Text type="secondary" style={{ fontSize: 13 }}>
                       钉住模式
                     </Typography.Text>
                     <Select
@@ -638,12 +670,17 @@ export default function Models() {
                         { value: 'preferred', label: '优先 + 回退' },
                       ]}
                     />
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      严格钉住：只走清单内渠道，网关不听话视为失败并切换；优先 + 回退：仅最后一个候选放开网关选择
-                    </Typography.Text>
                   </Space>
-                  <Space size={12} align="center" wrap>
-                    <Typography.Text type="secondary" style={{ width: 72, textAlign: 'right' }}>
+                  <Typography.Text
+                    type="secondary"
+                    style={{ fontSize: 12, lineHeight: '18px', display: 'block', marginTop: 6 }}
+                  >
+                    严格钉住：只走清单内渠道，网关不听话视为失败并切换；优先 + 回退：仅最后一个候选放开网关选择
+                  </Typography.Text>
+                </div>
+                <div>
+                  <Space size={12} align="center">
+                    <Typography.Text type="secondary" style={{ fontSize: 13 }}>
                       渠道排序
                     </Typography.Text>
                     <Select
@@ -664,13 +701,16 @@ export default function Models() {
                         { value: 'tps', label: '最高吞吐' },
                       ]}
                     />
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      多个可用渠道之间的执行顺序偏好
-                    </Typography.Text>
                   </Space>
+                  <Typography.Text
+                    type="secondary"
+                    style={{ fontSize: 12, lineHeight: '18px', display: 'block', marginTop: 6 }}
+                  >
+                    多个可用渠道之间的执行顺序偏好
+                  </Typography.Text>
                 </div>
-              </section>
-            </div>
+              </div>
+            </Panel>
           )}
         </div>
       )}

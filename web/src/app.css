@@ -59,6 +59,88 @@ body {
   background-clip: content-box;
 }
 
+/* ---------- 区块容器（全站唯一的「区域」原语，见 panel.tsx） ----------
+   区域划分靠三件事：高一层底色 + 1px 描边 + 带分隔线的标题栏。
+   只靠留白和标题分级做不到（2.9.2 试过，结果是「零件散落」）。 */
+.cps-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--ant-color-bg-container);
+  border: 1px solid var(--ant-color-border-secondary);
+  border-radius: var(--ant-border-radius-lg);
+  overflow: hidden;
+}
+.cps-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+  min-height: 48px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--ant-color-border-secondary);
+}
+.cps-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ant-color-text);
+  min-width: 0;
+}
+.cps-panel-extra {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+.cps-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 16px;
+}
+.cps-panel-body-flush {
+  padding: 0;
+}
+/* 内容自己滚（表格/长列表），配合外层给的高度约束 */
+.cps-panel-body-scroll {
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/* 区块内的行（账号名单等）：靠分隔线成行，而不是每行再加一层边框卡片
+   （面板里套卡片 = 两层边框，视觉噪音） */
+.cps-list-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--ant-color-border-secondary);
+  transition: background-color 0.15s ease;
+}
+.cps-list-row:last-child {
+  border-bottom: none;
+}
+.cps-list-row:hover {
+  background: var(--ant-color-fill-quaternary);
+}
+/* 当前生效的那一行：左侧一道主色标记 */
+.cps-list-row-active {
+  position: relative;
+  background: var(--ant-color-primary-bg);
+}
+.cps-list-row-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--ant-color-primary);
+}
+
 /* ---------- 自绘标题栏（桌面壳） ---------- */
 .cps-titlebar {
   position: fixed;

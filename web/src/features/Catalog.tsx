@@ -4,8 +4,8 @@ import { useState } from 'react';
 
 import { useModels, useProbe } from '../api/hooks.ts';
 import type { PinState, Pipeline } from '../api/types.ts';
-import { GAP_SECTION } from '../layout.ts';
 import { PageHeader } from '../pageHeader.tsx';
+import { Panel } from '../panel.tsx';
 
 /** 本页探测的结果（失败也留痕）。目录模型多半不在订阅清单里，结果就地展示，不再「存了却无处可看」。 */
 interface ProbeOutcome {
@@ -86,85 +86,83 @@ export default function Catalog() {
   };
 
   return (
-    <div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <PageHeader title="完整目录" desc="Cline 公开目录的全部模型；:free 变体可精确钉住上游。探测结果就地显示。" />
-      {/* 工具栏：搜索 + 计数同高一行，计数靠右——以前两者挤在一起，长宽比也不一致 */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          marginBottom: GAP_SECTION,
-          flexWrap: 'wrap',
-        }}
+      {/* 区域：目录（搜索与计数属于这块区域的头，表格是它的体） */}
+      <Panel
+        flush
+        title={
+          <Input
+            style={{ width: 320 }}
+            prefix={<SearchOutlined />}
+            allowClear
+            placeholder="过滤… 如 free / glm / anthropic"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+        }
+        extra={
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {filter
+              ? `匹配 ${matched.length} / ${models.data?.catalogCount ?? 0} 个（显示前 400 条）`
+              : `共 ${models.data?.catalogCount ?? 0} 个目录模型（显示前 400 条）`}
+          </Typography.Text>
+        }
       >
-        <Input
-          style={{ width: 320 }}
-          prefix={<SearchOutlined />}
-          allowClear
-          placeholder="过滤… 如 free / glm / anthropic"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-        <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 'auto' }}>
-          {filter
-            ? `匹配 ${matched.length} / ${models.data?.catalogCount ?? 0} 个（显示前 400 条）`
-            : `共 ${models.data?.catalogCount ?? 0} 个目录模型（显示前 400 条）`}
-        </Typography.Text>
-      </div>
-      {models.isError ? (
-        <Alert
-          type="error"
-          showIcon
-          message="目录加载失败"
-          description="服务可能正在重启；稍候重试，或用状态栏的刷新按钮。"
-          action={
-            <Button size="small" onClick={() => void models.refetch()}>
-              重试
-            </Button>
-          }
-        />
-      ) : models.isLoading && !models.data ? (
-        <Skeleton active paragraph={{ rows: 8 }} />
-      ) : (
-        <Table
-          rowKey="id"
-          size="small"
-          sticky
-          loading={models.isLoading}
-          dataSource={filtered.map((id) => ({ id }))}
-          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有匹配的模型" /> }}
-          pagination={false}
-          columns={[
-            { title: '模型', dataIndex: 'id', render: (v: string) => <Typography.Text code>{v}</Typography.Text> },
-            {
-              title: '类型 / 探测结果',
-              width: 320,
-              render: (_, r) => {
-                const id = String(r.id);
-                const p = probes[id];
-                if (!p) {
-                  return id.includes(':free') ? <Tag color="green">:free 可精确钉住</Tag> : <Tag>规划器管理</Tag>;
-                }
-                return <ProbeTags p={p} />;
+        {models.isError ? (
+          <Alert
+            type="error"
+            showIcon
+            message="目录加载失败"
+            description="服务可能正在重启；稍候重试，或用状态栏的刷新按钮。"
+            action={
+              <Button size="small" onClick={() => void models.refetch()}>
+                重试
+              </Button>
+            }
+          />
+        ) : models.isLoading && !models.data ? (
+          <Skeleton active paragraph={{ rows: 8 }} />
+        ) : (
+          <Table
+            rowKey="id"
+            size="small"
+            sticky
+            loading={models.isLoading}
+            dataSource={filtered.map((id) => ({ id }))}
+            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有匹配的模型" /> }}
+            pagination={false}
+            columns={[
+              { title: '模型', dataIndex: 'id', render: (v: string) => <Typography.Text code>{v}</Typography.Text> },
+              {
+                title: '类型 / 探测结果',
+                width: 320,
+                render: (_, r) => {
+                  const id = String(r.id);
+                  const p = probes[id];
+                  if (!p) {
+                    return id.includes(':free') ? <Tag color="green">:free 可精确钉住</Tag> : <Tag>规划器管理</Tag>;
+                  }
+                  return <ProbeTags p={p} />;
+                },
               },
-            },
-            {
-              title: '操作',
-              width: 90,
-              render: (_, r) => (
-                <Button
-                  size="small"
-                  loading={probe.isPending && probe.variables === r.id}
-                  onClick={() => runProbe(String(r.id))}
-                >
-                  探测
-                </Button>
-              ),
-            },
-          ]}
-        />
-      )}
+              {
+                title: '操作',
+                width: 90,
+                render: (_, r) => (
+                  <Button
+                    size="small"
+                    loading={probe.isPending && probe.variables === r.id}
+                    onClick={() => runProbe(String(r.id))}
+                  >
+                    探测
+                  </Button>
+                ),
+              },
+            ]}
+          />
+        )}
+      </Panel>
     </div>
   );
 }
