@@ -116,5 +116,9 @@ web/src/      api/{client,types,hooks} / features/* / theme.ts
 - 真实网关 UAT（`docs/UAT.md`）尚未完整跑过一轮：单测全 mock，真实行为以 UAT 为准。
 - 桌面壳依赖系统 Node ≥20（壳会探测 PATH 与常见安装位置）；打包内置 Node 运行时
   （SEA/嵌入式）是明确的后续选项，未做。
-- 版本号以仓库根 `package.json` 为单一来源（`server/src/paths.ts` 的
-  `PACKAGE_VERSION` 运行时读取），发版只改 package.json + CHANGELOG + tag。
+- 发版流程：① 改版本号**五处**——根 / `server` / `web` 的 package.json、
+  `desktop/tauri.conf.json`、`desktop/Cargo.toml`（运行时单一来源是根
+  package.json，`server/src/paths.ts` 的 `PACKAGE_VERSION` 读它）；
+  ② `npm run desktop:build`——cargo 构建时会顺带更新 `desktop/Cargo.lock`
+  里的版本行；③ `git status` 确认无遗留（**尤其 Cargo.lock**，它只在构建
+  时才变，先提交后构建会留下一行脏文件）；④ 提交 + CHANGELOG + tag + push。
