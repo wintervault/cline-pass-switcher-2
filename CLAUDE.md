@@ -95,11 +95,30 @@ web/src/      api/{client,types,hooks} / features/* / theme.ts
 其他不变式：启停 IPC 全部异步派发 + server_status 轮询（无阻塞 invoke）；spawn 幂等
 （try_wait 检测）；single-instance 插件防双开；initialization_script 注入 window.cpsHost
 （页面重载后依然有效）。服务入口多候选解析（resource/exe 同级/dev 相对路径）。
+
+**控制通道是 HTTP，不是 Tauri IPC（v2.9.2 的根因修复，别再改回去）。**
+控制台页面是 `WebviewUrl::External("http://127.0.0.1:3123/")`。对外部 URL，Tauri
+**不**注入 `window.__TAURI_INTERNALS__`，新版还对非本地来源强制 ACL——未声明 remote
+capability 的自定义命令会被直接拒绝（tauri-apps/tauri#4837、#15190）。表现极具迷惑性：
+页面看似正常，但每次状态查询失败都被 UI 当成「已停止」，于是「服务在跑却显示已停止」
+且按钮点了没反应。现在壳监听回环控制端口（默认 3122，被占用则退回系统分配），
+注入的桥只做 `fetch`：`/host/status|start|stop|restart|log|open-logs|window|drag`。
+- 安全边界：只绑回环 + 只放行控制台自身的 Origin/Referer（其它网页跨源必带 Origin
+  → 403）。要放行控制台就必须放行它的跨源来源，因此 `CONSOLE_ORIGIN` 是硬编码常量，
+  改控制台端口要同步改它。
+- 同一原因，`data-tauri-drag-region` 也不可用：自绘标题栏的拖动是壳在原生侧
+  跟鼠标移动窗口（`/host/drag`）。窗口操作 `/host/window` 同理。
+- 状态一律以「进程存活 + healthz 通过」判定，`error` 与 `stopped` 分开——
+  启动失败的原因要能显示到页面上，不许静默。
+
 数据目录解析（`resolve_data_dir`，VS Code Portable Mode 同款检测）：**exe 旁存在
 `data` 目录 → 便携模式（数据就地，删目录即清除）；否则 `%APPDATA%`**（安装目录会被
 升级/卸载清空，数据不能混进去——这是决定性原因）。日志在数据目录 logs/（超 8MB
 轮转为 .old）。便携包由 `scripts/package-portable.mjs` 组装（含 data/README.txt
 占位，保证空目录在 zip 中存活）。
+
+窗口为 `decorations(false)` + 自绘标题栏（`web/src/titleBar.tsx`）：改窗口样式时两边
+一起改，否则标题栏会重复或缺失。
 
 构建：`npm run desktop:build`（= 前后端 build + scripts/prepare-runtime.mjs 精简出
 7MB 运行时 + tauri build）。Rust 侧警告零容忍，与 TS 侧一致。

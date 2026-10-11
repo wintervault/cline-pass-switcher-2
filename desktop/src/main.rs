@@ -11,17 +11,24 @@
 //! 3. **退出路径唯一**：托盘「退出」→ stop → app.exit(0)。关窗只是隐藏进托盘，不退出。
 //!    启动同理：仅驻留托盘、不自动弹窗；窗口只由用户动作（托盘 / 二次启动）唤起。
 //!
-//! IPC 约定：所有启停命令立即返回、后台线程执行，UI 通过 server_status 轮询推进状态。
+//! **控制通道走 HTTP，不走 Tauri IPC**（2.9.2 的根因修复，别再改回去）：
+//! 控制台页面是 `WebviewUrl::External("http://127.0.0.1:3123/")`。对外部 URL，
+//! Tauri 默认不注入 `window.__TAURI_INTERNALS__`，且新版对「非本地来源」强制执行 ACL、
+//! 未声明 remote capability 的自定义命令会被直接拒绝（tauri-apps/tauri#4837、#15190）。
+//! 页面里的 `cpsHost` 因此永远拿不到结果，UI 只能把每次失败当成「已停止」，
+//! 于是出现「明明在跑却显示已停止」+「按钮点了没反应」。现在壳自己监听回环控制端口，
+//! 注入的桥只做 HTTP 调用：无 IPC、无 ACL、无来源限制，浏览器直开也能用、curl 也能诊断。
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::collections::VecDeque;
 use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Child;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -37,21 +44,81 @@ use windows::Win32::System::JobObjects::{
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const PORT: u16 = 3123;
+/// 控制端口：壳自己的回环 HTTP 服务，页面据此启停服务。固定端口便于诊断（curl 可直连）；
+/// 被占用时退回系统分配端口（罕见路径，端口会通过注入脚本告诉页面）。
+const CONTROL_PORT: u16 = 3122;
+/// 允许调用控制通道的来源：**只有控制台自己**。
+///
+/// 为什么必须放行：控制台在 3123、控制通道在 3122，对浏览器而言是跨源请求，
+/// 一定带 Origin/Referer；一律拒绝的话页面自己也被挡在门外——这正是「按钮点了没反应」
+/// 的最后一层原因。放行之后仍然安全：别的网页 Origin/Referer 不是这个值，照旧 403。
+const CONSOLE_ORIGIN: &str = "http://127.0.0.1:3123";
 const HEALTHZ_TIMEOUT: Duration = Duration::from_secs(25);
 const GRACEFUL_STOP: Duration = Duration::from_secs(8);
 const LOG_ROTATE_BYTES: u64 = 8 * 1024 * 1024;
+/// 壳内保留的最近日志行数（/host/log 读内存副本，不去抢服务进程持有的文件句柄）
+const LOG_RING: usize = 500;
+/// 注入脚本里预置的控制端口占位符（端口运行期确定，只能后填）
+const CONTROL_PORT_PLACEHOLDER: &str = "__CPS_CONTROL_PORT__";
+
+/// 服务状态。`Error` 不是多余的——它把「启动失败」和「没启动」分开，
+/// 页面才不至于把拉不起来的原因吞掉、只显示一句「已停止」。
+#[derive(Clone, PartialEq, Eq)]
+enum SvcState {
+    Stopped,
+    Starting,
+    Running,
+    Stopping,
+    Error(String),
+}
+
+impl SvcState {
+    fn name(&self) -> &'static str {
+        match self {
+            SvcState::Stopped => "stopped",
+            SvcState::Starting => "starting",
+            SvcState::Running => "running",
+            SvcState::Stopping => "stopping",
+            SvcState::Error(_) => "error",
+        }
+    }
+}
 
 /// 服务进程的持有状态。child 与 job 句柄的存活期 = 壳进程存活期。
 struct ServerState {
     child: Mutex<Option<Child>>,
     /// Windows JOB 句柄（裸存 isize 以满足 Send/Sync；存活期 = 壳进程）
     job: isize,
+    /// 壳自身的句柄：控制通道要用它去操作主窗口（窗口控制 / 拖动）
+    app: AppHandle,
     data_dir: PathBuf,
     entry: PathBuf,
     log_dir: PathBuf,
     /// 退出中：为 true 时窗口的 CloseRequested 不再被拦截（否则 app.exit 会被
     /// 自己的「关窗进托盘」逻辑拖住——托盘退出卡顿的根因）
     exiting: AtomicBool,
+    /// 控制端口（0 = 控制服务没起来，页面会明确报「控制通道不可用」）
+    control_port: AtomicU16,
+    state: Mutex<SvcState>,
+    /// 壳日志的内存环形缓冲，供 /host/log 回读（便于远程诊断）
+    logs: Mutex<VecDeque<String>>,
+}
+
+impl ServerState {
+    fn set_state(&self, next: SvcState) {
+        let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = next;
+    }
+
+    /// 壳日志：落盘 + 进内存环。
+    fn log(&self, line: &str) {
+        write_log_file(&self.log_dir, line);
+        let mut guard = self.logs.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.len() >= LOG_RING {
+            guard.pop_front();
+        }
+        guard.push_back(line.to_string());
+    }
 }
 
 fn main() {
@@ -71,10 +138,14 @@ fn main() {
             app.manage(Arc::new(ServerState {
                 child: Mutex::new(None),
                 job: job.0 as isize,
+                app: app.handle().clone(),
                 data_dir,
                 entry,
                 log_dir: log_dir.clone(),
                 exiting: AtomicBool::new(false),
+                control_port: AtomicU16::new(0),
+                state: Mutex::new(SvcState::Stopped),
+                logs: Mutex::new(VecDeque::new()),
             }));
 
             log_line(
@@ -88,22 +159,27 @@ fn main() {
 
             build_tray(&handle)?;
 
+            // 控制端口先起来：页面靠它得知状态、执行启停。它不通 = 页面上的按钮是死的。
+            {
+                let state = handle.state::<Arc<ServerState>>();
+                let control = Arc::clone(state.inner());
+                std::thread::spawn(move || control_server(control));
+            }
+
             // 启动后仅驻留托盘：服务在后台就绪，窗口只在用户主动打开时出现。
-            // 就绪耗时写日志便于诊断；失败也不弹窗（托盘「打开控制台」会重试并留有日志）。
+            // 失败也不弹窗——托盘「打开控制台」会重试，状态与原因都落在控制通道和日志里。
             std::thread::spawn(move || {
                 let state = handle.state::<Arc<ServerState>>();
                 if let Err(err) = spawn_server(&state) {
-                    log_line(&state.log_dir, &format!("[壳] 启动失败：{err}"));
+                    state.log(&format!("[壳] 启动失败：{err}"));
+                    state.set_state(SvcState::Error(err));
                     return;
                 }
                 let started = Instant::now();
                 if wait_healthz(PORT, HEALTHZ_TIMEOUT) {
-                    log_line(
-                        &state.log_dir,
-                        &format!("[壳] 服务就绪（{}ms），驻留托盘", started.elapsed().as_millis()),
-                    );
+                    state.log(&format!("[壳] 服务就绪（{}ms），驻留托盘", started.elapsed().as_millis()));
                 } else {
-                    log_line(&state.log_dir, "[壳] 服务未能就绪：可从托盘「打开控制台」重试");
+                    state.log("[壳] 服务未能就绪：可从托盘「打开控制台」重试");
                 }
             });
 
@@ -124,15 +200,18 @@ fn main() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![
-            server_status, server_start, server_stop, server_restart, open_logs,
-        ])
+        .invoke_handler(tauri::generate_handler![open_logs])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
-// ---------- UI 桥（注入到控制台页面，重载/跳转后依然生效） ----------
+// ---------- 控制通道（回环 HTTP；页面注入的桥唯一依赖） ----------
 
+/// 页面侧的控制桥。
+///
+/// 只依赖 `fetch` —— 不碰 `window.__TAURI_INTERNALS__`（外部 URL 下不存在/被 ACL 拒绝，
+/// 见文件头注释）。安全边界由控制端承担：只绑回环 + 拒绝一切带 Origin 的请求
+/// （浏览器发起的跨源请求必带 Origin，因此任意网页都无法越权启停服务）。
 const BRIDGE_SCRIPT: &str = r#"(() => {
   // 屏蔽 WebView2 默认右键菜单的打印/扩展项（「优质打印」预览的来源），
   // 保留输入框的右键粘贴；拦截 Ctrl+P 打印预览。控制台不需要打印。
@@ -145,18 +224,395 @@ const BRIDGE_SCRIPT: &str = r#"(() => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'p' || e.key === 'P')) e.preventDefault();
   }, true);
 
-  const invoke = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
-  if (!invoke) return;
+  const PORT = __CPS_CONTROL_PORT__;
+  if (!PORT) return;
+  const base = 'http://127.0.0.1:' + PORT;
+  const call = async (path, method) => {
+    const res = await fetch(base + path, { method: method || 'GET', cache: 'no-store' });
+    if (!res.ok) throw new Error('控制通道返回 ' + res.status);
+    return await res.json();
+  };
   window.cpsHost = {
     hosted: true,
-    status: () => invoke('server_status'),
-    start: () => invoke('server_start'),
-    stop: () => invoke('server_stop'),
-    restart: () => invoke('server_restart'),
-    openLogs: () => invoke('open_logs'),
+    port: PORT,
+    status: () => call('/host/status'),
+    start: () => call('/host/start', 'POST'),
+    stop: () => call('/host/stop', 'POST'),
+    restart: () => call('/host/restart', 'POST'),
+    log: () => call('/host/log'),
+    openLogs: async () => { await call('/host/open-logs', 'POST'); },
+
+    // 自绘标题栏：窗口控制与拖动。
+    // 拖动没有走 data-tauri-drag-region（外部 URL 下 Tauri 不注入其脚本），
+    // 而是把「按下时的鼠标屏幕坐标」交给壳，壳在原生侧跟着鼠标移动窗口——
+    // 与系统标题栏同一条体验，也不依赖任何注入脚本。
+    minimize: () => call('/host/window?action=minimize', 'POST'),
+    toggleMaximize: () => call('/host/window?action=toggle-maximize', 'POST'),
+    close: () => call('/host/window?action=close', 'POST'),
+    isMaximized: async () => (await call('/host/window?action=query', 'POST')).maximized,
+    dragMove: () => call('/host/drag', 'POST'),
   };
 })();
 "#;
+
+/// 控制服务：单线程 accept 循环 + 每连接一个处理线程。
+fn control_server(state: Arc<ServerState>) {
+    let (listener, port) = match bind_control(CONTROL_PORT) {
+        Ok(v) => v,
+        Err(err) => {
+            state.log(&format!("[壳] 控制端口绑定失败：{err}"));
+            return;
+        }
+    };
+    state.control_port.store(port, Ordering::SeqCst);
+    state.log(&format!("[壳] 控制通道就绪：http://127.0.0.1:{port}"));
+
+    for stream in listener.incoming() {
+        if state.exiting.load(Ordering::SeqCst) {
+            break;
+        }
+        if let Ok(stream) = stream {
+            let state = Arc::clone(&state);
+            std::thread::spawn(move || handle_control(stream, &state));
+        }
+    }
+}
+
+/// 固定端口优先；被占用时退回系统分配（同机跑两个便携副本也不会互相抢）。
+fn bind_control(preferred: u16) -> Result<(TcpListener, u16), String> {
+    if let Ok(l) = TcpListener::bind(("127.0.0.1", preferred)) {
+        return Ok((l, preferred));
+    }
+    let l = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
+    let port = l.local_addr().map_err(|e| e.to_string())?.port();
+    Ok((l, port))
+}
+
+fn handle_control(stream: TcpStream, state: &Arc<ServerState>) {
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let mut reader = match stream.try_clone() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let mut buf = [0u8; 4096];
+    let mut raw = Vec::new();
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                raw.extend_from_slice(&buf[..n]);
+                if raw.windows(4).any(|w| w == b"\r\n\r\n") || raw.len() > 8192 {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    let text = String::from_utf8_lossy(&raw);
+    let request_line = text.split("\r\n").next().unwrap_or("");
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or("");
+    let path = parts.next().unwrap_or("");
+
+    // ---- 来源闸门 ----
+    // 无 Origin：非浏览器客户端（curl、托盘自身、脚本）→ 放行。
+    // 有 Origin/Referer：必须是控制台页面自己（它在 3123，控制通道在 3122，属跨源），
+    // 否则 403——任意网页都无法越权启停服务。
+    let mut origin: Option<String> = None;
+    let mut referer: Option<String> = None;
+    for line in text.split("\r\n").skip(1) {
+        let lower = line.to_ascii_lowercase();
+        if let Some(rest) = lower.strip_prefix("origin:") {
+            let _ = rest;
+            origin = line.splitn(2, ':').nth(1).map(|v| v.trim().to_string());
+        } else if lower.starts_with("referer:") {
+            referer = line.splitn(2, ':').nth(1).map(|v| v.trim().to_string());
+        }
+    }
+    // 有 Origin 就用 Origin；只有 Referer 时从它截出 origin（scheme://host:port）。
+    let claimed_origin: Option<String> = origin.clone().or_else(|| referer.map(|r| origin_of(&r)));
+    if let Some(claimed) = &claimed_origin {
+        if claimed != CONSOLE_ORIGIN {
+            let _ = write_control(stream, 403, "{\"error\":\"cross-origin request refused\"}");
+            return;
+        }
+    }
+
+    // 预检（浏览器对带自定义头的跨源请求会先问一句）：放行控制台自己的来源。
+    if method == "OPTIONS" {
+        let _ = write_preflight(stream);
+        return;
+    }
+
+    let (code, body) = dispatch_control(method, path, state);
+    let _ = write_control(stream, code, &body);
+}
+
+fn dispatch_control(method: &str, path: &str, state: &Arc<ServerState>) -> (u16, String) {
+    let (route, query) = match path.split_once('?') {
+        Some((p, q)) => (p, Some(q.to_string())),
+        None => (path, None),
+    };
+    let expected = match route {
+        "/host/status" | "/host/log" => "GET",
+        "/host/start" | "/host/stop" | "/host/restart" | "/host/open-logs" | "/host/window" | "/host/drag" => "POST",
+        _ => return (404, "{\"error\":\"no such control route\"}".into()),
+    };
+    if method != expected {
+        return (405, "{\"error\":\"method not allowed\"}".into());
+    }
+    match route {
+        "/host/status" => (200, control_status(state)),
+        "/host/start" => {
+            if let Err(err) = spawn_server(state) {
+                state.set_state(SvcState::Error(err.clone()));
+                state.log(&format!("[壳] 启动失败：{err}"));
+            }
+            (200, control_status(state))
+        }
+        "/host/stop" => {
+            state.set_state(SvcState::Stopping);
+            let worker = Arc::clone(state);
+            std::thread::spawn(move || {
+                let result = stop_server(&worker, GRACEFUL_STOP);
+                worker.set_state(match result {
+                    Ok(()) => SvcState::Stopped,
+                    Err(err) => SvcState::Error(err),
+                });
+            });
+            (200, control_status(state))
+        }
+        "/host/restart" => {
+            state.set_state(SvcState::Stopping);
+            let worker = Arc::clone(state);
+            std::thread::spawn(move || {
+                if let Err(err) = stop_server(&worker, GRACEFUL_STOP) {
+                    worker.set_state(SvcState::Error(err));
+                    return;
+                }
+                worker.set_state(SvcState::Stopped);
+                if let Err(err) = spawn_server(&worker) {
+                    worker.log(&format!("[壳] 重启失败：{err}"));
+                    worker.set_state(SvcState::Error(err));
+                }
+            });
+            (200, control_status(state))
+        }
+        "/host/open-logs" => {
+            let _ = std::process::Command::new("explorer")
+                .arg(&state.log_dir)
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn();
+            (200, "{\"ok\":true}".into())
+        }
+        "/host/log" => (200, recent_logs(state)),
+        "/host/window" => window_control(state, query.as_deref().unwrap_or("")),
+        "/host/drag" => window_drag(state),
+        _ => (404, "{\"error\":\"no such control route\"}".into()),
+    }
+}
+
+/// 解析 `a=1&b=2` 形式的查询串。
+fn query_param(query: &str, key: &str) -> Option<String> {
+    query.split('&').find_map(|pair| {
+        let (k, v) = pair.split_once('=')?;
+        (k == key).then(|| v.to_string())
+    })
+}
+
+/// 自绘标题栏的窗口控制。全部派发到主线程执行（Tauri 要求窗口操作在主线程）。
+fn window_control(state: &Arc<ServerState>, query: &str) -> (u16, String) {
+    let action = query_param(query, "action").unwrap_or_default();
+    let app = state.app.clone();
+    let Some(window) = app.get_webview_window("main") else {
+        return (409, "{\"error\":\"窗口尚未创建\"}".into());
+    };
+    match action.as_str() {
+        "minimize" => {
+            let _ = window.minimize();
+        }
+        "toggle-maximize" => {
+            let maximized = window.is_maximized().unwrap_or(false);
+            let _ = if maximized { window.unmaximize() } else { window.maximize() };
+        }
+        "close" => {
+            // 与系统标题栏的关闭一致：进托盘，不退出
+            let _ = window.close();
+        }
+        "query" => {}
+        _ => return (400, "{\"error\":\"unknown window action\"}".into()),
+    }
+    let maximized = window.is_maximized().unwrap_or(false);
+    (200, format!("{{\"ok\":true,\"maximized\":{maximized}}}"))
+}
+
+/// 窗口拖动：前端在标题栏按下鼠标时打一声招呼，壳在原生侧盯着鼠标左键移动窗口。
+///
+/// 为什么不用 `data-tauri-drag-region`：控制台是外部 URL，Tauri 不向外部来源注入
+/// 它的脚本（与 IPC 同一原因），该属性不会生效。自己跟鼠标既可靠，行为也与系统
+/// 标题栏一致。拖动期间不再有后续 HTTP——壳自己判断左键何时松开。
+fn window_drag(state: &Arc<ServerState>) -> (u16, String) {
+    let app = state.app.clone();
+    let Some(window) = app.get_webview_window("main") else {
+        return (409, "{\"error\":\"窗口尚未创建\"}".into());
+    };
+    // 最大化状态下拖动 = 还原并跟随（Windows 的标准手感）
+    if window.is_maximized().unwrap_or(false) {
+        let _ = window.unmaximize();
+    }
+    std::thread::spawn(move || {
+        use windows::Win32::Foundation::POINT;
+        use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+        use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+        let mut start = POINT::default();
+        let mut cursor = POINT::default();
+        unsafe {
+            if GetCursorPos(&mut start).is_err() {
+                return;
+            }
+        }
+        loop {
+            let held = unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } < 0;
+            if !held {
+                break;
+            }
+            unsafe {
+                if GetCursorPos(&mut cursor).is_err() {
+                    break;
+                }
+            }
+            let dx = cursor.x - start.x;
+            let dy = cursor.y - start.y;
+            if dx != 0 || dy != 0 {
+                if let Ok(pos) = window.outer_position() {
+                    let _ = window.set_position(tauri::PhysicalPosition::new(pos.x + dx, pos.y + dy));
+                }
+                start = cursor;
+            }
+            std::thread::sleep(Duration::from_millis(8));
+        }
+    });
+    (200, "{\"ok\":true}".into())
+}
+
+fn control_status(state: &Arc<ServerState>) -> String {
+    let current = sync_state(state);
+    let port = state.control_port.load(Ordering::SeqCst);
+    let mut body = format!("{{\"state\":\"{}\",\"port\":{port}", current.name());
+    if let SvcState::Error(msg) = &current {
+        body.push_str(&format!(",\"error\":{}", json_string(msg)));
+    }
+    body.push('}');
+    body
+}
+
+/// 状态以「进程真实存活 + healthz 通过」为准，而不是只看内部标志位——
+/// 服务被外部杀掉、或刚开始监听但还没 healthy，页面都能立刻反映。
+///
+/// 关键：`Starting` 也要参与判定。否则通过控制通道拉起服务后状态会卡在「启动中」，
+/// 页面就一直转圈（健康检查才是唯一可信的运行判据）。
+fn sync_state(state: &Arc<ServerState>) -> SvcState {
+    let mut guard = state.state.lock().unwrap_or_else(|e| e.into_inner());
+    if matches!(*guard, SvcState::Stopping) {
+        return guard.clone(); // 停止/重启进行中，展示态由执行线程收尾
+    }
+    let alive = {
+        let mut child = state.child.lock().unwrap_or_else(|e| e.into_inner());
+        match child.as_mut() {
+            Some(c) => c.try_wait().map(|s| s.is_none()).unwrap_or(false),
+            None => false,
+        }
+    };
+    if !alive {
+        // 没有进程：除了「启动失败」这种要留住的错误，一律视为已停止
+        if !matches!(*guard, SvcState::Stopped | SvcState::Error(_)) {
+            *guard = SvcState::Stopped;
+        }
+        return guard.clone();
+    }
+    if healthz_ok(PORT) {
+        *guard = SvcState::Running;
+    } else if !matches!(*guard, SvcState::Starting) {
+        // 进程在但健康检查不过：别谎报运行中
+        *guard = SvcState::Starting;
+    }
+    guard.clone()
+}
+
+fn recent_logs(state: &Arc<ServerState>) -> String {
+    let lines: Vec<String> = {
+        let guard = state.logs.lock().unwrap_or_else(|e| e.into_inner());
+        guard.iter().cloned().collect()
+    };
+    let joined = lines.iter().map(|l| json_string(l)).collect::<Vec<_>>().join(",");
+    format!("{{\"lines\":[{joined}]}}")
+}
+
+/// 从 URL 截出 origin（scheme://host:port）——只用于比对，不引 URL 解析库。
+fn origin_of(url: &str) -> String {
+    let after_scheme = match url.find("//") {
+        Some(i) => i + 2,
+        None => return url.to_string(),
+    };
+    match url[after_scheme..].find('/') {
+        Some(i) => url[..after_scheme + i].to_string(),
+        None => url.to_string(),
+    }
+}
+
+/// 预检响应：只放行控制台自己的来源与它实际会用的方法/头。
+fn write_preflight(mut stream: TcpStream) -> std::io::Result<()> {
+    let head = format!(
+        "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: {CONSOLE_ORIGIN}\r\n\
+         Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n\
+         Access-Control-Allow-Headers: Content-Type\r\n\
+         Access-Control-Max-Age: 600\r\nVary: Origin\r\nContent-Length: 0\r\n\
+         Connection: close\r\n\r\n"
+    );
+    stream.write_all(head.as_bytes())?;
+    stream.flush()
+}
+
+fn write_control(mut stream: TcpStream, code: u16, body: &str) -> std::io::Result<()> {
+    let reason = match code {
+        200 => "OK",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        _ => "Error",
+    };
+    let head = format!(
+        "HTTP/1.1 {code} {reason}\r\nContent-Type: application/json; charset=utf-8\r\n\
+         Access-Control-Allow-Origin: {CONSOLE_ORIGIN}\r\nVary: Origin\r\n\
+         Content-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(head.as_bytes())?;
+    stream.write_all(body.as_bytes())?;
+    stream.flush()
+}
+
+/// 最小 JSON 字符串转义（错误信息里可能有引号/反斜杠/换行）。
+fn json_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+// ---------- 窗口 ----------
 
 /// 打开控制台。先确保服务在跑（spawn 幂等 + 就绪等待）——
 /// 窗口永远指向活着的控制台，用户永远不该看到 webview 错误页。
@@ -164,13 +620,15 @@ fn show_main(app: &AppHandle) {
     {
         let state = app.state::<Arc<ServerState>>();
         if let Err(err) = spawn_server(&state) {
-            log_line(&state.log_dir, &format!("[壳] 打开控制台前启动服务失败：{err}"));
+            state.log(&format!("[壳] 打开控制台前启动服务失败：{err}"));
+            state.set_state(SvcState::Error(err));
             return;
         }
         if !wait_healthz(PORT, HEALTHZ_TIMEOUT) {
-            log_line(&state.log_dir, "[壳] 打开控制台前服务未就绪，稍后再试");
+            state.log("[壳] 打开控制台前服务未就绪，稍后再试");
             return;
         }
+        state.set_state(SvcState::Running);
     }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -183,13 +641,25 @@ fn show_main(app: &AppHandle) {
         .title("Cline Pass 上游控制台")
         .inner_size(1280.0, 860.0)
         .min_inner_size(960.0, 640.0)
+        // 无系统标题栏：标题栏由页面自绘（右上角最小化/最大化/关闭），
+        // 暗色下不再有一条与页面无关的灰条，内容区也多出 30px。
+        .decorations(false)
         .visible(false)
-        .initialization_script(BRIDGE_SCRIPT)
+        .initialization_script(&bridge_script(app))
         .build()
         .expect("failed to create main window");
     // 服务已就绪才走到这里；先隐藏构建、再一次性 show，避免空白闪烁
     let _ = window.show();
     let _ = window.set_focus();
+}
+
+/// 注入脚本 = 模板 + 运行期确定的控制端口。
+fn bridge_script(app: &AppHandle) -> String {
+    let port = app
+        .try_state::<Arc<ServerState>>()
+        .map(|s| s.control_port.load(Ordering::SeqCst))
+        .unwrap_or(0);
+    BRIDGE_SCRIPT.replace(CONTROL_PORT_PLACEHOLDER, &port.to_string())
 }
 
 // ---------- 托盘 ----------
@@ -253,27 +723,38 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 fn menu_start(app: &AppHandle) {
     let state = app.state::<Arc<ServerState>>();
     if let Err(err) = spawn_server(&state) {
-        log_line(&state.log_dir, &format!("[壳] 托盘启动失败：{err}"));
+        state.log(&format!("[壳] 托盘启动失败：{err}"));
+        state.set_state(SvcState::Error(err));
         return;
     }
     if wait_healthz(PORT, HEALTHZ_TIMEOUT) {
+        state.set_state(SvcState::Running);
         show_main(app);
     }
 }
 
 fn menu_stop(app: &AppHandle) {
     let state = app.state::<Arc<ServerState>>();
-    let _ = stop_server(&state, GRACEFUL_STOP);
+    state.set_state(SvcState::Stopping);
+    let result = stop_server(&state, GRACEFUL_STOP);
+    state.set_state(match result {
+        Ok(()) => SvcState::Stopped,
+        Err(err) => SvcState::Error(err),
+    });
 }
 
 fn menu_restart(app: &AppHandle) {
     let state = app.state::<Arc<ServerState>>();
+    state.set_state(SvcState::Stopping);
     let _ = stop_server(&state, GRACEFUL_STOP);
+    state.set_state(SvcState::Stopped);
     if let Err(err) = spawn_server(&state) {
-        log_line(&state.log_dir, &format!("[壳] 托盘重启失败：{err}"));
+        state.log(&format!("[壳] 托盘重启失败：{err}"));
+        state.set_state(SvcState::Error(err));
         return;
     }
     if wait_healthz(PORT, HEALTHZ_TIMEOUT) {
+        state.set_state(SvcState::Running);
         show_main(app);
     }
 }
@@ -287,63 +768,11 @@ fn quit_app(app: &AppHandle) {
     }
     let started = Instant::now();
     let _ = stop_server(&state, GRACEFUL_STOP);
-    log_line(
-        &state.log_dir,
-        &format!("[壳] 托盘退出：停服耗时 {}ms，壳进程结束", started.elapsed().as_millis()),
-    );
+    state.log(&format!("[壳] 托盘退出：停服耗时 {}ms，壳进程结束", started.elapsed().as_millis()));
     app.exit(0);
 }
 
-// ---------- tauri commands（控制台 UI 通过 window.cpsHost 调用） ----------
-// 全部「立即返回、后台执行」，UI 用 server_status 轮询；不做阻塞式 IPC。
-
-#[tauri::command]
-fn server_status(state: tauri::State<'_, Arc<ServerState>>) -> Result<String, String> {
-    let alive = {
-        let mut guard = state.child.lock().map_err(|e| e.to_string())?;
-        match guard.as_mut() {
-            Some(child) => child.try_wait().map_err(|e| e.to_string())?.is_none(),
-            None => false,
-        }
-    };
-    if !alive {
-        return Ok("stopped".into());
-    }
-    if healthz_ok(PORT) {
-        Ok("running".into())
-    } else {
-        Ok("starting".into())
-    }
-}
-
-#[tauri::command]
-fn server_start(state: tauri::State<'_, Arc<ServerState>>) -> Result<String, String> {
-    if let Err(err) = spawn_server(&state) {
-        return Err(err);
-    }
-    Ok("starting".into())
-}
-
-#[tauri::command]
-fn server_stop(state: tauri::State<'_, Arc<ServerState>>) -> Result<String, String> {
-    let state = Arc::clone(state.inner());
-    std::thread::spawn(move || {
-        let _ = stop_server(&state, GRACEFUL_STOP);
-    });
-    Ok("stopping".into())
-}
-
-#[tauri::command]
-fn server_restart(state: tauri::State<'_, Arc<ServerState>>) -> Result<String, String> {
-    let state = Arc::clone(state.inner());
-    std::thread::spawn(move || {
-        let _ = stop_server(&state, GRACEFUL_STOP);
-        if let Err(err) = spawn_server(&state) {
-            log_line(&state.log_dir, &format!("[壳] 重启失败：{err}"));
-        }
-    });
-    Ok("starting".into())
-}
+// ---------- tauri commands（只剩「打开日志目录」这类一次性动作；启停一律走控制通道） ----------
 
 #[tauri::command]
 fn open_logs(state: tauri::State<'_, Arc<ServerState>>) -> Result<(), String> {
@@ -373,15 +802,12 @@ fn spawn_server(state: &ServerState) -> Result<(), String> {
     let log_out = std::fs::OpenOptions::new().create(true).append(true).open(log_path(&state.log_dir)).map_err(|e| e.to_string())?;
     let log_err = log_out.try_clone().map_err(|e| e.to_string())?;
 
-    log_line(
-        &state.log_dir,
-        &format!(
-            "[壳] 启动服务：{} {}（DATA_DIR={}）",
-            node.display(),
-            state.entry.display(),
-            state.data_dir.display()
-        ),
-    );
+    state.log(&format!(
+        "[壳] 启动服务：{} {}（DATA_DIR={}）",
+        node.display(),
+        state.entry.display(),
+        state.data_dir.display()
+    ));
 
     let child = std::process::Command::new(&node)
         .arg(&state.entry)
@@ -405,8 +831,9 @@ fn spawn_server(state: &ServerState) -> Result<(), String> {
         .map_err(|e| format!("挂载作业对象失败：{e}"))?;
     }
 
-    log_line(&state.log_dir, &format!("[壳] 服务已启动 pid={}", child.id()));
+    state.log(&format!("[壳] 服务已启动 pid={}", child.id()));
     *guard = Some(child);
+    state.set_state(SvcState::Starting);
     Ok(())
 }
 
@@ -424,14 +851,14 @@ fn stop_server(state: &ServerState, grace: Duration) -> Result<(), String> {
     loop {
         match child.try_wait().map_err(|e| e.to_string())? {
             Some(code) => {
-                log_line(&state.log_dir, &format!("[壳] 服务已退出（code={code:?}）"));
+                state.log(&format!("[壳] 服务已退出（code={code:?}）"));
                 break;
             }
             None if Instant::now() >= deadline => {
-                log_line(&state.log_dir, "[壳] 优雅关停超时，强制终止服务进程树");
+                state.log("[壳] 优雅关停超时，强制终止服务进程树");
                 unsafe {
                     if let Err(err) = TerminateJobObject(HANDLE(state.job as *mut _), 1) {
-                        log_line(&state.log_dir, &format!("[壳] 强制终止失败：{err}"));
+                        state.log(&format!("[壳] 强制终止失败：{err}"));
                     }
                 }
                 let _ = child.wait();
@@ -570,17 +997,22 @@ fn resolve_entry(app: &AppHandle) -> PathBuf {
     normalize_path(candidates.into_iter().find(|p| p.exists()).unwrap_or_else(|| PathBuf::from("server/dist/index.js")))
 }
 
-fn log_path(log_dir: &PathBuf) -> PathBuf {
+fn log_path(log_dir: &Path) -> PathBuf {
     log_dir.join("server.log")
 }
 
-fn log_line(log_dir: &PathBuf, line: &str) {
+/// 只落盘的日志写入（setup 早期还没有状态对象时的兜底路径）。
+fn write_log_file(log_dir: &Path, line: &str) {
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log_path(log_dir)) {
         let _ = f.write_all(format!("{line}\n").as_bytes());
     }
 }
 
-fn rotate_log(log_dir: &PathBuf) {
+fn log_line(log_dir: &Path, line: &str) {
+    write_log_file(log_dir, line);
+}
+
+fn rotate_log(log_dir: &Path) {
     let path = log_path(log_dir);
     if let Ok(meta) = std::fs::metadata(&path) {
         if meta.len() > LOG_ROTATE_BYTES {
