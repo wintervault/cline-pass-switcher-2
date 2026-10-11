@@ -10,6 +10,8 @@ import {
   NodeIndexOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
+  PushpinFilled,
+  PushpinOutlined,
   ReloadOutlined,
   SafetyOutlined,
   SunOutlined,
@@ -47,6 +49,10 @@ import { useHostBridge } from './hostBridge.ts';
 import { Logo } from './logo.tsx';
 import { darkTheme, initialTheme, lightTheme, persistTheme, type ThemeMode } from './theme.ts';
 
+/** 钉住页面的持久化键：打开控制台时默认落到被钉住的页面。 */
+const PIN_KEY = 'cps_pinned_page';
+const SIDEBAR_KEY = 'cps_sidebar';
+
 /** 导航注册表：壳层只认这张表；页面增减只改这里。 */
 const PAGES: { key: string; label: string; icon: ComponentType; element: ComponentType }[] = [
   { key: 'models', label: '订阅模型', icon: NodeIndexOutlined, element: Models },
@@ -64,17 +70,21 @@ const HOST_LABEL: Record<string, string> = {
   stopped: '已停止',
 };
 
-/** 左侧导航：可折叠（64px 图标 ⇄ 200px 图标+文字），状态持久化，悬停提示未展开的页面名。 */
+/** 左侧导航：可折叠（64px 图标 ⇄ 200px 图标+文字）；悬停可钉住页面（打开时默认落到此页）。 */
 function SideNav({
   nav,
   onNav,
   collapsed,
   onToggle,
+  pinned,
+  onTogglePin,
 }: {
   nav: string;
   onNav: (key: string) => void;
   collapsed: boolean;
   onToggle: () => void;
+  pinned: string | null;
+  onTogglePin: (key: string) => void;
 }) {
   const { token } = theme.useToken();
   const btnBase = { height: 44, width: '100%', gap: 10, paddingInline: collapsed ? 0 : 10 } as const;
@@ -99,26 +109,49 @@ function SideNav({
       <div style={{ display: 'grid', gap: 4, padding: collapsed ? '0 10px' : '0 12px' }}>
         {PAGES.map((p) => {
           const active = nav === p.key;
+          const isPinned = pinned === p.key;
           const Comp = p.icon;
           return (
-            <Tooltip key={p.key} title={collapsed ? p.label : undefined} placement="right">
-              <Button
-                type="text"
-                aria-label={p.label}
-                className={active ? 'cps-nav cps-nav-active' : 'cps-nav'}
-                onClick={() => onNav(p.key)}
-                style={{
-                  ...btnBase,
-                  justifyContent: collapsed ? 'center' : 'flex-start',
-                  fontSize: 18,
-                  color: active ? token.colorPrimary : token.colorTextSecondary,
-                  background: active ? token.colorPrimaryBg : undefined,
-                }}
-                icon={<Comp />}
-              >
-                {!collapsed && <span style={{ fontSize: 14 }}>{p.label}</span>}
-              </Button>
-            </Tooltip>
+            <div key={p.key} className="cps-nav-item">
+              <Tooltip title={collapsed ? p.label : undefined} placement="right">
+                <Button
+                  type="text"
+                  aria-label={p.label}
+                  className={[
+                    'cps-nav',
+                    active ? 'cps-nav-active' : '',
+                    collapsed && isPinned ? 'cps-nav-pinned-dot' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  onClick={() => onNav(p.key)}
+                  style={{
+                    ...btnBase,
+                    justifyContent: collapsed ? 'center' : 'flex-start',
+                    fontSize: 18,
+                    color: active ? token.colorPrimary : token.colorTextSecondary,
+                    background: active ? token.colorPrimaryBg : undefined,
+                  }}
+                  icon={<Comp />}
+                >
+                  {!collapsed && (
+                    <span style={{ fontSize: 14, paddingRight: 18, whiteSpace: 'nowrap' }}>{p.label}</span>
+                  )}
+                </Button>
+              </Tooltip>
+              {!collapsed && (
+                <Tooltip title={isPinned ? '取消钉住' : '钉住：打开控制台时默认显示此页'}>
+                  <button
+                    type="button"
+                    aria-label={isPinned ? `取消钉住${p.label}` : `钉住${p.label}`}
+                    className={isPinned ? 'cps-pin cps-pinned' : 'cps-pin'}
+                    onClick={() => onTogglePin(p.key)}
+                  >
+                    {isPinned ? <PushpinFilled /> : <PushpinOutlined />}
+                  </button>
+                </Tooltip>
+              )}
+            </div>
           );
         })}
       </div>
@@ -186,13 +219,24 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
   const refresh = useRefresh();
   const qc = useQueryClient();
   const host = useHostBridge();
-  const [nav, setNav] = useState('models');
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('cps_sidebar') === 'collapsed');
+  /** 钉住的页面：打开控制台时默认落在这里（用户可把高频页钉住，省一次点击）。 */
+  const [pinned, setPinned] = useState<string | null>(() => localStorage.getItem(PIN_KEY));
+  const [nav, setNav] = useState(() => localStorage.getItem(PIN_KEY) ?? 'models');
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(SIDEBAR_KEY) === 'collapsed');
 
   const toggleSidebar = (): void => {
     setCollapsed((c) => {
-      localStorage.setItem('cps_sidebar', c ? 'expanded' : 'collapsed');
+      localStorage.setItem(SIDEBAR_KEY, c ? 'expanded' : 'collapsed');
       return !c;
+    });
+  };
+
+  const togglePin = (key: string): void => {
+    setPinned((p) => {
+      const next = p === key ? null : key;
+      if (next) localStorage.setItem(PIN_KEY, next);
+      else localStorage.removeItem(PIN_KEY);
+      return next;
     });
   };
 
@@ -262,7 +306,14 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
             borderRight: `1px solid ${token.colorBorderSecondary}`,
           }}
         >
-          <SideNav nav={nav} onNav={setNav} collapsed={collapsed} onToggle={toggleSidebar} />
+          <SideNav
+            nav={nav}
+            onNav={setNav}
+            collapsed={collapsed}
+            onToggle={toggleSidebar}
+            pinned={pinned}
+            onTogglePin={togglePin}
+          />
         </Layout.Sider>
 
         <Layout style={{ background: 'transparent', minWidth: 0 }}>

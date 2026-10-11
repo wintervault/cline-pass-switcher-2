@@ -1,4 +1,11 @@
-import { ArrowDownOutlined, ArrowUpOutlined, DownloadOutlined, SearchOutlined, StopOutlined } from '@ant-design/icons';
+import {
+  ArrowDownOutlined,
+  ArrowUpOutlined,
+  DownloadOutlined,
+  HolderOutlined,
+  SearchOutlined,
+  StopOutlined,
+} from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
@@ -107,17 +114,29 @@ function ModelItem({ row, active, onClick }: { row: SubscriptionRow; active: boo
   );
 }
 
+/** 行内拖拽排序的回调集合（状态在父级，跨行共享）。 */
+interface RowDragProps {
+  isDragging: boolean;
+  isDropTarget: boolean;
+  onDragStartRow: (order: number) => void;
+  onDragOverRow: (order: number) => void;
+  onDropRow: (order: number) => void;
+  onDragEndRow: () => void;
+}
+
 /** 渠道清单的一行：序号 / 渠道 / 状态 / 优先·排除 / 排序。 */
 function UpstreamRow({
   upstream,
   cfg,
   meta,
   onSave,
+  drag,
 }: {
   upstream: string;
   cfg: PerModelConfig;
   meta: ModelMeta | null;
   onSave: (patch: Partial<PerModelConfig>) => void;
+  drag: RowDragProps;
 }) {
   const { token } = theme.useToken();
   const selected = cfg.upstreams.includes(upstream);
@@ -157,8 +176,43 @@ function UpstreamRow({
   };
 
   return (
-    <div className="cps-chain-row" data-state={excluded ? 'excluded' : selected ? 'on' : 'off'}>
+    <div
+      className={`cps-chain-row${drag.isDragging ? ' cps-dragging' : ''}${drag.isDropTarget ? ' cps-drop-target' : ''}`}
+      data-state={excluded ? 'excluded' : selected ? 'on' : 'off'}
+      onDragOver={
+        selected
+          ? (e) => {
+              e.preventDefault();
+              drag.onDragOverRow(order);
+            }
+          : undefined
+      }
+      onDrop={
+        selected
+          ? (e) => {
+              e.preventDefault();
+              drag.onDropRow(order);
+            }
+          : undefined
+      }
+    >
       <span className="cps-chain-node">{selected ? order + 1 : null}</span>
+      {selected ? (
+        <span
+          className="cps-grip"
+          draggable
+          aria-label="拖拽调整顺序"
+          onDragStart={(e) => {
+            e.dataTransfer.effectAllowed = 'move';
+            drag.onDragStartRow(order);
+          }}
+          onDragEnd={() => drag.onDragEndRow()}
+        >
+          <HolderOutlined />
+        </span>
+      ) : (
+        <span style={{ width: 16 }} />
+      )}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
         <Typography.Text code style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
           {upstream}
@@ -215,6 +269,9 @@ export default function Models() {
   const [fetchNote, setFetchNote] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [modelFilter, setModelFilter] = useState('');
+  /** 管线拖拽排序：源行/落点行的 upstreams 索引（null = 未拖拽）。 */
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [dragTo, setDragTo] = useState<number | null>(null);
 
   const rows = models.data?.subscription ?? [];
   const official = models.data?.officialFetch ?? null;
@@ -508,15 +565,40 @@ export default function Models() {
                 {ups.length ? (
                   <>
                     <div className="cps-chain">
-                      {chainRows.map((u) => (
-                        <UpstreamRow
-                          key={u}
-                          upstream={u}
-                          cfg={cfg}
-                          meta={meta}
-                          onSave={(patch) => saveConfig(current.id, patch)}
-                        />
-                      ))}
+                      {chainRows.map((u) => {
+                        const rowOrder = cfg.upstreams.indexOf(u);
+                        return (
+                          <UpstreamRow
+                            key={u}
+                            upstream={u}
+                            cfg={cfg}
+                            meta={meta}
+                            onSave={(patch) => saveConfig(current.id, patch)}
+                            drag={{
+                              isDragging: dragFrom !== null && dragFrom === rowOrder,
+                              isDropTarget: dragTo !== null && dragTo === rowOrder && dragFrom !== rowOrder,
+                              onDragStartRow: (o) => setDragFrom(o),
+                              onDragOverRow: (o) => setDragTo((cur) => (cur === o ? cur : o)),
+                              onDropRow: (o) => {
+                                if (dragFrom !== null && dragFrom !== o) {
+                                  const list = [...cfg.upstreams];
+                                  const [item] = list.splice(dragFrom, 1);
+                                  if (item) {
+                                    list.splice(o, 0, item);
+                                    saveConfig(current.id, { upstreams: list });
+                                  }
+                                }
+                                setDragFrom(null);
+                                setDragTo(null);
+                              },
+                              onDragEndRow: () => {
+                                setDragFrom(null);
+                                setDragTo(null);
+                              },
+                            }}
+                          />
+                        );
+                      })}
                     </div>
                     <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 12 }}>
                       勾选「使用」的渠道按序号依次尝试，异常自动顺切；标「排除」的渠道即使网关回退也不使用。
