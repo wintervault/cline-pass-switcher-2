@@ -4,6 +4,8 @@ import {
   FileTextOutlined,
   HistoryOutlined,
   LogoutOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
   MoonOutlined,
   NodeIndexOutlined,
   PauseCircleOutlined,
@@ -62,37 +64,82 @@ const HOST_LABEL: Record<string, string> = {
   stopped: '已停止',
 };
 
-/** 左侧图标导航：64px 窄栏，纵向空间全留给内容，悬停提示页面名。 */
-function SideNav({ nav, onNav }: { nav: string; onNav: (key: string) => void }) {
+/** 左侧导航：可折叠（64px 图标 ⇄ 200px 图标+文字），状态持久化，悬停提示未展开的页面名。 */
+function SideNav({
+  nav,
+  onNav,
+  collapsed,
+  onToggle,
+}: {
+  nav: string;
+  onNav: (key: string) => void;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
   const { token } = theme.useToken();
+  const btnBase = { height: 44, width: '100%', gap: 10, paddingInline: collapsed ? 0 : 10 } as const;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '12px 0', gap: 4 }}>
-      <Tooltip title="Cline Pass 控制台" placement="right">
-        <div style={{ marginBottom: 16 }}>
-          <Logo size={28} />
-        </div>
-      </Tooltip>
-      {PAGES.map((p) => {
-        const active = nav === p.key;
-        return (
-          <Tooltip key={p.key} title={p.label} placement="right">
-            <Button
-              type="text"
-              aria-label={p.label}
-              className={active ? 'cps-nav cps-nav-active' : 'cps-nav'}
-              onClick={() => onNav(p.key)}
-              style={{
-                width: 44,
-                height: 44,
-                fontSize: 18,
-                color: active ? token.colorPrimary : token.colorTextSecondary,
-                background: active ? token.colorPrimaryBg : undefined,
-              }}
-              icon={<p.icon />}
-            />
-          </Tooltip>
-        );
-      })}
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '12px 0' }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: collapsed ? '0 0 0 18px' : '0 16px',
+          marginBottom: 16,
+        }}
+      >
+        <Logo size={28} />
+        {!collapsed && (
+          <Typography.Text strong style={{ fontSize: 14, whiteSpace: 'nowrap' }}>
+            Cline Pass
+          </Typography.Text>
+        )}
+      </div>
+      <div style={{ display: 'grid', gap: 4, padding: collapsed ? '0 10px' : '0 12px' }}>
+        {PAGES.map((p) => {
+          const active = nav === p.key;
+          const Comp = p.icon;
+          return (
+            <Tooltip key={p.key} title={collapsed ? p.label : undefined} placement="right">
+              <Button
+                type="text"
+                aria-label={p.label}
+                className={active ? 'cps-nav cps-nav-active' : 'cps-nav'}
+                onClick={() => onNav(p.key)}
+                style={{
+                  ...btnBase,
+                  justifyContent: collapsed ? 'center' : 'flex-start',
+                  fontSize: 18,
+                  color: active ? token.colorPrimary : token.colorTextSecondary,
+                  background: active ? token.colorPrimaryBg : undefined,
+                }}
+                icon={<Comp />}
+              >
+                {!collapsed && <span style={{ fontSize: 14 }}>{p.label}</span>}
+              </Button>
+            </Tooltip>
+          );
+        })}
+      </div>
+      <div style={{ marginTop: 'auto', padding: collapsed ? '0 10px' : '0 12px' }}>
+        <Tooltip title={collapsed ? '展开侧栏' : undefined} placement="right">
+          <Button
+            type="text"
+            aria-label={collapsed ? '展开侧栏' : '折叠侧栏'}
+            onClick={onToggle}
+            style={{
+              ...btnBase,
+              height: 40,
+              justifyContent: collapsed ? 'center' : 'flex-start',
+              color: token.colorTextTertiary,
+            }}
+            icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+          >
+            {!collapsed && <span style={{ fontSize: 13 }}>收起侧栏</span>}
+          </Button>
+        </Tooltip>
+      </div>
     </div>
   );
 }
@@ -140,6 +187,14 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
   const qc = useQueryClient();
   const host = useHostBridge();
   const [nav, setNav] = useState('models');
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('cps_sidebar') === 'collapsed');
+
+  const toggleSidebar = (): void => {
+    setCollapsed((c) => {
+      localStorage.setItem('cps_sidebar', c ? 'expanded' : 'collapsed');
+      return !c;
+    });
+  };
 
   const [authKey, setKey] = useState(getAuthKey());
   const [loginOpen, setLoginOpen] = useState(false);
@@ -168,6 +223,16 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
     return () => window.removeEventListener('cps:unauthorized', handler);
   }, []);
 
+  // 页面内的引导按钮通过自定义事件请求切页（避免给每个 feature 传导航 prop）
+  useEffect(() => {
+    const handler = (e: Event): void => {
+      const key = (e as CustomEvent<string>).detail;
+      if (typeof key === 'string') setNav(key);
+    };
+    window.addEventListener('cps:navigate', handler);
+    return () => window.removeEventListener('cps:navigate', handler);
+  }, []);
+
   const tryLogin = async (): Promise<void> => {
     const candidate = loginInput.trim();
     if (!candidate) return;
@@ -191,13 +256,13 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
       {/* 桌面应用形态：固定侧栏 + 内容区内滚 + 常驻状态栏（窗口高度恒定，不整页滚） */}
       <Layout style={{ height: '100vh' }}>
         <Layout.Sider
-          width={64}
+          width={collapsed ? 64 : 200}
           style={{
             background: token.colorBgContainer,
             borderRight: `1px solid ${token.colorBorderSecondary}`,
           }}
         >
-          <SideNav nav={nav} onNav={setNav} />
+          <SideNav nav={nav} onNav={setNav} collapsed={collapsed} onToggle={toggleSidebar} />
         </Layout.Sider>
 
         <Layout style={{ background: 'transparent', minWidth: 0 }}>

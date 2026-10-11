@@ -3,11 +3,9 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   App,
-  Badge,
   Button,
   Card,
   Checkbox,
-  Descriptions,
   Empty,
   Input,
   Select,
@@ -159,27 +157,10 @@ function UpstreamRow({
   };
 
   return (
-    <div
-      className="cps-row"
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        padding: '8px 12px',
-        borderRadius: token.borderRadius,
-        background: selected ? token.colorPrimaryBg : undefined,
-        opacity: excluded ? 0.5 : 1,
-      }}
-    >
-      <span style={{ width: 26, display: 'flex', justifyContent: 'center' }}>
-        {selected ? (
-          <Badge count={order + 1} color={token.colorPrimary} overflowCount={99} />
-        ) : (
-          <Typography.Text style={{ fontSize: 12, color: token.colorTextQuaternary }}>—</Typography.Text>
-        )}
-      </span>
+    <div className="cps-chain-row" data-state={excluded ? 'excluded' : selected ? 'on' : 'off'}>
+      <span className="cps-chain-node">{selected ? order + 1 : null}</span>
       <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
-        <Typography.Text code style={{ fontSize: 12 }}>
+        <Typography.Text code style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
           {upstream}
         </Typography.Text>
         {detail?.name && (
@@ -262,6 +243,8 @@ export default function Models() {
   const cfg = current?.config ?? EMPTY_CFG;
   const meta = current?.meta ?? null;
   const ups = sortedUpstreams(meta);
+  /** 管线渲染顺序：链上（按优先级序号）在前，离线（按状态排序）在后。 */
+  const chainRows = [...cfg.upstreams.filter((u) => ups.includes(u)), ...ups.filter((u) => !cfg.upstreams.includes(u))];
   const pinIgnored = meta?.pinState === 'ignored';
 
   const runProbe = (): void => {
@@ -298,6 +281,17 @@ export default function Models() {
     });
   };
 
+  /** 拉取官方模型清单（页头按钮与首屏引导共用）。 */
+  const runFetchOfficial = (): void => {
+    fetchOfficial.mutate(undefined, {
+      onSuccess: (r) =>
+        setFetchNote(
+          r.added.length ? `新增 ${r.added.length} 个：${r.added.join('、')}` : `清单已是最新（官方 ${r.found} 个）`,
+        ),
+      onError: () => setFetchNote('拉取失败，请稍后重试'),
+    });
+  };
+
   return (
     <div>
       <PageHeader
@@ -305,21 +299,7 @@ export default function Models() {
         desc="先「探测渠道」列出可用渠道，勾选「使用」并排好顺序；「校验」逐渠道体检可用性。"
         actions={
           <Space size={8} wrap>
-            <Button
-              icon={<DownloadOutlined />}
-              loading={fetchOfficial.isPending}
-              onClick={() =>
-                fetchOfficial.mutate(undefined, {
-                  onSuccess: (r) =>
-                    setFetchNote(
-                      r.added.length
-                        ? `新增 ${r.added.length} 个：${r.added.join('、')}`
-                        : `清单已是最新（官方 ${r.found} 个）`,
-                    ),
-                  onError: () => setFetchNote('拉取失败，请稍后重试'),
-                })
-              }
-            >
+            <Button icon={<DownloadOutlined />} loading={fetchOfficial.isPending} onClick={runFetchOfficial}>
               拉取官方最新模型
             </Button>
             {official && (
@@ -351,11 +331,38 @@ export default function Models() {
       ) : models.isLoading && !models.data ? (
         <Skeleton active paragraph={{ rows: 8 }} />
       ) : rows.length === 0 ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无订阅模型：点右上角「拉取官方最新模型」同步清单" />
+        <Card style={{ maxWidth: 560, margin: '48px auto 0' }}>
+          <Typography.Title level={5} style={{ marginTop: 0 }}>
+            开始使用
+          </Typography.Title>
+          <div style={{ display: 'grid', gap: 14 }}>
+            <Space size={10}>
+              <Tag style={{ margin: 0 }}>第 1 步</Tag>
+              <Typography.Text>在「账号池」添加 Cline Pass API Key</Typography.Text>
+              <Button
+                size="small"
+                onClick={() => window.dispatchEvent(new CustomEvent('cps:navigate', { detail: 'accounts' }))}
+              >
+                去账号池
+              </Button>
+            </Space>
+            <Space size={10}>
+              <Tag style={{ margin: 0 }}>第 2 步</Tag>
+              <Typography.Text>拉取官方订阅模型清单</Typography.Text>
+              <Button size="small" loading={fetchOfficial.isPending} onClick={runFetchOfficial}>
+                拉取
+              </Button>
+            </Space>
+            <Space size={10}>
+              <Tag style={{ margin: 0 }}>第 3 步</Tag>
+              <Typography.Text type="secondary">对模型点「探测渠道」，把可用渠道勾选「使用」</Typography.Text>
+            </Space>
+          </div>
+        </Card>
       ) : (
         <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
           {/* 左：模型列表（常驻可见，状态一屏扫完；多项可过滤、超出高度自滚） */}
-          <div style={{ width: 292, flexShrink: 0, position: 'sticky', top: 0 }}>
+          <div className="cps-model-list" style={{ flexShrink: 0, position: 'sticky', top: 0 }}>
             <Input
               style={{ marginBottom: 8 }}
               prefix={<SearchOutlined />}
@@ -378,7 +385,7 @@ export default function Models() {
 
           {/* 右：详情与渠道配置 */}
           {current && (
-            <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 16 }}>
+            <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                 <Typography.Title
                   level={4}
@@ -432,51 +439,56 @@ export default function Models() {
                 />
               )}
 
-              <Descriptions
-                size="small"
-                column={{ xs: 1, sm: 2, lg: 4 }}
-                items={[
-                  {
-                    key: 'canonical',
-                    label: '背后模型',
-                    children: meta?.canonicalSlug ? <Typography.Text code>{meta.canonicalSlug}</Typography.Text> : '—',
-                  },
-                  {
-                    key: 'last',
-                    label: '最近命中渠道',
-                    children: meta?.lastProvider ? (
-                      <Space size={6}>
-                        <Tag color="geekblue" style={{ margin: 0 }}>
-                          {meta.lastProvider}
-                        </Tag>
-                        {meta.lastMs ? (
-                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                            {meta.lastMs}ms
-                          </Typography.Text>
-                        ) : null}
-                      </Space>
-                    ) : (
-                      '—'
-                    ),
-                  },
-                  { key: 'tier0', label: 'tier-0', children: meta?.tier0?.length ? meta.tier0.join('、') : '—' },
-                  {
-                    key: 'probedAt',
-                    label: '探测 / 校验',
-                    children: (
-                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                        {fmtTime(meta?.probedAt)} / {fmtTime(meta?.validatedAt)}
+              {/* 元信息行：自由折行，窄窗口下自动换行而不互相挤压 */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 28px', fontSize: 12 }}>
+                {meta?.canonicalSlug && (
+                  <span>
+                    <Typography.Text type="secondary">背后模型 </Typography.Text>
+                    <Typography.Text code style={{ fontSize: 12 }}>
+                      {meta.canonicalSlug}
+                    </Typography.Text>
+                  </span>
+                )}
+                {meta?.lastProvider && (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <Typography.Text type="secondary">最近命中 </Typography.Text>
+                    <Tag color="geekblue" style={{ margin: 0 }}>
+                      {meta.lastProvider}
+                    </Tag>
+                    {meta.lastMs ? (
+                      <Typography.Text type="secondary" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                        {meta.lastMs}ms
                       </Typography.Text>
-                    ),
-                  },
-                ]}
-              />
+                    ) : null}
+                  </span>
+                )}
+                {meta?.tier0?.length ? (
+                  <span>
+                    <Typography.Text type="secondary">tier-0 </Typography.Text>
+                    {meta.tier0.join('、')}
+                  </span>
+                ) : null}
+                <span>
+                  <Typography.Text type="secondary">探测 </Typography.Text>
+                  {fmtTime(meta?.probedAt)}
+                  {meta?.validatedAt ? (
+                    <>
+                      <Typography.Text type="secondary"> · 校验 </Typography.Text>
+                      {fmtTime(meta.validatedAt)}
+                    </>
+                  ) : null}
+                </span>
+              </div>
 
-              <Card
-                size="small"
-                title={`渠道优先级（${ups.length}）`}
-                extra={
-                  <Space size={8}>
+              <section>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                  <Typography.Text strong style={{ fontSize: 14 }}>
+                    渠道优先级
+                  </Typography.Text>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {ups.length} 个渠道
+                  </Typography.Text>
+                  <Space size={8} style={{ marginLeft: 'auto' }}>
                     <Button
                       size="small"
                       onClick={() =>
@@ -492,12 +504,11 @@ export default function Models() {
                       清空清单
                     </Button>
                   </Space>
-                }
-              >
+                </div>
                 {ups.length ? (
                   <>
-                    <div style={{ display: 'grid', gap: 4 }}>
-                      {ups.map((u) => (
+                    <div className="cps-chain">
+                      {chainRows.map((u) => (
                         <UpstreamRow
                           key={u}
                           upstream={u}
@@ -517,9 +528,12 @@ export default function Models() {
                     description={pinIgnored ? '钉住参数被忽略，渠道清单不可信' : '尚未探测到渠道，点上方「探测渠道」'}
                   />
                 )}
-              </Card>
+              </section>
 
-              <Card size="small" title="路由策略">
+              <section>
+                <Typography.Text strong style={{ fontSize: 14, display: 'block', marginBottom: 12 }}>
+                  路由策略
+                </Typography.Text>
                 <div style={{ display: 'grid', gap: 12 }}>
                   <Space size={12} align="center" wrap>
                     <Typography.Text type="secondary" style={{ width: 72, textAlign: 'right' }}>
@@ -558,7 +572,7 @@ export default function Models() {
                     </Typography.Text>
                   </Space>
                 </div>
-              </Card>
+              </section>
             </div>
           )}
         </div>

@@ -480,7 +480,7 @@ dependencies = [
 
 [[package]]
 name = "cline-pass-switcher"
-version = "2.6.1"
+version = "2.7.0"
 dependencies = [
  "tauri",
  "tauri-build",
