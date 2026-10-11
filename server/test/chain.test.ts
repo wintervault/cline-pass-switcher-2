@@ -210,6 +210,26 @@ describe('ChatChain 故障转移', () => {
     expect(upstream.count).toBeLessThan(2); // 客户端走了就不再花钱
   });
 
+  it('断连导致的在飞请求失败不算渠道故障：不冷却、不进 trace', async () => {
+    const controller = new AbortController();
+    upstream.script([{ status: 200, body: okBody('ch1'), delayMs: 300 }]);
+    const chain = makeChain();
+    const pending = chain.run({
+      modelId: 'cline-pass/x',
+      body: bodyOf(),
+      cfg: cfgOf(),
+      meta: metaOf(),
+      stream: false,
+      clientSignal: controller.signal,
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    controller.abort();
+    const r = asFailure(await pending);
+    // 用户取消（agent 里按 Esc 很常见）不应把渠道打入冷却 5 分钟
+    expect(health.isCooling('cline-pass/x', 'ch1')).toBe(false);
+    expect(r.trace).toHaveLength(0);
+  });
+
   it('全局预算耗尽：立即返回最后错误，不再切换', async () => {
     config.failover.budgetMs = 120;
     config.failover.attemptTimeoutMs = 500;

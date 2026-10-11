@@ -1,4 +1,5 @@
 import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   App,
@@ -18,8 +19,8 @@ import {
 } from 'antd';
 import { useState } from 'react';
 
-import { useAccounts, useSaveAccounts, useTestAccount } from '../api/hooks.ts';
-import type { AccountMode } from '../api/types.ts';
+import { qk, useAccounts, useSaveAccounts, useTestAccount } from '../api/hooks.ts';
+import type { AccountMode, AccountsResponse } from '../api/types.ts';
 import { PageHeader } from '../pageHeader.tsx';
 
 /** 提交给服务端的账号行；key 空串 = 保持原 key（服务端拿不到明文）。 */
@@ -55,6 +56,7 @@ function fmtUsed(ts: number): string {
 export default function Accounts() {
   const { message } = App.useApp();
   const { token } = theme.useToken();
+  const qc = useQueryClient();
   const accounts = useAccounts();
   const save = useSaveAccounts();
   const testKey = useTestAccount();
@@ -71,8 +73,35 @@ export default function Accounts() {
 
   /** 就地保存：只改传入的字段，其余保持服务端当前值。 */
   const commit = (next: { accounts?: DraftAccount[]; mode?: AccountMode; active?: number }): void => {
+    const nextAccounts = next.accounts ?? draftFromServer();
+    const nextMode = next.mode ?? mode;
+    const nextActive = next.active ?? active;
+    // 乐观更新缓存：连续操作（连点开关 / 连切策略）时，下一次 draftFromServer()
+    // 读到的必须包含上一次改动——否则后一次提交会用旧缓存覆盖前一次（丢改动）
+    qc.setQueryData<AccountsResponse>(qk.accounts, (old) =>
+      old
+        ? {
+            ...old,
+            accounts: nextAccounts.map((a) => {
+              const prev = a.existingIndex !== null ? old.accounts[a.existingIndex] : undefined;
+              const key = a.key.trim();
+              return {
+                name: a.name,
+                enabled: a.enabled,
+                keyMasked: key
+                  ? `${'•'.repeat(Math.max(8, key.length - 4))}${key.slice(-4)}`
+                  : (prev?.keyMasked ?? '—'),
+                keyTail: key ? key.slice(-4) : (prev?.keyTail ?? ''),
+                hasKey: !!key || !!prev?.hasKey,
+              };
+            }),
+            mode: nextMode,
+            active: nextActive,
+          }
+        : old,
+    );
     save.mutate(
-      { accounts: next.accounts ?? draftFromServer(), mode: next.mode ?? mode, active: next.active ?? active },
+      { accounts: nextAccounts, mode: nextMode, active: nextActive },
       { onError: (e) => message.error(`保存失败：${String(e)}`) },
     );
   };
@@ -169,7 +198,7 @@ export default function Accounts() {
             const isActive = active === i && mode === 'single';
             return (
               <Card
-                key={`${a.name}-${i}`}
+                key={`${a.name}-${a.keyMasked}`}
                 size="small"
                 style={{ borderColor: isActive ? token.colorPrimaryBorder : undefined }}
               >

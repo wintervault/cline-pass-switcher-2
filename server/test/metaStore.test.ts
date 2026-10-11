@@ -56,6 +56,14 @@ describe('loadMetaStore', () => {
     expect(store.value.history).toEqual([]);
   });
 
+  it('顶层是数组（同属「不是对象映射」）→ 备份 + 重建，不静默清空', async () => {
+    await fs.writeFile(file, '[{"history":[]}]');
+    const { store, backupPath } = await loadMetaStore(file);
+    expect(store.value.history).toEqual([]);
+    expect(backupPath).not.toBeNull();
+    expect(await listBackups()).toHaveLength(1);
+  });
+
   it('损坏的模型记录被丢弃，好的保留', async () => {
     await fs.writeFile(
       file,

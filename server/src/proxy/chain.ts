@@ -267,6 +267,9 @@ export class ChatChain {
         }
 
         // ---- 失败分支 ----
+        // 客户端断开（用户取消）导致的失败不是渠道故障：不记冷却、不学习状态，
+        // 直接停止整条链（此前会把被取消的渠道误标冷却 5 分钟）。
+        if (input.clientSignal?.aborted) break outer;
         trace.push({ upstream, status: outcome.status ?? 502, ms: outcome.ms, note: outcome.message.slice(0, 160) });
         lastError = { status: outcome.status ?? 502, message: outcome.message, kind: outcome.kind };
 

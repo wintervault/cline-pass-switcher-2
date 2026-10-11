@@ -151,7 +151,8 @@ async function main(): Promise<void> {
       authMiddleware(
         () => configStore.value.proxyKey,
         // 只保护 API 与 OpenAI 兼容端点；静态页面保持开放（见 middleware 注释）；
-        // /api/shutdown 由随机控制 token 保护，不走 proxyKey（壳不应依赖下游密钥配置）
+        // /api/shutdown 不走 proxyKey（壳不应依赖下游密钥配置），由「回环来源 +
+        // 无 Origin/Referer」三重放行保护（见 routes/api.ts 的注释）
         (path) => path !== '/api/shutdown' && (isChatPath(path) || isModelsPath(path) || path.startsWith('/api/')),
       ),
     ],

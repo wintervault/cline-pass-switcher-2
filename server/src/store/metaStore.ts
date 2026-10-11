@@ -140,10 +140,11 @@ export async function loadMetaStore(file: string): Promise<LoadMetaResult> {
   const { value, corrupt, raw } = await readJsonFile<unknown>(file);
 
   let backupPath: string | null = null;
-  if (corrupt || (value !== null && typeof value !== 'object')) {
+  // 数组也是 typeof 'object'，但同样不能作为 MetaFile 使用——一并走备份 + 重建
+  if (corrupt || (value !== null && (typeof value !== 'object' || Array.isArray(value)))) {
     backupPath = `${file}.broken-${new Date().toISOString().replace(/[:.]/g, '-')}`;
     if (raw !== null) await atomicWriteFile(backupPath, raw);
-    notes.push(`metadata.json ${corrupt ? '不是合法 JSON' : '顶层不是对象'}，已重建；原文件备份到 ${backupPath}`);
+    notes.push(`metadata.json ${corrupt ? '不是合法 JSON' : '顶层不是对象映射'}，已重建；原文件备份到 ${backupPath}`);
     log.error({ file, backupPath }, '观测数据文件损坏，已重建');
   }
 

@@ -93,6 +93,32 @@ function subscriptionView(ctx: AppContext) {
   }));
 }
 
+/**
+ * 把 /api/security 的补丁合并进配置（纯函数）。
+ *
+ * proxyKey 是三态语义（回归测试锁住）：
+ * - `undefined` 或空串 = **保持不变**——前端拿不到明文，「留空」是常态；
+ *   旧实现用空串直接覆盖，用户在设置页只改公网地址就会把已设密钥静默清掉；
+ * - `null` = 显式清除（关闭鉴权，前端走「清除密钥」按钮）；
+ * - 非空串 = 设置新密钥。
+ */
+export function applySecurityPatch(cfg: Config, payload: Record<string, unknown>): void {
+  if (payload['proxyKey'] !== undefined) {
+    if (payload['proxyKey'] === null) {
+      cfg.proxyKey = '';
+    } else {
+      const v = String(payload['proxyKey']).trim();
+      if (v) cfg.proxyKey = v;
+    }
+  }
+  if (payload['publicBaseUrl'] !== undefined)
+    cfg.publicBaseUrl = String(payload['publicBaseUrl']).trim().replace(/\/+$/, '');
+  if (payload['exposeCatalog'] !== undefined) cfg.exposeCatalog = !!payload['exposeCatalog'];
+  if (payload['corsOrigins'] !== undefined && Array.isArray(payload['corsOrigins'])) {
+    cfg.corsOrigins = payload['corsOrigins'].map((s) => String(s).trim()).filter(Boolean);
+  }
+}
+
 export function registerApiRoutes(
   ctx: AppContext,
   router: { get(path: string, handler: Handler): void; post(path: string, handler: Handler): void },
@@ -329,15 +355,7 @@ export function registerApiRoutes(
     if (!body.ok) return sendError(c.res, 400, body.reason === 'bad-json' ? 'invalid JSON body' : 'body too large');
     const payload = (body.value ?? {}) as Record<string, unknown>;
 
-    updateConfig(ctx, (cfg) => {
-      if (payload['proxyKey'] !== undefined) cfg.proxyKey = String(payload['proxyKey']).trim();
-      if (payload['publicBaseUrl'] !== undefined)
-        cfg.publicBaseUrl = String(payload['publicBaseUrl']).trim().replace(/\/+$/, '');
-      if (payload['exposeCatalog'] !== undefined) cfg.exposeCatalog = !!payload['exposeCatalog'];
-      if (payload['corsOrigins'] !== undefined && Array.isArray(payload['corsOrigins'])) {
-        cfg.corsOrigins = payload['corsOrigins'].map((s) => String(s).trim()).filter(Boolean);
-      }
-    });
+    updateConfig(ctx, (cfg) => applySecurityPatch(cfg, payload));
 
     const cfg = config();
     sendJSON(c.res, 200, {

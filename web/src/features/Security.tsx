@@ -1,4 +1,4 @@
-import { App, Button, Divider, Input, Space, Switch, Tag, Typography } from 'antd';
+import { App, Button, Divider, Input, Popconfirm, Space, Switch, Tag, Typography } from 'antd';
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 
@@ -103,10 +103,28 @@ export default function Security() {
         </Space>
         <Input.Password
           style={{ maxWidth: 480 }}
-          placeholder={data?.hasProxyKey ? '留空保持不变' : '空 = 关闭鉴权'}
+          placeholder={data?.hasProxyKey ? '留空保持不变' : '尚未设置'}
           value={proxyKey}
           onChange={(e) => setProxyKey(e.target.value)}
         />
+        {data?.hasProxyKey && (
+          <div style={{ marginTop: 8 }}>
+            <Popconfirm
+              title="清除代理密钥？"
+              description="清除后代理不再鉴权（仅回环绑定时安全）；公网部署不要这样做。"
+              okText="清除"
+              okButtonProps={{ danger: true }}
+              cancelText="取消"
+              onConfirm={() =>
+                save.mutate({ proxyKey: null }, { onSuccess: () => message.success('密钥已清除（代理不再鉴权）') })
+              }
+            >
+              <Button size="small" danger type="text">
+                清除密钥
+              </Button>
+            </Popconfirm>
+          </div>
+        )}
       </Section>
 
       <Divider style={{ margin: '24px 0' }} />

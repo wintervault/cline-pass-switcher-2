@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { enabledAccounts, isConfigured, publicProxyBase } from '../src/config/derive.ts';
 import { applyEnvOverrides } from '../src/config/env.ts';
 import { defaultConfig } from '../src/config/schema.ts';
-import { mergeAccounts } from '../src/http/routes/api.ts';
+import { applySecurityPatch, mergeAccounts } from '../src/http/routes/api.ts';
 import { assertBindSafe, InsecureBindError } from '../src/security/bind.ts';
 import { isLoopbackHost, maskSecret, safeEqual } from '../src/security/compare.ts';
 
@@ -140,6 +140,37 @@ describe('derive', () => {
     cfg.bindHost = '0.0.0.0';
     cfg.port = 9000;
     expect(publicProxyBase(cfg)).toBe('http://0.0.0.0:9000/v1');
+  });
+});
+
+describe('applySecurityPatch（proxyKey 三态语义）', () => {
+  it('空串 = 保持不变（留空语义：只改其他字段不会清掉密钥）', () => {
+    const cfg = defaultConfig();
+    cfg.proxyKey = 'sk_secret';
+    applySecurityPatch(cfg, { proxyKey: '', publicBaseUrl: 'https://x.example.com' });
+    expect(cfg.proxyKey).toBe('sk_secret');
+    expect(cfg.publicBaseUrl).toBe('https://x.example.com');
+  });
+
+  it('undefined = 保持不变', () => {
+    const cfg = defaultConfig();
+    cfg.proxyKey = 'sk_secret';
+    applySecurityPatch(cfg, { exposeCatalog: true });
+    expect(cfg.proxyKey).toBe('sk_secret');
+    expect(cfg.exposeCatalog).toBe(true);
+  });
+
+  it('非空串 = 设置新密钥（去除首尾空白）', () => {
+    const cfg = defaultConfig();
+    applySecurityPatch(cfg, { proxyKey: '  sk_new  ' });
+    expect(cfg.proxyKey).toBe('sk_new');
+  });
+
+  it('null = 显式清除', () => {
+    const cfg = defaultConfig();
+    cfg.proxyKey = 'sk_secret';
+    applySecurityPatch(cfg, { proxyKey: null });
+    expect(cfg.proxyKey).toBe('');
   });
 });
 
