@@ -3,6 +3,8 @@ import {
   ExperimentOutlined,
   FileTextOutlined,
   HistoryOutlined,
+  KeyOutlined,
+  LockOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -189,7 +191,7 @@ function HostControls({ host }: { host: ReturnType<typeof useHostBridge> }) {
         <Badge
           status={stopped ? 'error' : status === 'running' ? 'success' : 'processing'}
           text={HOST_LABEL[status] ?? status}
-          style={{ fontSize: 12 }}
+          style={{ fontSize: 13 }}
         />
       </Tooltip>
       {stopped ? (
@@ -319,6 +321,20 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
         <Layout style={{ background: 'transparent', minWidth: 0 }}>
           <Layout.Content style={{ overflow: 'auto', padding: '24px 24px 32px' }}>
             <div style={{ maxWidth: 1400, margin: '0 auto' }}>
+              {host.host && host.status === 'stopped' && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="服务已停止：页面显示的是上次缓存的数据"
+                  description="从状态栏或托盘「启动服务」恢复；恢复后页面会自动重新加载。"
+                  action={
+                    <Button size="small" onClick={() => void host.host?.start()}>
+                      启动服务
+                    </Button>
+                  }
+                />
+              )}
               {meta.data && !meta.data.configured && (
                 <Alert
                   type="error"
@@ -343,8 +359,8 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
 
           <Layout.Footer
             style={{
-              height: 34,
-              padding: '0 16px',
+              height: 40,
+              padding: '0 20px',
               display: 'flex',
               alignItems: 'center',
               gap: 16,
@@ -354,14 +370,31 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
           >
             <HostControls host={host} />
             {proxyBase && (
-              <Tooltip title="下游客户端使用的接入地址（点击复制）">
-                <Typography.Text type="secondary" style={{ fontSize: 12 }} copyable={{ text: proxyBase }}>
+              <Space size={10} align="center">
+                <Typography.Text type="secondary" style={{ fontSize: 13 }} copyable={{ text: proxyBase }}>
                   {proxyBase}
                 </Typography.Text>
-              </Tooltip>
+                <Tooltip
+                  title={
+                    meta.data?.authRequired
+                      ? '已开启鉴权：客户端需带这把密钥访问；点击进入设置'
+                      : '当前未鉴权（仅限本机绑定）；点击设置代理密钥'
+                  }
+                >
+                  <Button
+                    size="small"
+                    type="link"
+                    icon={meta.data?.authRequired ? <LockOutlined /> : <KeyOutlined />}
+                    style={{ fontSize: 13 }}
+                    onClick={() => setNav('security')}
+                  >
+                    {meta.data?.authRequired ? '密钥已开启' : '未设密钥'}
+                  </Button>
+                </Tooltip>
+              </Space>
             )}
-            <Space size={2} style={{ marginLeft: 'auto' }}>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            <Space size={4} style={{ marginLeft: 'auto' }}>
+              <Typography.Text type="secondary" style={{ fontSize: 13 }}>
                 v{meta.data?.version ?? '…'}
               </Typography.Text>
               <Tooltip title={mode === 'dark' ? '切换到亮色' : '切换到暗色'}>

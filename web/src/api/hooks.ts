@@ -14,6 +14,7 @@ import type {
 } from './types.ts';
 
 export const qk = {
+  meta: ['meta'] as const,
   models: ['models'] as const,
   accounts: ['accounts'] as const,
   security: ['security'] as const,
@@ -37,6 +38,9 @@ export function useHistory(): ReturnType<typeof useQuery<{ history: HistoryEntry
 export function useRefresh(): () => void {
   const qc = useQueryClient();
   return () => {
+    // meta 也要失效：它承载「是否已配置账号」——漏掉会让「尚未配置」提示
+    // 在保存账号后继续显示（读的是旧缓存）
+    void qc.invalidateQueries({ queryKey: qk.meta });
     void qc.invalidateQueries({ queryKey: qk.models });
     void qc.invalidateQueries({ queryKey: qk.accounts });
     void qc.invalidateQueries({ queryKey: qk.security });
@@ -122,5 +126,5 @@ export function useSaveExposeCatalog() {
 }
 
 export function useMeta(): ReturnType<typeof useQuery<MetaInfo>> {
-  return useQuery({ queryKey: ['meta'], queryFn: () => api<MetaInfo>('/api/meta') });
+  return useQuery({ queryKey: qk.meta, queryFn: () => api<MetaInfo>('/api/meta') });
 }

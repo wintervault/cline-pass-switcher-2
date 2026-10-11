@@ -5,6 +5,19 @@
  * 带亮暗通用的半透明兜底，避免元素落在变量作用域之外时样式失效。
  */
 
+/* 全局 reset：浏览器默认给 body 8px 外边距，会让整个布局超出视口 16px
+   （页面能上下滚一点点，固定底部的状态栏跟着浮动）。应用型布局统一
+   由 Layout.Content 内部滚动，body 不滚。 */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+body {
+  overflow: hidden;
+}
+
 :root {
   --cps-thumb: rgba(127, 127, 127, 0.35);
   --cps-thumb-hover: rgba(127, 127, 127, 0.55);
@@ -141,6 +154,9 @@
   position: relative;
   display: grid;
   gap: 2px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 .cps-chain-row {
   position: relative;
@@ -197,6 +213,9 @@
   display: flex;
   align-items: center;
   margin-left: -4px;
+  padding: 0;
+  border: none;
+  background: transparent;
   transition: color 0.15s ease;
 }
 .cps-grip:hover {

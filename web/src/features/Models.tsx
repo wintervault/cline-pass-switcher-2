@@ -176,7 +176,7 @@ function UpstreamRow({
   };
 
   return (
-    <div
+    <li
       className={`cps-chain-row${drag.isDragging ? ' cps-dragging' : ''}${drag.isDropTarget ? ' cps-drop-target' : ''}`}
       data-state={excluded ? 'excluded' : selected ? 'on' : 'off'}
       onDragOver={
@@ -198,10 +198,11 @@ function UpstreamRow({
     >
       <span className="cps-chain-node">{selected ? order + 1 : null}</span>
       {selected ? (
-        <span
+        <button
+          type="button"
           className="cps-grip"
           draggable
-          aria-label="拖拽调整顺序"
+          aria-label="拖拽调整顺序（键盘可用右侧箭头按钮）"
           onDragStart={(e) => {
             e.dataTransfer.effectAllowed = 'move';
             drag.onDragStartRow(order);
@@ -209,7 +210,7 @@ function UpstreamRow({
           onDragEnd={() => drag.onDragEndRow()}
         >
           <HolderOutlined />
-        </span>
+        </button>
       ) : (
         <span style={{ width: 16 }} />
       )}
@@ -253,7 +254,7 @@ function UpstreamRow({
           onClick={toggleExclude}
         />
       </Tooltip>
-    </div>
+    </li>
   );
 }
 
@@ -564,7 +565,7 @@ export default function Models() {
                 </div>
                 {ups.length ? (
                   <>
-                    <div className="cps-chain">
+                    <ul className="cps-chain">
                       {chainRows.map((u) => {
                         const rowOrder = cfg.upstreams.indexOf(u);
                         return (
@@ -599,7 +600,7 @@ export default function Models() {
                           />
                         );
                       })}
-                    </div>
+                    </ul>
                     <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 12 }}>
                       勾选「使用」的渠道按序号依次尝试，异常自动顺切；标「排除」的渠道即使网关回退也不使用。
                     </Typography.Text>
