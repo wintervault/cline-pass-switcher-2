@@ -82,7 +82,7 @@ export default function Security() {
   const CONTROL_WIDTH = 460;
 
   return (
-    <div style={{ maxWidth: 820, margin: '0 auto' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <PageHeader
         title="访问与安全"
         desc="下游客户端怎么连、用什么密钥连、跨源怎么放行。低频配置，改完点右上角保存。"

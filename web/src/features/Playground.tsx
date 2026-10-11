@@ -1,4 +1,4 @@
-import { CopyOutlined, PlayCircleOutlined, SettingOutlined } from '@ant-design/icons';
+import { CopyOutlined, ExclamationCircleFilled, PlayCircleOutlined, SettingOutlined } from '@ant-design/icons';
 import {
   Alert,
   Badge,
@@ -22,6 +22,7 @@ import { STATUS_TAG } from '../api/types.ts';
 import { useFeedback } from '../feedback.ts';
 import { PageHeader } from '../pageHeader.tsx';
 import { Panel, PanelHint } from '../panel.tsx';
+import { RoutingFields } from './routingFields.tsx';
 
 /**
  * 当前路由策略面板。
@@ -60,45 +61,13 @@ function RoutingPanel({ model, cfg, meta }: { model: string; cfg: PerModelConfig
           </Typography.Text>
         </Space>
       }
-      extra={
-        <Space size={6}>
-          <Tooltip title="钉住模式：严格只走清单 / 优先并在最后回退">
-            <Select
-              size="small"
-              style={{ width: 130 }}
-              value={cfg.pinMode}
-              onChange={(v) =>
-                patch({ pinMode: v }, `钉住模式已改为「${v === 'strict' ? '严格钉住' : '优先 + 回退'}」`)
-              }
-              options={[
-                { value: 'strict', label: '严格钉住' },
-                { value: 'preferred', label: '优先 + 回退' },
-              ]}
-            />
-          </Tooltip>
-          <Tooltip title="候选之间的排序偏好（由网关决定时选「网关智能选」）">
-            <Select
-              size="small"
-              style={{ width: 140 }}
-              allowClear
-              placeholder="网关智能选"
-              value={cfg.sort ?? undefined}
-              onChange={(v) => patch({ sort: v ?? null }, '渠道排序偏好已更新')}
-              options={[
-                { value: 'cost', label: '成本优先' },
-                { value: 'ttft', label: '首字快优先' },
-                { value: 'tps', label: '吞吐优先' },
-              ]}
-            />
-          </Tooltip>
-        </Space>
-      }
     >
+      <RoutingFields cfg={cfg} onChange={patch} />
       {rows.length === 0 ? (
-        <Empty
-          image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description="该模型尚未探测到渠道：去「订阅模型」页点「探测渠道」"
-        />
+        <div className="cps-notice" style={{ marginTop: 12 }}>
+          <ExclamationCircleFilled style={{ color: 'var(--ant-color-warning-text)' }} />
+          <span>该模型尚未探测到渠道：去「订阅模型」页点「探测渠道」，回来这里就能看到候选</span>
+        </div>
       ) : (
         <Table
           size="small"
@@ -204,12 +173,23 @@ function TraceTable({ trace, targets }: { trace?: TraceEntry[]; targets: string[
           title: '顺序',
           width: 64,
           render: (_, __, i) => (
-            <Typography.Text type="secondary" style={{ fontVariantNumeric: 'tabular-nums' }}>
+            <Typography.Text type="secondary" className="cps-num">
               {i + 1}
             </Typography.Text>
           ),
         },
-        { title: '渠道', dataIndex: 'upstream', render: (v: string | null) => v ?? '网关默认' },
+        {
+          title: '渠道',
+          dataIndex: 'upstream',
+          render: (v: string | null) =>
+            v ? (
+              <span className="cps-mono">{v}</span>
+            ) : (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                网关默认
+              </Typography.Text>
+            ),
+        },
         {
           title: '结果',
           width: 120,
@@ -219,9 +199,20 @@ function TraceTable({ trace, targets }: { trace?: TraceEntry[]; targets: string[
           title: '耗时',
           width: 100,
           align: 'right',
-          render: (_, r) => <Typography.Text style={{ fontVariantNumeric: 'tabular-nums' }}>{r.ms} ms</Typography.Text>,
+          render: (_, r) => <Typography.Text className="cps-num">{r.ms} ms</Typography.Text>,
         },
-        { title: '备注', dataIndex: 'note', render: (v: string) => v || '—' },
+        {
+          title: '备注',
+          dataIndex: 'note',
+          render: (v: string) =>
+            v ? (
+              <span className="cps-cell-ellipsis" style={{ fontSize: 12 }}>
+                {v}
+              </span>
+            ) : (
+              <Typography.Text type="secondary">—</Typography.Text>
+            ),
+        },
       ]}
     />
   );
@@ -274,7 +265,7 @@ export default function Playground() {
             </Typography.Text>
             <Select
               showSearch
-              style={{ width: 320 }}
+              style={{ width: 320, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
               placeholder="选择模型"
               value={active || undefined}
               onChange={(v) => {

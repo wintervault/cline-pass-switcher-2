@@ -60,6 +60,14 @@ web/src/      api/{client,types,hooks} / features/* / panel.tsx(区块容器) / 
 只靠留白和标题分级会变成「零件散落」（v2.9.2 试过，v2.9.5 全部改回区块）。
 新增页面/区块时先用 `Panel`，不要自己拼 div 边框；控件宽度、字段栅格（`.cps-field`）、
 间隔常量都取 `layout.ts`，不要在局部写死数值。
+
+**内容列的宽度与位置由外壳唯一给定**（`App.tsx` 的 `Layout.Content` +
+`maxWidth: PAGE_WIDTH`），**页面不许再写 maxWidth** —— 一写标题的横坐标就会在切页时跳。
+`Layout.Content` 上的 `scrollbarGutter: 'stable'` 也不能去掉：没有它，有无滚动条的
+页面内容宽会差一个滚动条宽度，切页时整块内容横移。页面根容器固定为
+`display:flex; flex-direction:column; gap:16`，**PageHeader 本身不带 marginBottom**
+（否则与父级 gap 叠加，页头到内容的距离与区块间距变成两套节奏）。
+自检：六页的「标题顶 / 首个区块顶 / 左边缘」三组数字必须完全一致。
 ```
 
 **分层规则**：`upstream/` 与 `proxy/candidates` 是纯函数（不读全局状态，依赖注入）——

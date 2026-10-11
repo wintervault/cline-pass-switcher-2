@@ -1,14 +1,13 @@
 import { Typography } from 'antd';
 import type { ReactNode } from 'react';
 
-import { GAP_PAGE } from './layout.ts';
-
 /**
  * 每页统一的页头：标题 + 一句话说明 + 右侧主操作。
  *
- * 三条页面（订阅模型 / 账号池 / 测试台…）此前各写各的页头，标题字号、说明
- * 颜色、操作位置全不一样，扫一眼就觉得是拼出来的。现在只有这一个来源。
- * 标题用 20px/600（theme 的 fontSizeHeading3），说明文字固定 13px 同级灰色。
+ * **页头自己不设外边距** —— 页头与首个区块之间、以及区块彼此之间的间距，
+ * 全部由页面根容器的 `gap` 决定（六页一律 `flex column + gap 16`）。
+ * 如果这里再写 marginBottom，就会与父级的 gap 叠加，页头到内容的距离
+ * 变成 40 而区块之间是 16，同一个页面里出现两套节奏。
  */
 export function PageHeader({ title, desc, actions }: { title: ReactNode; desc?: ReactNode; actions?: ReactNode }) {
   return (
@@ -17,7 +16,6 @@ export function PageHeader({ title, desc, actions }: { title: ReactNode; desc?: 
         display: 'flex',
         alignItems: 'flex-start',
         gap: 16,
-        marginBottom: GAP_PAGE,
         flexWrap: 'wrap',
       }}
     >

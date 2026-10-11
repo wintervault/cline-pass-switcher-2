@@ -290,8 +290,32 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
         </Layout.Sider>
 
         <Layout style={{ background: 'transparent', minWidth: 0 }}>
-          <Layout.Content style={{ overflow: 'auto', padding: `24px ${PAGE_GUTTER}px 32px` }}>
-            <div style={{ maxWidth: PAGE_WIDTH, margin: '0 auto' }}>
+          {/*
+            内容列由外壳统一给定（唯一来源）：所有页面共用同一个宽度与左边距。
+            两处关键：
+            1. `scrollbarGutter: 'stable'` —— 常驻预留滚动条槽位。不预留的话，
+               页面有滚动条时内容宽 1044、没有时 1054，切页时整块内容横移 5px
+               （「切页感觉布局偏移、不像一个 app」的真正来源）。
+            2. 页面**不许**再自己写 maxWidth —— 一写就与别的页面对不齐，
+               标题的横坐标会在切页时跳。
+          */}
+          <Layout.Content
+            style={{
+              overflow: 'auto',
+              scrollbarGutter: 'stable',
+              padding: `20px ${PAGE_GUTTER}px 24px`,
+            }}
+          >
+            <div
+              style={{
+                width: '100%',
+                maxWidth: PAGE_WIDTH,
+                margin: '0 auto',
+                minHeight: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+            >
               {needKey ? (
                 <AccessGate
                   value={keyDraft}
@@ -318,7 +342,7 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
                     />
                   )}
                   {PAGES.map((p) => (
-                    <div key={p.key} style={{ display: nav === p.key ? undefined : 'none' }}>
+                    <div key={p.key} style={{ display: nav === p.key ? 'block' : 'none', flex: '0 0 auto' }}>
                       <p.element />
                     </div>
                   ))}

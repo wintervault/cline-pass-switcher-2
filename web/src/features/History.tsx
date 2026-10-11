@@ -39,8 +39,10 @@ function relTime(ts: number): string {
   return `${Math.floor(diff / 86_400_000)} 天前`;
 }
 
-/** 账号显示：邮箱很长，只留首段 + 尾段，完整值进悬停与复制。 */
+/** 账号：邮箱太长只留首段 + 域名，完整值进悬停。纯文本呈现——
+ *  行为列里已经有渠道标签，再来一个标签就成了两种「块」，扫读时互相抢。 */
 function AccountCell({ account }: { account: string | null }) {
+  const { token } = theme.useToken();
   if (!account) return <Typography.Text type="secondary">—</Typography.Text>;
   const at = account.indexOf('@');
   const name = at > 0 ? account.slice(0, at) : account;
@@ -48,19 +50,32 @@ function AccountCell({ account }: { account: string | null }) {
   const head = name.length > 10 ? `${name.slice(0, 9)}…` : name;
   return (
     <Tooltip title={account}>
-      <Tag color="blue" style={{ margin: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+      <span className="cps-cell-text">
         {head}
-        {domain && <span style={{ opacity: 0.7 }}>{domain}</span>}
-      </Tag>
+        {domain && <span style={{ color: token.colorTextTertiary }}>{domain}</span>}
+      </span>
     </Tooltip>
   );
+}
+
+/** 毫秒的紧凑写法：不足 1 秒保留毫秒，超过用秒（8534ms → 8.5s）。
+ *  尝试链里每个候选都要带耗时，短一截就能多放下一个候选。 */
+function fmtMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return '—';
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
 /** 尝试状态 → 圆点语义。 */
 const dotStatus = (status: number): 'success' | 'warning' | 'error' | 'default' =>
   status === 200 ? 'success' : status === 429 ? 'warning' : status >= 500 || status === 402 ? 'error' : 'default';
 
-/** 尝试链可视化：渠道名 + 状态点 + 耗时，悬停看完整信息。 */
+/**
+ * 尝试链：渠道 + 状态点 + 耗时，**压成一行**。
+ *
+ * 原来用 `Space wrap`，两次尝试的失败行会折成两行，行高从 43 变成 72——
+ * 整张表因此「不平整」（真实反馈）。现在单行排布，放不下就整体省略，
+ * 完整信息进悬停。
+ */
 function TraceChain({ trace, attempts }: { trace?: TraceEntry[]; attempts: string[] }) {
   const { token } = theme.useToken();
   const list = trace?.length
@@ -68,21 +83,29 @@ function TraceChain({ trace, attempts }: { trace?: TraceEntry[]; attempts: strin
     : (attempts ?? []).map((u) => ({ upstream: u === 'auto' ? null : u, status: 200, ms: 0, note: '' }));
   if (!list.length) return <Typography.Text type="secondary">—</Typography.Text>;
   return (
-    <Space size={10} wrap>
-      {list.map((t, i) => (
-        <Tooltip
-          key={`${t.upstream ?? 'auto'}|${t.status}|${t.ms}`}
-          title={`${t.upstream ?? '自动'} · HTTP ${t.status} · ${t.ms}ms${t.note && t.note !== 'ok' ? ` · ${t.note}` : ''}`}
-        >
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+    <Tooltip
+      title={
+        <div style={{ display: 'grid', gap: 2 }}>
+          {list.map((t) => (
+            <div key={`${t.upstream ?? 'auto'}|${t.status}|${t.ms}|${t.note}`}>
+              {t.upstream ?? '自动'} · {fmtMs(t.ms)} · HTTP {t.status}
+              {t.note && t.note !== 'ok' ? ` · ${t.note}` : ''}
+            </div>
+          ))}
+        </div>
+      }
+    >
+      <div className="cps-trace">
+        {list.map((t, i) => (
+          <span key={`${t.upstream ?? 'auto'}|${t.status}|${t.ms}|${t.note}`} className="cps-trace-item">
             {i > 0 && <span style={{ color: token.colorTextQuaternary }}>›</span>}
             <Badge status={dotStatus(t.status)} />
-            <span style={{ fontFamily: 'monospace' }}>{t.upstream ?? 'auto'}</span>
-            <span style={{ color: token.colorTextTertiary }}>{t.ms}ms</span>
+            <span className="cps-mono">{t.upstream ?? 'auto'}</span>
+            <span style={{ color: token.colorTextTertiary, fontVariantNumeric: 'tabular-nums' }}>{fmtMs(t.ms)}</span>
           </span>
-        </Tooltip>
-      ))}
-    </Space>
+        ))}
+      </div>
+    </Tooltip>
   );
 }
 
@@ -196,7 +219,7 @@ export default function History() {
             dataSource={visible}
             /* 940 = 各定宽列之和 + 尝试序列的下限。定在 1000 时，用户那台
                （125% 缩放后内容区约 998px）会为 2px 溢出一条横向滚动条。 */
-            scroll={{ x: 940 }}
+            scroll={{ x: 900 }}
             locale={{
               emptyText: (
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无请求记录：agent 发出请求后会出现在这里" />
@@ -207,7 +230,7 @@ export default function History() {
             columns={[
               {
                 title: '时间',
-                width: 92,
+                width: 84,
                 render: (_, r) => (
                   <Tooltip title={new Date(r.ts).toLocaleString()}>
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -219,28 +242,25 @@ export default function History() {
               {
                 title: '模型',
                 dataIndex: 'model',
-                width: 216,
-                className: 'cps-nowrap',
+                width: 232,
+                /* 纯等宽文字，不用内联 code 芯片：芯片自带内边距与描边，一行里
+                   和标签/数字混在一起很碎；复制走行尾那个按钮（复制整条记录）。 */
                 render: (v: string) => (
-                  <Typography.Text
-                    code
-                    copyable={{ text: v, tooltips: ['复制模型名', '已复制'] }}
-                    className="cps-nowrap"
-                  >
-                    {v}
-                  </Typography.Text>
+                  <Tooltip title={v}>
+                    <span className="cps-mono cps-cell-ellipsis">{v}</span>
+                  </Tooltip>
                 ),
               },
-              { title: '账号', width: 156, render: (_, r) => <AccountCell account={r.account} /> },
+              { title: '账号', width: 132, render: (_, r) => <AccountCell account={r.account} /> },
               {
                 title: '实际渠道',
-                width: 132,
+                width: 128,
                 render: (_, r) => (
-                  <Space size={4} wrap>
+                  <Space size={4}>
                     {r.provider ? <Tag color="geekblue">{r.provider}</Tag> : '—'}
                     {r.pinMismatch && (
                       <Tooltip title="strict 钉住未生效：网关实际由别的渠道提供服务（流式只能标记，不能撤回）">
-                        <Tag color="red">钉住未生效</Tag>
+                        <Tag color="red">未生效</Tag>
                       </Tooltip>
                     )}
                   </Space>
@@ -248,30 +268,32 @@ export default function History() {
               },
               {
                 title: '耗时',
-                width: 84,
+                width: 76,
                 align: 'right',
                 render: (_, r) =>
                   r.ms != null ? (
-                    <Typography.Text style={{ fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>
-                      {r.ms} ms
-                    </Typography.Text>
+                    <Typography.Text className="cps-num">{r.ms} ms</Typography.Text>
                   ) : (
-                    '—'
+                    <Typography.Text type="secondary">—</Typography.Text>
                   ),
               },
               {
                 title: '方式',
-                width: 62,
-                render: (_, r) => <span style={{ fontSize: 12 }}>{r.stream ? '流式' : '非流式'}</span>,
+                width: 58,
+                render: (_, r) => (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {r.stream ? '流式' : '非流式'}
+                  </Typography.Text>
+                ),
               },
               {
                 title: '尝试序列',
                 render: (_, r) =>
                   r.error ? (
                     <Tooltip title={r.error}>
-                      <Typography.Text type="danger" style={{ fontSize: 12 }}>
-                        {r.error.length > 48 ? `${r.error.slice(0, 48)}…` : r.error}
-                      </Typography.Text>
+                      <span className="cps-cell-ellipsis" style={{ color: token.colorError, fontSize: 12 }}>
+                        {r.error}
+                      </span>
                     </Tooltip>
                   ) : (
                     <TraceChain trace={r.trace} attempts={r.attempts} />
@@ -279,7 +301,7 @@ export default function History() {
               },
               {
                 title: '',
-                width: 44,
+                width: 40,
                 render: (_, r) => (
                   <Tooltip title="复制这条请求的完整信息（排查时贴给别人看）">
                     <Button

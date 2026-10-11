@@ -141,6 +141,54 @@ body {
   background: var(--ant-color-primary);
 }
 
+/* ---------- 表格里的文字与对齐 ----------
+   表格一行里只该有「等宽标识 / 纯文本 / 标签」三类，且各自样式固定。
+   以前同一列混用 code 芯片、内联标签、普通文本，扫读时互相抢。 */
+.cps-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 20px;
+}
+/* 单元格里的一行文字：超出省略，完整值走悬停（不再让复制图标与文字挤在一起） */
+.cps-cell-ellipsis {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cps-cell-text {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 20px;
+}
+/* 数字：等宽数字字形，右对齐时位数才对得齐 */
+.cps-num {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+/* 尝试链：强制单行。折行会把这一行撑高（43 → 72），整张表就不平整了 */
+.cps-trace {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.cps-trace-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-size: 12px;
+  line-height: 20px;
+}
+
 /* ---------- 自绘标题栏（桌面壳） ---------- */
 .cps-titlebar {
   position: fixed;

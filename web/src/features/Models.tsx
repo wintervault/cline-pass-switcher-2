@@ -8,28 +8,13 @@ import {
   StopOutlined,
 } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
-import {
-  Alert,
-  Button,
-  Card,
-  Checkbox,
-  Empty,
-  Input,
-  Select,
-  Skeleton,
-  Space,
-  Tag,
-  Tooltip,
-  Typography,
-  theme,
-} from 'antd';
+import { Alert, Button, Card, Checkbox, Empty, Input, Skeleton, Space, Tag, Tooltip, Typography, theme } from 'antd';
 import { useEffect, useState } from 'react';
 import { qk, useFetchOfficial, useModels, useProbe, useSaveModelConfig, useTest, useValidate } from '../api/hooks.ts';
 import {
   type ModelMeta,
   type ModelsResponse,
   type PerModelConfig,
-  type SortKey,
   STATUS_RANK,
   STATUS_TAG,
   type SubscriptionRow,
@@ -37,6 +22,7 @@ import {
 } from '../api/types.ts';
 import { PageHeader } from '../pageHeader.tsx';
 import { Panel, PanelHint } from '../panel.tsx';
+import { RoutingFields } from './routingFields.tsx';
 
 const EMPTY_CFG: PerModelConfig = { upstreams: [], exclude: [], pinMode: 'strict', sort: null };
 
@@ -56,12 +42,30 @@ const fmtTime = (ts: number | null | undefined): string =>
     ? new Date(ts).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
     : '—';
 
-/** 左侧模型列表项：一眼看清该模型的状态（渠道数/优先配置/被忽略/最近路由）。 */
-function ModelItem({ row, active, onClick }: { row: SubscriptionRow; active: boolean; onClick: () => void }) {
+/**
+ * 左侧模型列表项。
+ *
+ * 版式压到最少行数：**第一行 = 模型 ID + 状态**，第二行只在真有信息时才出现
+ * （使用数 / 最近路由）。原来状态永远独占一行，18 个模型里一屏只看得到 4 个。
+ */
+function ModelItem({
+  row,
+  prefix,
+  active,
+  onClick,
+}: {
+  row: SubscriptionRow;
+  /** 列表里所有模型共有的前缀（如 `cline-pass/`）——显示时去掉，完整 ID 进悬停 */
+  prefix: string;
+  active: boolean;
+  onClick: () => void;
+}) {
   const { token } = theme.useToken();
   const meta = row.meta;
   const cfg = row.config ?? EMPTY_CFG;
   const probed = (meta?.upstreams?.length ?? 0) > 0;
+  const ignored = meta?.pinState === 'ignored';
+  const hasSecondLine = cfg.upstreams.length > 0 || cfg.exclude.length > 0 || !!meta?.lastProvider;
   return (
     <button
       type="button"
@@ -73,43 +77,53 @@ function ModelItem({ row, active, onClick }: { row: SubscriptionRow; active: boo
         border: active ? `1px solid ${token.colorPrimaryBorder}` : undefined,
         background: active ? token.colorPrimaryBg : undefined,
         borderRadius: token.borderRadius,
-        padding: 12,
+        padding: '10px 12px',
         display: 'grid',
-        gap: 8,
+        gap: 6,
         font: 'inherit',
+        width: '100%',
       }}
     >
-      <Typography.Text code style={{ fontSize: 12 }} ellipsis>
-        {row.id}
-      </Typography.Text>
-      <Space size={4} wrap>
-        {meta?.pinState === 'ignored' ? (
-          <Tag color="red" style={{ margin: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        <Tooltip title={row.id}>
+          <span className="cps-mono cps-cell-ellipsis" style={{ flex: 1, minWidth: 0 }}>
+            {row.id.slice(prefix.length)}
+          </span>
+        </Tooltip>
+        {/* 状态跟着 ID 同行：它是扫读这一列时最需要看到的东西 */}
+        {ignored ? (
+          <Tag color="red" style={{ margin: 0, flex: '0 0 auto' }}>
             参数被忽略
           </Tag>
         ) : probed ? (
-          <Tag color="geekblue" style={{ margin: 0 }}>
+          <Tag color="geekblue" style={{ margin: 0, flex: '0 0 auto' }}>
             {meta?.upstreams?.length ?? 0} 渠道
           </Tag>
         ) : (
-          <Tag style={{ margin: 0 }}>未探测</Tag>
+          <Typography.Text type="secondary" style={{ fontSize: 12, flex: '0 0 auto' }}>
+            未探测
+          </Typography.Text>
         )}
-        {cfg.upstreams.length > 0 && (
-          <Tag color="blue" style={{ margin: 0 }}>
-            使用 {cfg.upstreams.length}
-          </Tag>
-        )}
-        {cfg.exclude.length > 0 && (
-          <Tag color="red" style={{ margin: 0 }}>
-            排除 {cfg.exclude.length}
-          </Tag>
-        )}
-      </Space>
-      {meta?.lastProvider && (
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          最近 {meta.lastProvider}
-          {meta.lastMs ? ` · ${meta.lastMs}ms` : ''}
-        </Typography.Text>
+      </div>
+      {hasSecondLine && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          {cfg.upstreams.length > 0 && (
+            <Tag color="blue" style={{ margin: 0, flex: '0 0 auto' }}>
+              使用 {cfg.upstreams.length}
+            </Tag>
+          )}
+          {cfg.exclude.length > 0 && (
+            <Tag color="red" style={{ margin: 0, flex: '0 0 auto' }}>
+              排除 {cfg.exclude.length}
+            </Tag>
+          )}
+          {meta?.lastProvider && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }} className="cps-cell-ellipsis">
+              最近 {meta.lastProvider}
+              {meta.lastMs ? ` · ${meta.lastMs}ms` : ''}
+            </Typography.Text>
+          )}
+        </div>
       )}
     </button>
   );
@@ -274,7 +288,6 @@ export default function Models() {
   const validate = useValidate();
   const test = useTest();
   const fetchOfficial = useFetchOfficial();
-  const [fetchNote, setFetchNote] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [modelFilter, setModelFilter] = useState('');
   /** 管线拖拽排序：源行/落点行的 upstreams 索引（null = 未拖拽）。 */
@@ -285,6 +298,20 @@ export default function Models() {
   const official = models.data?.officialFetch ?? null;
   const current = rows.find((r) => r.id === selectedId) ?? rows[0] ?? null;
   const filteredRows = rows.filter((r) => !modelFilter || r.id.toLowerCase().includes(modelFilter.toLowerCase()));
+
+  /**
+   * 列表里所有模型共有的 `xxx/` 前缀。订阅模型的 ID 全都是同一个前缀
+   * （如 `cline-pass/`），列在每一行里纯属噪音、还挤掉了真正的区分部分
+   * （「模型显示不全」）。去掉它，完整 ID 仍在悬停与右侧面板标题里。
+   */
+  const sharedPrefix = (() => {
+    if (rows.length === 0) return '';
+    const first = rows[0]?.id ?? '';
+    const slash = first.indexOf('/');
+    if (slash <= 0) return '';
+    const candidate = first.slice(0, slash + 1);
+    return rows.every((r) => r.id.startsWith(candidate)) ? candidate : '';
+  })();
 
   const saveConfig = (modelId: string, patch: Partial<PerModelConfig>, note: string) => {
     const currentCfg = rows.find((r) => r.id === modelId)?.config ?? EMPTY_CFG;
@@ -325,37 +352,31 @@ export default function Models() {
     validate.mutate(current.id);
   };
 
-  /** 拉取官方模型清单（页头按钮与首屏引导共用）。结果回执由 mutation 统一给出。 */
+  /** 拉取官方模型清单（页头按钮与首屏引导共用）。结果回执由 mutation 统一给气泡。 */
   const runFetchOfficial = (): void => {
-    fetchOfficial.mutate(undefined, {
-      onSuccess: (r) =>
-        setFetchNote(
-          r.added.length ? `新增 ${r.added.length} 个：${r.added.join('、')}` : `已是最新（官方 ${r.found} 个）`,
-        ),
-    });
+    fetchOfficial.mutate(undefined);
   };
 
   return (
-    <div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <PageHeader
         title="订阅模型"
         desc="先「探测渠道」列出可用渠道，勾选「使用」并排好顺序；「校验」逐渠道体检可用性。"
         actions={
-          <Space size={8} wrap>
+          /* 页头只放主操作。上次拉取的时间与来源塞进悬停——
+             原来它们是一长串内联文字，会把页头挤成两行，于是本页的区块比别的页
+             低 40px（切页时「布局偏移」的一部分）。 */
+          <Tooltip
+            title={
+              official
+                ? `上次拉取：${new Date(official.ts).toLocaleString()}（来源 ${official.sources.join(' + ')}，新增 ${official.added.length}）`
+                : '还没有拉取过官方清单'
+            }
+          >
             <Button icon={<DownloadOutlined />} loading={fetchOfficial.isPending} onClick={runFetchOfficial}>
               拉取官方最新模型
             </Button>
-            {official && (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                上次拉取 {fmtTime(official.ts)}（{official.sources.join('+')}，新增 {official.added.length}）
-              </Typography.Text>
-            )}
-            {fetchNote && (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                {fetchNote}
-              </Typography.Text>
-            )}
-          </Space>
+          </Tooltip>
         }
       />
 
@@ -431,7 +452,13 @@ export default function Models() {
                   style={{ flex: 1, minHeight: 0, display: 'grid', gap: 6, alignContent: 'start' }}
                 >
                   {filteredRows.map((r) => (
-                    <ModelItem key={r.id} row={r} active={current?.id === r.id} onClick={() => setSelectedId(r.id)} />
+                    <ModelItem
+                      key={r.id}
+                      row={r}
+                      prefix={sharedPrefix}
+                      active={current?.id === r.id}
+                      onClick={() => setSelectedId(r.id)}
+                    />
                   ))}
                   {filteredRows.length === 0 && (
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -643,73 +670,7 @@ export default function Models() {
           {/* 路由策略：整行放在两列之下 —— 右侧那一列因此不再需要任何外层滚动条 */}
           {current && (
             <Panel title="路由策略" extra={<PanelHint>改动即时保存</PanelHint>}>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
-                  gap: '16px 40px',
-                }}
-              >
-                <div>
-                  <Space size={12} align="center">
-                    <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-                      钉住模式
-                    </Typography.Text>
-                    <Select
-                      style={{ width: 180 }}
-                      value={cfg.pinMode}
-                      onChange={(v) =>
-                        saveConfig(
-                          current.id,
-                          { pinMode: v },
-                          `钉住模式已改为「${v === 'strict' ? '严格钉住' : '优先 + 回退'}」`,
-                        )
-                      }
-                      options={[
-                        { value: 'strict', label: '严格钉住' },
-                        { value: 'preferred', label: '优先 + 回退' },
-                      ]}
-                    />
-                  </Space>
-                  <Typography.Text
-                    type="secondary"
-                    style={{ fontSize: 12, lineHeight: '18px', display: 'block', marginTop: 6 }}
-                  >
-                    严格钉住：只走清单内渠道，网关不听话视为失败并切换；优先 + 回退：仅最后一个候选放开网关选择
-                  </Typography.Text>
-                </div>
-                <div>
-                  <Space size={12} align="center">
-                    <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-                      渠道排序
-                    </Typography.Text>
-                    <Select
-                      style={{ width: 180 }}
-                      value={cfg.sort ?? ''}
-                      onChange={(v) => {
-                        const label = { '': '网关智能选', cost: '最低成本', ttft: '最快首字', tps: '最高吞吐' }[v] ?? v;
-                        saveConfig(
-                          current.id,
-                          { sort: (v || null) as SortKey | null },
-                          `渠道排序偏好已改为「${label}」`,
-                        );
-                      }}
-                      options={[
-                        { value: '', label: '网关智能选' },
-                        { value: 'cost', label: '最低成本' },
-                        { value: 'ttft', label: '最快首字' },
-                        { value: 'tps', label: '最高吞吐' },
-                      ]}
-                    />
-                  </Space>
-                  <Typography.Text
-                    type="secondary"
-                    style={{ fontSize: 12, lineHeight: '18px', display: 'block', marginTop: 6 }}
-                  >
-                    多个可用渠道之间的执行顺序偏好
-                  </Typography.Text>
-                </div>
-              </div>
+              <RoutingFields cfg={cfg} onChange={(patch, note) => saveConfig(current.id, patch, note)} />
             </Panel>
           )}
         </div>

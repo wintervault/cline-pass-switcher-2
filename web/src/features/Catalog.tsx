@@ -133,7 +133,17 @@ export default function Catalog() {
             locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有匹配的模型" /> }}
             pagination={false}
             columns={[
-              { title: '模型', dataIndex: 'id', render: (v: string) => <Typography.Text code>{v}</Typography.Text> },
+              {
+                title: '模型',
+                dataIndex: 'id',
+                /* 纯等宽文字（不用 code 芯片）：这一列是 400 行同样的标识，
+                   每行一个带内边距与描边的芯片会变成一片栅格噪点。 */
+                render: (v: string) => (
+                  <Tooltip title={v}>
+                    <span className="cps-mono cps-cell-ellipsis">{v}</span>
+                  </Tooltip>
+                ),
+              },
               {
                 title: '类型 / 探测结果',
                 width: 320,
@@ -148,7 +158,8 @@ export default function Catalog() {
               },
               {
                 title: '操作',
-                width: 90,
+                width: 76,
+                align: 'center',
                 render: (_, r) => (
                   <Button
                     size="small"
