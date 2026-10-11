@@ -135,7 +135,10 @@ export default function Security() {
 
       <Divider style={{ margin: '24px 0' }} />
 
-      <Section title="目录暴露" desc="把完整目录模型加入 /v1/models。默认关闭：客户端只看到订阅模型。">
+      <Section
+        title="目录暴露"
+        desc="把完整目录模型加入 /v1/models。默认关闭：客户端只看到订阅模型。开关即时生效，无需点保存。"
+      >
         <Space align="center">
           <Switch
             checked={data?.exposeCatalog ?? false}

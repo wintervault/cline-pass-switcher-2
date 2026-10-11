@@ -126,7 +126,7 @@ export default function Playground() {
                 items={[
                   {
                     key: 'actual',
-                    label: '实际上游',
+                    label: '实际渠道',
                     children: <Tag color={hit ? 'green' : 'orange'}>{result.actual ?? '未知'}</Tag>,
                   },
                   { key: 'ms', label: '耗时', children: `${result.ms ?? 0} ms` },
@@ -164,7 +164,7 @@ export default function Playground() {
                 <Alert
                   type="warning"
                   showIcon
-                  message="未命中首个目标上游：渠道可能限流或不可钉（去「订阅模型」点「校验」检查全部渠道）"
+                  message="未命中首个目标渠道：渠道可能限流或不可钉（去「订阅模型」点「校验」检查全部渠道）"
                 />
               )}
 

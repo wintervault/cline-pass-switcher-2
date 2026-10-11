@@ -1,10 +1,12 @@
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
 import {
   Alert,
   App,
   Button,
   Card,
   Input,
+  Modal,
+  Popconfirm,
   Radio,
   Select,
   Skeleton,
@@ -20,17 +22,25 @@ import { useAccounts, useSaveAccounts, useTestAccount } from '../api/hooks.ts';
 import type { AccountMode } from '../api/types.ts';
 import { PageHeader } from '../pageHeader.tsx';
 
-interface EditRow {
+/** 提交给服务端的账号行；key 空串 = 保持原 key（服务端拿不到明文）。 */
+interface DraftAccount {
   name: string;
-  /** 空串 = 保持原 key（服务端拿不到明文） */
   key: string;
   enabled: boolean;
   /**
-   * 编辑开始时该行在已存列表里的下标；新增行为 null。
+   * 该行在已存列表里的下标；新增行为 null。
    * key 的归属由它指定——**不能按当前行号对位**：删除一行会让后面的行
    * 错位继承别人的密钥（服务端按 existingIndex 取旧 key）。
    */
   existingIndex: number | null;
+}
+
+/** 编辑弹窗的状态。 */
+interface EditModal {
+  /** null = 新增；数字 = 编辑已存账号的下标 */
+  index: number | null;
+  name: string;
+  key: string;
 }
 
 /** 最近使用时间：当天只显示时刻，跨天带日期。 */
@@ -48,85 +58,72 @@ export default function Accounts() {
   const accounts = useAccounts();
   const save = useSaveAccounts();
   const testKey = useTestAccount();
-  const [showKeys, setShowKeys] = useState(false);
-  const [editing, setEditing] = useState<EditRow[] | null>(null);
-  const [mode, setMode] = useState<AccountMode | null>(null);
-  const [active, setActive] = useState<number | null>(null);
+  const [modal, setModal] = useState<EditModal | null>(null);
 
   const data = accounts.data;
-  const rows: EditRow[] =
-    editing ?? data?.accounts.map((a, i) => ({ name: a.name, key: '', enabled: a.enabled, existingIndex: i })) ?? [];
-  const currentMode = mode ?? data?.mode ?? 'sticky';
-  const currentActive = active ?? data?.active ?? 0;
+  const rows = data?.accounts ?? [];
+  const mode = data?.mode ?? 'sticky';
+  const active = data?.active ?? 0;
 
-  const startEdit = (): void => {
-    setEditing(rows.map((r) => ({ ...r })));
-    setMode(currentMode);
-    setActive(currentActive);
-  };
-  const discard = (): void => {
-    setEditing(null);
-    setMode(null);
-    setActive(null);
-  };
+  /** 把服务端当前状态组装成提交数组（key 留空 = 保持不变）。 */
+  const draftFromServer = (): DraftAccount[] =>
+    rows.map((a, i) => ({ name: a.name, key: '', enabled: a.enabled, existingIndex: i }));
 
-  const patch = (i: number, p: Partial<EditRow>): void => {
-    setEditing(rows.map((r, j) => (j === i ? { ...r, ...p } : r)));
-  };
-
-  const persist = (): void => {
-    if (!rows.some((r) => r.key || (r.existingIndex !== null && data?.accounts[r.existingIndex]?.hasKey))) {
-      message.warning('至少需要一个账号');
-      return;
-    }
+  /** 就地保存：只改传入的字段，其余保持服务端当前值。 */
+  const commit = (next: { accounts?: DraftAccount[]; mode?: AccountMode; active?: number }): void => {
     save.mutate(
-      { accounts: rows, mode: currentMode, active: currentActive },
+      { accounts: next.accounts ?? draftFromServer(), mode: next.mode ?? mode, active: next.active ?? active },
+      { onError: (e) => message.error(`保存失败：${String(e)}`) },
+    );
+  };
+
+  const testAccount = (i: number, name: string): void => {
+    testKey.mutate(
+      { index: i },
       {
-        onSuccess: () => {
-          message.success('账号配置已保存');
-          discard();
-        },
-        onError: (e) => message.error(`保存失败：${String(e)}`),
+        onSuccess: (r) =>
+          r.ok
+            ? message.success(`${name} 可用（${r.ms}ms）${r.note ?? ''}`)
+            : message.error(`${name} 不可用：${r.error}`),
+        onError: (e) => message.error(String(e)),
       },
     );
   };
 
-  const testRow = (index: number): void => {
-    const row = rows[index];
-    if (!row) return;
-    // 填了新 key 就测新 key；否则用已存的 key（服务端按下标取，前端拿不到明文）
-    const payload = row.key ? { key: row.key } : row.existingIndex !== null ? { index: row.existingIndex } : null;
-    if (!payload) {
-      message.warning('该账号还没有 key：请填写，或先保存过一次');
+  const submitModal = (): void => {
+    if (!modal) return;
+    const name = modal.name.trim() || `账号${rows.length + 1}`;
+    const key = modal.key.trim();
+    if (modal.index === null && !key) {
+      message.warning('新账号需要填写 API Key');
       return;
     }
-    testKey.mutate(payload, {
-      onSuccess: (r) =>
-        r.ok
-          ? message.success(`${row.name} 可用（${r.ms}ms）${r.note ?? ''}`)
-          : message.error(`${row.name} 不可用：${r.error}`),
-      onError: (e) => message.error(String(e)),
-    });
+    const draft = draftFromServer();
+    if (modal.index === null) {
+      draft.push({ name, key, enabled: true, existingIndex: null });
+    } else {
+      draft[modal.index] = { ...(draft[modal.index] as DraftAccount), name, key };
+    }
+    commit({ accounts: draft });
+    setModal(null);
+  };
+
+  const removeAccount = (i: number): void => {
+    const draft = draftFromServer().filter((_, j) => j !== i);
+    // 删除后激活下标可能越界：删的是前面的行或当前行时向前收一位
+    const nextActive = i <= active ? Math.max(0, active - 1) : active;
+    commit({ accounts: draft, active: nextActive });
   };
 
   return (
     <div style={{ maxWidth: 960, margin: '0 auto' }}>
       <PageHeader
         title="账号池"
-        desc="粘性模式保住上游 prompt cache：只有账号级错误（key 失效 / 额度用完）才轮转到下一账号。"
+        desc="粘性模式保住上游 prompt cache：只有账号级错误（key 失效 / 额度用完）才轮转到下一账号。所有修改即时保存。"
         actions={
-          editing ? (
-            <Space>
-              <Button type="primary" loading={save.isPending} onClick={persist}>
-                保存
-              </Button>
-              <Button onClick={discard}>取消</Button>
-            </Space>
-          ) : (
-            <Button type="primary" onClick={startEdit}>
-              编辑账号
-            </Button>
-          )
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModal({ index: null, name: '', key: '' })}>
+            添加账号
+          </Button>
         }
       />
 
@@ -136,24 +133,19 @@ export default function Accounts() {
         </Typography.Text>
         <Select
           style={{ width: 250 }}
-          value={currentMode}
-          disabled={!editing}
-          onChange={(v) => setMode(v)}
+          value={mode}
+          onChange={(v) => commit({ mode: v })}
           options={[
             { value: 'sticky', label: '粘性（推荐 · 保 prompt cache）' },
             { value: 'single', label: '单账号（手动指定）' },
             { value: 'roundrobin', label: '每请求轮转（牺牲缓存）' },
           ]}
         />
-        <Tooltip title="编辑时以明文显示输入框内容">
-          <Switch
-            checkedChildren="显示密钥"
-            unCheckedChildren="隐藏密钥"
-            checked={showKeys}
-            onChange={setShowKeys}
-            disabled={!editing}
-          />
-        </Tooltip>
+        {mode === 'single' && (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            点账号卡左侧圆点指定使用哪一个
+          </Typography.Text>
+        )}
       </Space>
 
       {accounts.isError ? (
@@ -172,52 +164,25 @@ export default function Accounts() {
         <Skeleton active paragraph={{ rows: 4 }} />
       ) : (
         <div style={{ display: 'grid', gap: 12 }}>
-          {rows.map((row, i) => {
-            const saved = row.existingIndex !== null ? data?.accounts[row.existingIndex] : undefined;
-            const st =
-              row.existingIndex !== null ? data?.stats[data?.accounts[row.existingIndex]?.name ?? ''] : undefined;
-            const isActive = currentActive === i && currentMode === 'single';
+          {rows.map((a, i) => {
+            const st = data?.stats[a.name];
+            const isActive = active === i && mode === 'single';
             return (
               <Card
-                key={String(i)}
+                key={`${a.name}-${i}`}
                 size="small"
                 style={{ borderColor: isActive ? token.colorPrimaryBorder : undefined }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                  <Tooltip title={currentMode === 'single' ? '单账号模式使用的账号' : '「单账号」模式下才能指定'}>
-                    <Radio
-                      checked={isActive}
-                      disabled={!editing || currentMode !== 'single'}
-                      onChange={() => setActive(i)}
-                    />
+                  <Tooltip title={mode === 'single' ? '单账号模式使用的账号' : '「单账号」模式下才能指定'}>
+                    <Radio checked={isActive} disabled={mode !== 'single'} onChange={() => commit({ active: i })} />
                   </Tooltip>
 
                   <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 8 }}>
-                    {editing ? (
-                      <Input
-                        size="small"
-                        style={{ maxWidth: 220 }}
-                        value={row.name}
-                        placeholder="账号名称"
-                        onChange={(e) => patch(i, { name: e.target.value })}
-                      />
-                    ) : (
-                      <Typography.Text strong>{row.name || '（未命名）'}</Typography.Text>
-                    )}
-                    {editing ? (
-                      <Input.Password
-                        size="small"
-                        style={{ maxWidth: 400 }}
-                        visibilityToggle={{ visible: showKeys }}
-                        placeholder={saved?.hasKey ? `已保存（末 4 位 ${saved.keyTail}），留空保持不变` : 'sk_...'}
-                        value={row.key}
-                        onChange={(e) => patch(i, { key: e.target.value })}
-                      />
-                    ) : (
-                      <Typography.Text code style={{ fontSize: 12 }}>
-                        {saved?.keyMasked ?? '—'}
-                      </Typography.Text>
-                    )}
+                    <Typography.Text strong>{a.name || '（未命名）'}</Typography.Text>
+                    <Typography.Text code style={{ fontSize: 12 }}>
+                      {a.keyMasked}
+                    </Typography.Text>
                   </div>
 
                   <div style={{ display: 'grid', gap: 4, justifyItems: 'end', minWidth: 118 }}>
@@ -234,53 +199,93 @@ export default function Accounts() {
                     )}
                   </div>
 
-                  <Tooltip title="停用后不参与选择">
+                  <Tooltip title={a.enabled ? '已启用：参与账号选择' : '已停用：不参与账号选择'}>
                     <Switch
                       size="small"
-                      checked={row.enabled}
-                      disabled={!editing}
-                      onChange={(v) => patch(i, { enabled: v })}
+                      checked={a.enabled}
+                      onChange={(v) => {
+                        const draft = draftFromServer();
+                        draft[i] = { ...(draft[i] as DraftAccount), enabled: v };
+                        commit({ accounts: draft });
+                      }}
                     />
                   </Tooltip>
 
                   <Space size={4}>
-                    <Button size="small" disabled={!editing} loading={testKey.isPending} onClick={() => testRow(i)}>
+                    <Button size="small" loading={testKey.isPending} onClick={() => testAccount(i, a.name)}>
                       测试
                     </Button>
-                    {editing && (
+                    <Tooltip title="编辑名称与密钥">
                       <Button
                         size="small"
                         type="text"
-                        danger
-                        icon={<DeleteOutlined />}
-                        aria-label="删除账号"
-                        onClick={() => setEditing(rows.filter((_, j) => j !== i))}
+                        icon={<EditOutlined />}
+                        aria-label="编辑账号"
+                        onClick={() => setModal({ index: i, name: a.name, key: '' })}
                       />
-                    )}
+                    </Tooltip>
+                    <Popconfirm
+                      title={`删除账号「${a.name}」？`}
+                      description="删除后其密钥将从配置中移除，无法恢复。"
+                      okText="删除"
+                      okButtonProps={{ danger: true }}
+                      cancelText="取消"
+                      onConfirm={() => removeAccount(i)}
+                    >
+                      <Button size="small" type="text" danger icon={<DeleteOutlined />} aria-label="删除账号" />
+                    </Popconfirm>
                   </Space>
                 </div>
               </Card>
             );
           })}
 
-          {editing && (
-            <Button
-              type="dashed"
-              icon={<PlusOutlined />}
-              style={{ height: 48 }}
-              onClick={() =>
-                setEditing([...rows, { name: `账号${rows.length + 1}`, key: '', enabled: true, existingIndex: null }])
-              }
-            >
-              添加账号
-            </Button>
-          )}
-
-          {!editing && rows.length === 0 && (
-            <Typography.Text type="secondary">还没有账号：点右上角「编辑账号」→「添加账号」。</Typography.Text>
+          {rows.length === 0 && (
+            <Typography.Text type="secondary">
+              还没有账号：点右上角「添加账号」填写 Cline Pass 的 API Key。
+            </Typography.Text>
           )}
         </div>
       )}
+
+      <Modal
+        open={modal !== null}
+        title={modal?.index === null ? '添加账号' : '编辑账号'}
+        okText="保存"
+        cancelText="取消"
+        onOk={submitModal}
+        onCancel={() => setModal(null)}
+        destroyOnHidden
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <div>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              名称
+            </Typography.Text>
+            <Input
+              style={{ marginTop: 4 }}
+              placeholder="如：主力 / 备用"
+              value={modal?.name ?? ''}
+              onChange={(e) => setModal((m) => (m ? { ...m, name: e.target.value } : m))}
+            />
+          </div>
+          <div>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              API Key
+            </Typography.Text>
+            <Input.Password
+              style={{ marginTop: 4 }}
+              placeholder={
+                modal?.index === null
+                  ? 'sk_...'
+                  : `留空保持不变（已存：末 4 位 ${rows[modal?.index ?? 0]?.keyTail ?? ''}）`
+              }
+              value={modal?.key ?? ''}
+              onChange={(e) => setModal((m) => (m ? { ...m, key: e.target.value } : m))}
+            />
+          </div>
+        </Space>
+      </Modal>
     </div>
   );
 }

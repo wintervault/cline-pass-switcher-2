@@ -1,4 +1,5 @@
-import { Alert, Badge, Button, Skeleton, Space, Table, Tag, Tooltip, Typography, theme } from 'antd';
+import { Alert, Badge, Button, Segmented, Skeleton, Space, Table, Tag, Tooltip, Typography, theme } from 'antd';
+import { useState } from 'react';
 
 import { useHistory } from '../api/hooks.ts';
 import type { HistoryEntry, TraceEntry } from '../api/types.ts';
@@ -58,12 +59,15 @@ export default function History() {
   const { token } = theme.useToken();
   const history = useHistory();
   const rows = history.data?.history ?? [];
+  /** 排查场景的快捷筛选：全部 / 成功 / 失败。 */
+  const [view, setView] = useState<'all' | 'ok' | 'fail'>('all');
 
   const okRows = rows.filter((r) => !r.error);
   const failed = rows.length - okRows.length;
   const msList = okRows.map((r) => r.ms).filter((m): m is number => typeof m === 'number');
   const avgMs = msList.length ? Math.round(msList.reduce((a, b) => a + b, 0) / msList.length) : 0;
   const streamPct = rows.length ? Math.round((rows.filter((r) => r.stream).length / rows.length) * 100) : 0;
+  const visible = view === 'all' ? rows : view === 'ok' ? okRows : rows.filter((r) => r.error);
 
   return (
     <div>
@@ -85,19 +89,31 @@ export default function History() {
       ) : (
         <>
           {rows.length > 0 && (
-            <Space size={32} style={{ marginBottom: 16 }} wrap>
-              <Stat label="成功" value={String(okRows.length)} tone={token.colorSuccess} />
-              <Stat label="失败" value={String(failed)} tone={failed ? token.colorError : undefined} />
-              <Stat label="平均耗时" value={`${avgMs}ms`} />
-              <Stat label="流式占比" value={`${streamPct}%`} />
-            </Space>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 32, marginBottom: 16, flexWrap: 'wrap' }}>
+              <Space size={32} wrap>
+                <Stat label="成功" value={String(okRows.length)} tone={token.colorSuccess} />
+                <Stat label="失败" value={String(failed)} tone={failed ? token.colorError : undefined} />
+                <Stat label="平均耗时" value={`${avgMs}ms`} />
+                <Stat label="流式占比" value={`${streamPct}%`} />
+              </Space>
+              <Segmented
+                style={{ marginLeft: 'auto' }}
+                value={view}
+                onChange={(v) => setView(v as typeof view)}
+                options={[
+                  { value: 'all', label: '全部' },
+                  { value: 'ok', label: '成功' },
+                  { value: 'fail', label: '失败' },
+                ]}
+              />
+            </div>
           )}
           <Table<HistoryEntry>
             rowKey={(r) => `${r.ts}-${r.model}-${r.attempts.join('|')}`}
             size="small"
             sticky
             loading={history.isLoading}
-            dataSource={rows}
+            dataSource={visible}
             pagination={{ pageSize: 20, hideOnSinglePage: true }}
             onRow={(r) => ({ style: r.error ? { background: token.colorErrorBg } : undefined })}
             columns={[
@@ -118,7 +134,7 @@ export default function History() {
               },
               { title: '账号', width: 84, render: (_, r) => (r.account ? <Tag color="blue">{r.account}</Tag> : '—') },
               {
-                title: '实际上游',
+                title: '实际渠道',
                 width: 140,
                 render: (_, r) => (
                   <Space size={4} wrap>

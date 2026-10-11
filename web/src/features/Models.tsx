@@ -1,4 +1,4 @@
-import { ArrowDownOutlined, ArrowUpOutlined, DownloadOutlined } from '@ant-design/icons';
+import { ArrowDownOutlined, ArrowUpOutlined, DownloadOutlined, StopOutlined } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
@@ -6,6 +6,7 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Descriptions,
   Empty,
   Select,
@@ -88,7 +89,7 @@ function ModelItem({ row, active, onClick }: { row: SubscriptionRow; active: boo
         )}
         {cfg.upstreams.length > 0 && (
           <Tag color="blue" style={{ margin: 0 }}>
-            优先 {cfg.upstreams.length}
+            使用 {cfg.upstreams.length}
           </Tag>
         )}
         {cfg.exclude.length > 0 && (
@@ -187,13 +188,12 @@ function UpstreamRow({
           </Typography.Text>
         )}
       </div>
-      {excluded ? <Tag color="red">已排除</Tag> : status ? statusTag(status) : null}
-      <Button size="small" type={selected ? 'primary' : 'default'} onClick={toggleSelect}>
-        优先
-      </Button>
-      <Button size="small" danger={excluded} onClick={toggleExclude}>
-        排除
-      </Button>
+      {status ? statusTag(status) : null}
+      <Tooltip title="纳入渠道清单：按序号顺序尝试，异常自动顺切">
+        <Checkbox checked={selected} disabled={excluded} onChange={toggleSelect}>
+          使用
+        </Checkbox>
+      </Tooltip>
       {selected ? (
         <Space size={2}>
           <Button size="small" type="text" icon={<ArrowUpOutlined />} disabled={order <= 0} onClick={() => move(-1)} />
@@ -208,6 +208,15 @@ function UpstreamRow({
       ) : (
         <span style={{ width: 48 }} />
       )}
+      <Tooltip title={excluded ? '取消排除' : '排除：即使网关回退也不使用'}>
+        <Button
+          size="small"
+          type="text"
+          icon={<StopOutlined />}
+          style={{ color: excluded ? token.colorError : undefined }}
+          onClick={toggleExclude}
+        />
+      </Tooltip>
     </div>
   );
 }
@@ -283,7 +292,7 @@ export default function Models() {
     <div>
       <PageHeader
         title="订阅模型"
-        desc="先「探测」拿到渠道清单，再配置优先级与排除；「校验」逐渠道实测可用性。"
+        desc="先「探测渠道」列出可用渠道，勾选「使用」并排好顺序；「校验」逐渠道体检可用性。"
         actions={
           <Space size={8} wrap>
             <Button
@@ -353,21 +362,30 @@ export default function Models() {
                   <Tag color="green">{meta.pipeline === 'planner' ? '规划器 · Vercel' : '直连 · OpenRouter'}</Tag>
                 )}
                 <Space size={8} style={{ marginLeft: 'auto' }}>
-                  <Button size="small" loading={probe.isPending} onClick={runProbe}>
-                    探测
-                  </Button>
-                  <Button size="small" loading={test.isPending} onClick={runTest}>
-                    测试
-                  </Button>
+                  <Tooltip title="发一次探针请求：判断网关是否接受钉住参数，并列出该模型的可用渠道">
+                    <Button size="small" type="primary" loading={probe.isPending} onClick={runProbe}>
+                      探测渠道
+                    </Button>
+                  </Tooltip>
+                  <Tooltip title="按当前配置发一次最小请求，看实际命中哪个渠道">
+                    <Button size="small" loading={test.isPending} onClick={runTest}>
+                      试发一次
+                    </Button>
+                  </Tooltip>
                   <Tooltip
                     title={
                       pinIgnored
                         ? '网关已忽略钉住参数：钉不住时每个渠道都会“成功”，校验结果不可信（先重新探测）'
-                        : '把每个上游渠道各钉一次最小请求，标出可用/限流/不可钉'
+                        : `对清单内每个渠道各发一次最小请求（消耗 ${ups.length} 次最小额度），标注可用 / 限流 / 不可钉`
                     }
                   >
-                    <Button size="small" disabled={pinIgnored} loading={validate.isPending} onClick={runValidate}>
-                      校验
+                    <Button
+                      size="small"
+                      disabled={pinIgnored || ups.length === 0}
+                      loading={validate.isPending}
+                      onClick={runValidate}
+                    >
+                      校验{ups.length ? ` ${ups.length} 个渠道` : ''}
                     </Button>
                   </Tooltip>
                 </Space>
@@ -396,7 +414,7 @@ export default function Models() {
                   },
                   {
                     key: 'last',
-                    label: '最近实际上游',
+                    label: '最近命中渠道',
                     children: meta?.lastProvider ? (
                       <Space size={6}>
                         <Tag color="geekblue" style={{ margin: 0 }}>
@@ -439,61 +457,78 @@ export default function Models() {
                         })
                       }
                     >
-                      全选优先
+                      全部使用
                     </Button>
                     <Button size="small" onClick={() => saveConfig(current.id, { upstreams: [], exclude: [] })}>
-                      清空
+                      清空清单
                     </Button>
                   </Space>
                 }
               >
                 {ups.length ? (
-                  <div style={{ display: 'grid', gap: 4 }}>
-                    {ups.map((u) => (
-                      <UpstreamRow
-                        key={u}
-                        upstream={u}
-                        cfg={cfg}
-                        meta={meta}
-                        onSave={(patch) => saveConfig(current.id, patch)}
-                      />
-                    ))}
-                  </div>
+                  <>
+                    <div style={{ display: 'grid', gap: 4 }}>
+                      {ups.map((u) => (
+                        <UpstreamRow
+                          key={u}
+                          upstream={u}
+                          cfg={cfg}
+                          meta={meta}
+                          onSave={(patch) => saveConfig(current.id, patch)}
+                        />
+                      ))}
+                    </div>
+                    <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 12 }}>
+                      勾选「使用」的渠道按序号依次尝试，异常自动顺切；标「排除」的渠道即使网关回退也不使用。
+                    </Typography.Text>
+                  </>
                 ) : (
                   <Empty
                     image={Empty.PRESENTED_IMAGE_SIMPLE}
-                    description={pinIgnored ? '钉住参数被忽略，渠道清单不可信' : '尚未探测到渠道，点上方「探测」'}
+                    description={pinIgnored ? '钉住参数被忽略，渠道清单不可信' : '尚未探测到渠道，点上方「探测渠道」'}
                   />
                 )}
               </Card>
 
               <Card size="small" title="路由策略">
-                <Space size={12} wrap align="center">
-                  <Select
-                    style={{ width: 160 }}
-                    value={cfg.pinMode}
-                    onChange={(v) => saveConfig(current.id, { pinMode: v })}
-                    options={[
-                      { value: 'strict', label: '严格钉住' },
-                      { value: 'preferred', label: '优先 + 回退' },
-                    ]}
-                  />
-                  <Select
-                    style={{ width: 160 }}
-                    value={cfg.sort ?? ''}
-                    onChange={(v) => saveConfig(current.id, { sort: (v || null) as SortKey | null })}
-                    options={[
-                      { value: '', label: '网关智能选' },
-                      { value: 'cost', label: '最低成本' },
-                      { value: 'ttft', label: '最快首字' },
-                      { value: 'tps', label: '最高吞吐' },
-                    ]}
-                  />
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    「优先」按序尝试（异常自动顺切）；「排除」永不使用。 严格钉住 =
-                    只走清单内渠道，网关不听话视为失败并切换；优先 + 回退 = 仅最后一个候选放开网关选择。
-                  </Typography.Text>
-                </Space>
+                <div style={{ display: 'grid', gap: 12 }}>
+                  <Space size={12} align="center" wrap>
+                    <Typography.Text type="secondary" style={{ width: 72, textAlign: 'right' }}>
+                      钉住模式
+                    </Typography.Text>
+                    <Select
+                      style={{ width: 180 }}
+                      value={cfg.pinMode}
+                      onChange={(v) => saveConfig(current.id, { pinMode: v })}
+                      options={[
+                        { value: 'strict', label: '严格钉住' },
+                        { value: 'preferred', label: '优先 + 回退' },
+                      ]}
+                    />
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      严格钉住：只走清单内渠道，网关不听话视为失败并切换；优先 + 回退：仅最后一个候选放开网关选择
+                    </Typography.Text>
+                  </Space>
+                  <Space size={12} align="center" wrap>
+                    <Typography.Text type="secondary" style={{ width: 72, textAlign: 'right' }}>
+                      渠道排序
+                    </Typography.Text>
+                    <Select
+                      style={{ width: 180 }}
+                      value={cfg.sort ?? ''}
+                      onChange={(v) => saveConfig(current.id, { sort: (v || null) as SortKey | null })}
+                      options={[
+                        { value: '', label: '网关智能选' },
+                        { value: 'cost', label: '最低成本' },
+                        { value: 'ttft', label: '最快首字' },
+                        { value: 'tps', label: '最高吞吐' },
+                      ]}
+                    />
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      多个可用渠道之间的执行顺序偏好
+                    </Typography.Text>
+                  </Space>
+                </div>
               </Card>
             </div>
           )}
