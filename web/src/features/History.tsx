@@ -1,4 +1,19 @@
-import { Alert, Badge, Button, Segmented, Skeleton, Space, Table, Tag, Tooltip, Typography, theme } from 'antd';
+import { CopyOutlined } from '@ant-design/icons';
+import {
+  Alert,
+  App,
+  Badge,
+  Button,
+  Empty,
+  Segmented,
+  Skeleton,
+  Space,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+  theme,
+} from 'antd';
 import { useState } from 'react';
 
 import { useHistory } from '../api/hooks.ts';
@@ -56,6 +71,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: str
 }
 
 export default function History() {
+  const { message } = App.useApp();
   const { token } = theme.useToken();
   const history = useHistory();
   const rows = history.data?.history ?? [];
@@ -114,6 +130,11 @@ export default function History() {
             sticky
             loading={history.isLoading}
             dataSource={visible}
+            locale={{
+              emptyText: (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无请求记录：agent 发出请求后会出现在这里" />
+              ),
+            }}
             pagination={{ pageSize: 20, hideOnSinglePage: true }}
             onRow={(r) => ({ style: r.error ? { background: token.colorErrorBg } : undefined })}
             columns={[
@@ -169,6 +190,26 @@ export default function History() {
                   ) : (
                     <TraceChain trace={r.trace} attempts={r.attempts} />
                   ),
+              },
+              {
+                title: '',
+                width: 44,
+                render: (_, r) => (
+                  <Tooltip title="复制这条请求的完整信息（排查时贴给别人看）">
+                    <Button
+                      size="small"
+                      type="text"
+                      icon={<CopyOutlined />}
+                      aria-label="复制请求详情"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(JSON.stringify(r, null, 2)).then(
+                          () => message.success('已复制到剪贴板'),
+                          () => message.error('复制失败（剪贴板不可用）'),
+                        );
+                      }}
+                    />
+                  </Tooltip>
+                ),
               },
             ]}
           />

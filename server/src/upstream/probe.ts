@@ -319,6 +319,13 @@ export class ProbeService {
           results[slug] = { status, ms: Date.now() - started, note };
         }),
       );
+      // 渐进式：每批完成就把中间结果写入观测数据——前端在校验期间轮询，
+      // 渠道状态逐个亮起，长清单的等待从黑盒变可见
+      const progressive = this.#deps.getMeta(modelId);
+      if (progressive) {
+        progressive.upstreamStatus = { ...progressive.upstreamStatus, ...results };
+        this.#deps.setMeta(modelId, progressive);
+      }
     }
 
     const updated = this.#deps.getMeta(modelId);

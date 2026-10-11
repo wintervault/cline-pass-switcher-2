@@ -7,7 +7,7 @@ import type { ReactNode } from 'react';
  */
 export function PageHeader({ title, desc, actions }: { title: ReactNode; desc?: ReactNode; actions?: ReactNode }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, marginBottom: 24 }}>
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
       <div style={{ minWidth: 0 }}>
         <Typography.Title level={3} style={{ margin: 0 }}>
           {title}

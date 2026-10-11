@@ -5,6 +5,7 @@ import {
   App,
   Button,
   Card,
+  Empty,
   Input,
   Modal,
   Popconfirm,
@@ -241,7 +242,16 @@ export default function Accounts() {
                   </Tooltip>
 
                   <Space size={4}>
-                    <Button size="small" loading={testKey.isPending} onClick={() => testAccount(i, a.name)}>
+                    <Button
+                      size="small"
+                      loading={
+                        testKey.isPending &&
+                        testKey.variables !== undefined &&
+                        'index' in testKey.variables &&
+                        testKey.variables.index === i
+                      }
+                      onClick={() => testAccount(i, a.name)}
+                    >
                       测试
                     </Button>
                     <Tooltip title="编辑名称与密钥">
@@ -270,9 +280,18 @@ export default function Accounts() {
           })}
 
           {rows.length === 0 && (
-            <Typography.Text type="secondary">
-              还没有账号：点右上角「添加账号」填写 Cline Pass 的 API Key。
-            </Typography.Text>
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description="还没有账号：添加 Cline Pass 的 API Key 后即可开始代理"
+            >
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => setModal({ index: null, name: '', key: '' })}
+              >
+                添加账号
+              </Button>
+            </Empty>
           )}
         </div>
       )}

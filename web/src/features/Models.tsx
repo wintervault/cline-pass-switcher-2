@@ -1,4 +1,4 @@
-import { ArrowDownOutlined, ArrowUpOutlined, DownloadOutlined, StopOutlined } from '@ant-design/icons';
+import { ArrowDownOutlined, ArrowUpOutlined, DownloadOutlined, SearchOutlined, StopOutlined } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
@@ -9,6 +9,7 @@ import {
   Checkbox,
   Descriptions,
   Empty,
+  Input,
   Select,
   Skeleton,
   Space,
@@ -17,7 +18,7 @@ import {
   Typography,
   theme,
 } from 'antd';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { qk, useFetchOfficial, useModels, useProbe, useSaveModelConfig, useTest, useValidate } from '../api/hooks.ts';
 import {
   type ModelMeta,
@@ -232,10 +233,12 @@ export default function Models() {
   const fetchOfficial = useFetchOfficial();
   const [fetchNote, setFetchNote] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [modelFilter, setModelFilter] = useState('');
 
   const rows = models.data?.subscription ?? [];
   const official = models.data?.officialFetch ?? null;
   const current = rows.find((r) => r.id === selectedId) ?? rows[0] ?? null;
+  const filteredRows = rows.filter((r) => !modelFilter || r.id.toLowerCase().includes(modelFilter.toLowerCase()));
 
   const saveConfig = (modelId: string, patch: Partial<PerModelConfig>) => {
     const currentCfg = rows.find((r) => r.id === modelId)?.config ?? EMPTY_CFG;
@@ -248,6 +251,13 @@ export default function Models() {
     );
     save.mutate({ modelId, config: merged });
   };
+
+  // 校验进行中时轮询：服务端每批校验会渐进写入渠道状态，2 秒一拉让进度可见
+  useEffect(() => {
+    if (!validate.isPending) return;
+    const timer = setInterval(() => void qc.invalidateQueries({ queryKey: qk.models }), 2000);
+    return () => clearInterval(timer);
+  }, [validate.isPending, qc]);
 
   const cfg = current?.config ?? EMPTY_CFG;
   const meta = current?.meta ?? null;
@@ -344,18 +354,37 @@ export default function Models() {
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无订阅模型：点右上角「拉取官方最新模型」同步清单" />
       ) : (
         <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
-          {/* 左：模型列表（常驻可见，状态一屏扫完） */}
-          <div style={{ width: 292, flexShrink: 0, display: 'grid', gap: 8, position: 'sticky', top: 0 }}>
-            {rows.map((r) => (
-              <ModelItem key={r.id} row={r} active={current?.id === r.id} onClick={() => setSelectedId(r.id)} />
-            ))}
+          {/* 左：模型列表（常驻可见，状态一屏扫完；多项可过滤、超出高度自滚） */}
+          <div style={{ width: 292, flexShrink: 0, position: 'sticky', top: 0 }}>
+            <Input
+              style={{ marginBottom: 8 }}
+              prefix={<SearchOutlined />}
+              allowClear
+              placeholder="过滤模型…"
+              value={modelFilter}
+              onChange={(e) => setModelFilter(e.target.value)}
+            />
+            <div style={{ display: 'grid', gap: 8, maxHeight: 'calc(100vh - 250px)', overflow: 'auto' }}>
+              {filteredRows.map((r) => (
+                <ModelItem key={r.id} row={r} active={current?.id === r.id} onClick={() => setSelectedId(r.id)} />
+              ))}
+              {filteredRows.length === 0 && (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  无匹配模型
+                </Typography.Text>
+              )}
+            </div>
           </div>
 
           {/* 右：详情与渠道配置 */}
           {current && (
             <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 16 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                <Typography.Title level={4} style={{ margin: 0 }}>
+                <Typography.Title
+                  level={4}
+                  style={{ margin: 0 }}
+                  copyable={{ text: current.id, tooltips: ['复制模型 ID', '已复制'] }}
+                >
                   {current.id}
                 </Typography.Title>
                 {meta?.pinnable && (
@@ -385,7 +414,7 @@ export default function Models() {
                       loading={validate.isPending}
                       onClick={runValidate}
                     >
-                      校验{ups.length ? ` ${ups.length} 个渠道` : ''}
+                      {validate.isPending ? '校验中…' : `校验${ups.length ? ` ${ups.length} 个渠道` : ''}`}
                     </Button>
                   </Tooltip>
                 </Space>
