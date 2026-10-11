@@ -72,8 +72,8 @@ export default function Accounts() {
   const draftFromServer = (): DraftAccount[] =>
     rows.map((a, i) => ({ name: a.name, key: '', enabled: a.enabled, existingIndex: i }));
 
-  /** 就地保存：只改传入的字段，其余保持服务端当前值。 */
-  const commit = (next: { accounts?: DraftAccount[]; mode?: AccountMode; active?: number }): void => {
+  /** 就地保存：只改传入的字段，其余保持服务端当前值。note 是给用户的回执文案。 */
+  const commit = (next: { accounts?: DraftAccount[]; mode?: AccountMode; active?: number }, note: string): void => {
     const nextAccounts = next.accounts ?? draftFromServer();
     const nextMode = next.mode ?? mode;
     const nextActive = next.active ?? active;
@@ -101,23 +101,11 @@ export default function Accounts() {
           }
         : old,
     );
-    save.mutate(
-      { accounts: nextAccounts, mode: nextMode, active: nextActive },
-      { onError: (e) => message.error(`保存失败：${String(e)}`) },
-    );
+    save.mutate({ payload: { accounts: nextAccounts, mode: nextMode, active: nextActive }, note });
   };
 
   const testAccount = (i: number, name: string): void => {
-    testKey.mutate(
-      { index: i },
-      {
-        onSuccess: (r) =>
-          r.ok
-            ? message.success(`${name} 可用（${r.ms}ms）${r.note ?? ''}`)
-            : message.error(`${name} 不可用：${r.error}`),
-        onError: (e) => message.error(String(e)),
-      },
-    );
+    testKey.mutate({ payload: { index: i }, label: name });
   };
 
   const submitModal = (): void => {
@@ -129,20 +117,22 @@ export default function Accounts() {
       return;
     }
     const draft = draftFromServer();
+    const editing = modal.index !== null;
     if (modal.index === null) {
       draft.push({ name, key, enabled: true, existingIndex: null });
     } else {
       draft[modal.index] = { ...(draft[modal.index] as DraftAccount), name, key };
     }
-    commit({ accounts: draft });
+    commit({ accounts: draft }, editing ? `已更新账号「${name}」` : `已添加账号「${name}」`);
     setModal(null);
   };
 
   const removeAccount = (i: number): void => {
+    const name = rows[i]?.name ?? '账号';
     const draft = draftFromServer().filter((_, j) => j !== i);
     // 删除后激活下标可能越界：删的是前面的行或当前行时向前收一位
     const nextActive = i <= active ? Math.max(0, active - 1) : active;
-    commit({ accounts: draft, active: nextActive });
+    commit({ accounts: draft, active: nextActive }, `已删除账号「${name}」`);
   };
 
   return (
@@ -164,7 +154,16 @@ export default function Accounts() {
         <Select
           style={{ width: 250 }}
           value={mode}
-          onChange={(v) => commit({ mode: v })}
+          onChange={(v) =>
+            commit(
+              { mode: v },
+              {
+                sticky: '已切换为粘性模式：保住上游 prompt cache',
+                single: '已切换为单账号模式：由你手动指定使用哪一个',
+                roundrobin: '已切换为每请求轮转（会牺牲 prompt cache）',
+              }[v as AccountMode],
+            )
+          }
           options={[
             { value: 'sticky', label: '粘性（推荐 · 保 prompt cache）' },
             { value: 'single', label: '单账号（手动指定）' },
@@ -205,7 +204,11 @@ export default function Accounts() {
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                   <Tooltip title={mode === 'single' ? '单账号模式使用的账号' : '「单账号」模式下才能指定'}>
-                    <Radio checked={isActive} disabled={mode !== 'single'} onChange={() => commit({ active: i })} />
+                    <Radio
+                      checked={isActive}
+                      disabled={mode !== 'single'}
+                      onChange={() => commit({ active: i }, `已指定「${a.name}」为当前使用的账号`)}
+                    />
                   </Tooltip>
 
                   <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 8 }}>
@@ -236,7 +239,7 @@ export default function Accounts() {
                       onChange={(v) => {
                         const draft = draftFromServer();
                         draft[i] = { ...(draft[i] as DraftAccount), enabled: v };
-                        commit({ accounts: draft });
+                        commit({ accounts: draft }, v ? `已启用「${a.name}」` : `已停用「${a.name}」`);
                       }}
                     />
                   </Tooltip>
@@ -247,8 +250,8 @@ export default function Accounts() {
                       loading={
                         testKey.isPending &&
                         testKey.variables !== undefined &&
-                        'index' in testKey.variables &&
-                        testKey.variables.index === i
+                        'index' in testKey.variables.payload &&
+                        testKey.variables.payload.index === i
                       }
                       onClick={() => testAccount(i, a.name)}
                     >

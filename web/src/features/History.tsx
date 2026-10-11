@@ -1,7 +1,6 @@
 import { CopyOutlined, ReloadOutlined } from '@ant-design/icons';
 import {
   Alert,
-  App,
   Badge,
   Button,
   Empty,
@@ -19,6 +18,7 @@ import { useEffect, useState } from 'react';
 
 import { useHistory } from '../api/hooks.ts';
 import type { HistoryEntry, TraceEntry } from '../api/types.ts';
+import { useFeedback } from '../feedback.ts';
 import { GAP_SECTION } from '../layout.ts';
 import { PageHeader } from '../pageHeader.tsx';
 
@@ -98,13 +98,17 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: str
 }
 
 export default function History() {
-  const { message } = App.useApp();
   const { token } = theme.useToken();
+  const fb = useFeedback();
   const history = useHistory();
   const rows = history.data?.history ?? [];
   /** 排查场景的快捷筛选：全部 / 成功 / 失败。 */
   const [view, setView] = useState<'all' | 'ok' | 'fail'>('all');
-  const [interval, setIntervalMs] = useState(0);
+  /**
+   * 自动刷新默认开（5 秒）：这一页是排查用的，边改配置边看请求效果时，
+   * 手动刷新纯属浪费动作。想安静看历史就切「关」。
+   */
+  const [interval, setIntervalMs] = useState(5_000);
 
   // 自动刷新：轮询时保持上一次数据可见（isFetching 而非 isLoading），不闪白
   useEffect(() => {
@@ -156,7 +160,12 @@ export default function History() {
                   <Button
                     size="small"
                     icon={<ReloadOutlined spin={history.isFetching} />}
-                    onClick={() => void history.refetch()}
+                    onClick={() => {
+                      void history.refetch().then((r) => {
+                        if (r.isError) fb.fail('刷新失败', r.error);
+                        else fb.ok(`已刷新：共 ${r.data?.history.length ?? 0} 条记录`);
+                      });
+                    }}
                   />
                 </Tooltip>
                 <Select
@@ -185,7 +194,9 @@ export default function History() {
             sticky
             loading={history.isLoading}
             dataSource={visible}
-            scroll={{ x: 1000 }}
+            /* 940 = 各定宽列之和 + 尝试序列的下限。定在 1000 时，用户那台
+               （125% 缩放后内容区约 998px）会为 2px 溢出一条横向滚动条。 */
+            scroll={{ x: 940 }}
             locale={{
               emptyText: (
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无请求记录：agent 发出请求后会出现在这里" />
@@ -208,7 +219,7 @@ export default function History() {
               {
                 title: '模型',
                 dataIndex: 'model',
-                width: 230,
+                width: 216,
                 className: 'cps-nowrap',
                 render: (v: string) => (
                   <Typography.Text
@@ -220,7 +231,7 @@ export default function History() {
                   </Typography.Text>
                 ),
               },
-              { title: '账号', width: 168, render: (_, r) => <AccountCell account={r.account} /> },
+              { title: '账号', width: 156, render: (_, r) => <AccountCell account={r.account} /> },
               {
                 title: '实际渠道',
                 width: 132,
@@ -278,8 +289,8 @@ export default function History() {
                       aria-label="复制请求详情"
                       onClick={() => {
                         void navigator.clipboard.writeText(JSON.stringify(r, null, 2)).then(
-                          () => message.success('已复制到剪贴板'),
-                          () => message.error('复制失败（剪贴板不可用）'),
+                          () => fb.copy('这条请求的完整信息'),
+                          () => fb.fail('复制失败', '剪贴板不可用'),
                         );
                       }}
                     />

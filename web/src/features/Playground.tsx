@@ -1,7 +1,6 @@
 import { CopyOutlined, PlayCircleOutlined, SettingOutlined } from '@ant-design/icons';
 import {
   Alert,
-  App,
   Badge,
   Button,
   Card,
@@ -22,6 +21,7 @@ import { useState } from 'react';
 import { useModels, useSaveModelConfig, useTest } from '../api/hooks.ts';
 import type { ModelMeta, PerModelConfig, TestResult, TraceEntry } from '../api/types.ts';
 import { STATUS_TAG } from '../api/types.ts';
+import { useFeedback } from '../feedback.ts';
 import { GAP_SECTION } from '../layout.ts';
 import { PageHeader } from '../pageHeader.tsx';
 
@@ -34,13 +34,9 @@ import { PageHeader } from '../pageHeader.tsx';
  */
 function RoutingPanel({ model, cfg, meta }: { model: string; cfg: PerModelConfig; meta: ModelMeta | null }) {
   const save = useSaveModelConfig();
-  const { message } = App.useApp();
 
   const patch = (next: Partial<PerModelConfig>, note: string): void => {
-    save.mutate(
-      { modelId: model, config: { ...cfg, ...next } },
-      { onSuccess: () => message.success(note), onError: (e) => message.error(String(e)) },
-    );
+    save.mutate({ modelId: model, config: { ...cfg, ...next }, note });
   };
 
   const order = cfg.upstreams;
@@ -239,7 +235,7 @@ function TraceTable({ trace, targets }: { trace?: TraceEntry[]; targets: string[
 export default function Playground() {
   const models = useModels();
   const test = useTest();
-  const { message } = App.useApp();
+  const fb = useFeedback();
   const { token } = theme.useToken();
   const [model, setModel] = useState('');
   const [upstream, setUpstream] = useState('');
@@ -258,16 +254,11 @@ export default function Playground() {
 
   const run = (): void => {
     if (!active) {
-      message.warning('请选择模型');
+      fb.fail('请先选择模型');
       return;
     }
-    test.mutate(
-      { model: active, upstreams: upstream ? [upstream] : [], exclude: [] },
-      {
-        onSuccess: (r) => setResult(r),
-        onError: (e) => message.error(String(e)),
-      },
-    );
+    // 成功/失败的回执由 useTest 统一给出，这里只负责把结果放进结果区
+    test.mutate({ model: active, upstreams: upstream ? [upstream] : [], exclude: [] }, { onSuccess: setResult });
   };
 
   const hit =
@@ -380,8 +371,8 @@ export default function Playground() {
                 aria-label="复制测试结果"
                 onClick={() =>
                   void navigator.clipboard.writeText(JSON.stringify(result, null, 2)).then(
-                    () => message.success('已复制'),
-                    () => message.error('复制失败'),
+                    () => fb.copy('测试结果'),
+                    () => fb.fail('复制失败', '剪贴板不可用'),
                   )
                 }
               />

@@ -106,16 +106,16 @@ body {
 }
 
 /* ---------- 设置行（访问与安全等表单页的统一栅格） ----------
-   左标签固定列宽、右控件铺满剩余：控件左侧对齐，说明文字有确定位置。
-   窄窗口下改为上下堆叠（标签在上），避免标签列把控件挤成一条。 */
+   左标签固定列宽、右控件铺满剩余；**说明文字挂在控件下方**（整行宽度，不会
+   因为标签列窄而折成四行）。窄窗口下改为上下堆叠。 */
 .cps-field {
   display: grid;
-  grid-template-columns: 116px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 16px;
   align-items: start;
 }
 .cps-field-label {
-  padding-top: 5px;
+  padding-top: 6px;
 }
 .cps-field-body {
   min-width: 0;
@@ -128,6 +128,25 @@ body {
   .cps-field-label {
     padding-top: 0;
   }
+}
+
+/* 一行式提示（比 Alert 紧凑得多）：用于「状态已知但需要提醒」的场合，
+   例如网关忽略钉住参数——它不该占掉四行高度把主内容挤出首屏。 */
+.cps-notice {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 20px;
+  padding: 5px 12px;
+  border-radius: var(--ant-border-radius);
+  cursor: default;
+  width: fit-content;
+}
+.cps-notice-warn {
+  color: var(--ant-color-warning-text);
+  background: var(--ant-color-warning-bg);
+  border: 1px solid var(--ant-color-warning-border);
 }
 
 /* 表格：模型名 / 账号 / 渠道这类标识列不允许折行（折了行高参差，扫读变慢） */

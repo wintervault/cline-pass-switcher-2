@@ -1,40 +1,48 @@
 import { DeleteOutlined, EyeInvisibleOutlined, EyeTwoTone, SaveOutlined } from '@ant-design/icons';
-import { App, Button, Divider, Input, Popconfirm, Space, Switch, Tag, Typography, theme } from 'antd';
+import { App, Button, Input, Popconfirm, Space, Switch, Tag, Tooltip, Typography, theme } from 'antd';
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 
-import { useMeta, useSaveSecurity, useSecurity } from '../api/hooks.ts';
+import { useMeta, useSaveExposeCatalog, useSaveSecurity, useSecurity } from '../api/hooks.ts';
+import { useFeedback } from '../feedback.ts';
 import { GAP_SECTION } from '../layout.ts';
 import { PageHeader, SectionTitle } from '../pageHeader.tsx';
 
 /**
- * 设置行的统一版式：左标签（固定宽） + 右控件（弹性）。
+ * 设置项的统一版式：左标签 + 右控件，说明文字挂在**控件下方**。
  *
- * 上一版每块自己定控件宽度（480 / 480 / 480），说明文字与控件左右不对齐，
- * 窗口一放大整页就散。现在只有这一个栅格：标签列宽固定，控件列统一铺满。
+ * 说明挂在标签下方时，标签列宽一窄就折成四行（真实反馈里的「水平差」）。
+ * 挂在控件下方则是整行宽度，怎么窄都不会挤——这是本页唯一的栅格。
  */
 function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   return (
     <div className="cps-field">
       <div className="cps-field-label">
         <Typography.Text style={{ fontSize: 13 }}>{label}</Typography.Text>
+      </div>
+      <div className="cps-field-body">
+        <div>{children}</div>
         {hint && (
-          <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
+          <Typography.Text
+            type="secondary"
+            style={{ fontSize: 12, lineHeight: '18px', display: 'block', marginTop: 6 }}
+          >
             {hint}
           </Typography.Text>
         )}
       </div>
-      <div className="cps-field-body">{children}</div>
     </div>
   );
 }
 
 export default function Security() {
-  const { message } = App.useApp();
   const { token } = theme.useToken();
   const security = useSecurity();
   const meta = useMeta();
   const save = useSaveSecurity();
+  const saveExpose = useSaveExposeCatalog();
+  const fb = useFeedback();
+  const { message } = App.useApp();
   const [proxyKey, setProxyKey] = useState('');
   const [publicBase, setPublicBase] = useState('');
   const [corsOrigins, setCorsOrigins] = useState('');
@@ -45,9 +53,20 @@ export default function Security() {
     setCorsOrigins(security.data.corsOrigins.join('\n'));
   }, [security.data]);
 
+  const data = security.data;
+  /** 未保存的改动：只在真的改了东西时才让保存按钮可用（避免「点了没反应」的错觉）。 */
+  const dirty =
+    proxyKey.trim().length > 0 ||
+    (data !== undefined && publicBase !== data.publicBaseUrl) ||
+    (data !== undefined && corsOrigins !== data.corsOrigins.join('\n'));
+
   const persist = (): void => {
-    save.mutate(
-      {
+    if (!dirty) {
+      fb.info('没有需要保存的改动');
+      return;
+    }
+    save.mutate({
+      payload: {
         proxyKey: proxyKey.trim(),
         publicBaseUrl: publicBase.trim(),
         corsOrigins: corsOrigins
@@ -55,36 +74,34 @@ export default function Security() {
           .map((s) => s.trim())
           .filter(Boolean),
       },
-      {
-        onSuccess: () => {
-          message.success('已保存（密钥留空 = 保持不变）');
-          setProxyKey('');
-        },
-        onError: (e) => message.error(`保存失败：${String(e)}`),
-      },
-    );
+      note: proxyKey.trim() ? '已保存：API Key 已更新，客户端需同步更换' : '安全设置已保存',
+    });
+    setProxyKey('');
   };
 
-  const data = security.data;
   const accessBase = meta.data?.proxyBase ?? '—';
 
   return (
-    <div style={{ maxWidth: 760 }}>
-      <PageHeader title="访问与安全" desc="下游怎么连、用什么密钥连、跨源怎么放行。低频配置，改完点保存。" />
+    <div>
+      <PageHeader
+        title="访问与安全"
+        desc="下游客户端怎么连、用什么密钥连、跨源怎么放行。低频配置，改完点右上角保存。"
+        actions={
+          <Space size={8}>
+            {dirty && (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                有未保存的改动
+              </Typography.Text>
+            )}
+            <Button type="primary" icon={<SaveOutlined />} disabled={!dirty} loading={save.isPending} onClick={persist}>
+              保存
+            </Button>
+          </Space>
+        }
+      />
 
-      {/* 接入区：地址与密钥是同一个问题的两面，放在一起才读得懂 */}
-      <div
-        style={{
-          border: `1px solid ${token.colorBorderSecondary}`,
-          borderLeft: `3px solid ${token.colorPrimary}`,
-          borderRadius: token.borderRadiusLG,
-          background: token.colorBgContainer,
-          padding: 20,
-          marginBottom: GAP_SECTION,
-          display: 'grid',
-          gap: 18,
-        }}
-      >
+      <SectionTitle title="接入" />
+      <div style={{ display: 'grid', gap: 18, marginBottom: GAP_SECTION }}>
         <Field label="接入地址" hint="下游客户端（Cline / 任意 OpenAI 兼容工具）填这个 Base URL">
           <Input
             readOnly
@@ -97,66 +114,74 @@ export default function Security() {
                 复制
               </Typography.Text>
             }
-            style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 13 }}
+            style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 13, maxWidth: 460 }}
           />
         </Field>
 
-        <Field label="访问密钥" hint="客户端请求头带上：Authorization: Bearer <密钥>">
+        <Field
+          label="API Key"
+          hint={
+            <span>
+              下游客户端访问代理时带上它（
+              <Typography.Text code style={{ fontSize: 12 }}>
+                Authorization: Bearer &lt;API Key&gt;
+              </Typography.Text>
+              ）。
+              <b> 只保护 /v1 代理端点</b>；本机打开这个控制台不需要它——控制台是机器主人的工具，
+              不会用一把下发给客户端的密钥把你锁在门外。
+            </span>
+          }
+        >
           <div style={{ display: 'grid', gap: 8 }}>
-            <Space size={8} align="center" wrap>
-              {data?.authRequired ? (
+            {/* 状态与销毁动作同一行：把「清除」从输入框下方挪开，纵向只剩三段（状态 / 输入 / 说明） */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, maxWidth: 460 }}>
+              {data?.hasProxyKey ? (
                 <Tag color="green" style={{ margin: 0 }}>
-                  鉴权已开启
+                  已设置：客户端必须带密钥
                 </Tag>
               ) : (
                 <Tag color="orange" style={{ margin: 0 }}>
-                  未开启（仅限本机绑定）
+                  未设置：本机可用，公网部署请务必设置
                 </Tag>
               )}
-              {data?.hasProxyKey ? (
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  已设置密钥；输入新值可覆盖，留空保持不变
-                </Typography.Text>
-              ) : (
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  尚未设置——下游无需密钥即可访问（只有本机可达时是安全的）
-                </Typography.Text>
+              {data?.hasProxyKey && (
+                <Popconfirm
+                  title="清除 API Key？"
+                  description="清除后下游客户端无需密钥即可调用代理（仅本机绑定时安全）；公网部署不要这样做。"
+                  okText="清除"
+                  okButtonProps={{ danger: true }}
+                  cancelText="取消"
+                  onConfirm={() =>
+                    save.mutate({ payload: { proxyKey: null }, note: 'API Key 已清除：下游客户端不再需要密钥' })
+                  }
+                >
+                  <Button size="small" danger type="text" icon={<DeleteOutlined />} style={{ marginLeft: 'auto' }}>
+                    清除密钥
+                  </Button>
+                </Popconfirm>
               )}
-            </Space>
+            </div>
             <Space.Compact style={{ width: '100%', maxWidth: 460 }}>
               <Input.Password
-                placeholder={data?.hasProxyKey ? '留空保持不变' : '设置一把密钥（建议 24 位以上随机串）'}
+                placeholder={
+                  data?.hasProxyKey ? '留空 = 保持不变；输入新值可覆盖' : '设置一把密钥（建议 24 位以上随机串）'
+                }
                 value={proxyKey}
                 onChange={(e) => setProxyKey(e.target.value)}
                 iconRender={(visible) => (visible ? <EyeTwoTone /> : <EyeInvisibleOutlined />)}
               />
               <Button
                 disabled={!proxyKey.trim()}
-                onClick={() =>
-                  void navigator.clipboard?.writeText(proxyKey.trim()).then(() => message.success('已复制'))
-                }
+                onClick={() => {
+                  void navigator.clipboard?.writeText(proxyKey.trim()).then(
+                    () => fb.copy('API Key '),
+                    () => message.error('复制失败（剪贴板不可用）'),
+                  );
+                }}
               >
                 复制
               </Button>
             </Space.Compact>
-            {data?.hasProxyKey && (
-              <div>
-                <Popconfirm
-                  title="清除代理密钥？"
-                  description="清除后代理不再鉴权（仅回环绑定时安全）；公网部署不要这样做。"
-                  okText="清除"
-                  okButtonProps={{ danger: true }}
-                  cancelText="取消"
-                  onConfirm={() =>
-                    save.mutate({ proxyKey: null }, { onSuccess: () => message.success('密钥已清除（代理不再鉴权）') })
-                  }
-                >
-                  <Button size="small" danger type="text" icon={<DeleteOutlined />}>
-                    清除密钥
-                  </Button>
-                </Popconfirm>
-              </div>
-            )}
           </div>
         </Field>
       </div>
@@ -171,7 +196,10 @@ export default function Security() {
             onChange={(e) => setPublicBase(e.target.value)}
           />
         </Field>
-        <Field label="CORS 白名单" hint="每行一个 Origin；留空 = 不发跨域头（同源足够）">
+        <Field
+          label="CORS 白名单"
+          hint="每行一个 Origin。留空 = 不发跨域头（同源访问已经够用）；白名单外的跨源写请求会被直接拒绝（防本地 CSRF），非浏览器客户端不受影响。"
+        >
           <Input.TextArea
             rows={3}
             style={{ maxWidth: 460 }}
@@ -182,28 +210,25 @@ export default function Security() {
         </Field>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: GAP_SECTION }}>
-        <Button type="primary" icon={<SaveOutlined />} loading={save.isPending} onClick={persist}>
-          保存修改
-        </Button>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          公网地址与 CORS 白名单一起保存
-        </Typography.Text>
-      </div>
-
-      <Divider style={{ margin: `0 0 ${GAP_SECTION}px` }} />
-
       <SectionTitle title="目录暴露" />
-      <Field label="/v1/models" hint="开关即时生效，无需保存">
+      <Field label="/v1/models" hint="开关即时生效，不需要点保存">
         <Space align="center">
           <Switch
             checked={data?.exposeCatalog ?? false}
-            onChange={(v) => save.mutate({ exposeCatalog: v })}
-            loading={save.isPending}
+            onChange={(v) => saveExpose.mutate(v)}
+            loading={saveExpose.isPending}
           />
-          <Typography.Text style={{ fontSize: 13 }}>
-            {data?.exposeCatalog ? '已开启：/v1/models 返回完整目录' : '已关闭：只返回订阅模型（推荐）'}
-          </Typography.Text>
+          <Tooltip
+            title={
+              data?.exposeCatalog
+                ? '任何拿到接入地址的人都能看到你的完整模型目录'
+                : '下游只看到你在「订阅模型」里配置过的模型'
+            }
+          >
+            <Typography.Text style={{ fontSize: 13, borderBottom: `1px dashed ${token.colorBorder}` }}>
+              {data?.exposeCatalog ? '已开启：返回完整目录' : '已关闭：只返回订阅模型（推荐）'}
+            </Typography.Text>
+          </Tooltip>
         </Space>
       </Field>
     </div>

@@ -16,6 +16,47 @@ interface ProbeOutcome {
   pinState?: PinState;
 }
 
+/** 探测结果标签：管线 + **探测到的渠道名**。
+ *  只显示「2 渠道」等于没说——用户探测就是为了知道背后是哪几个渠道。 */
+function ProbeTags({ p }: { p: ProbeOutcome }) {
+  if (!p.ok) {
+    return (
+      <Tooltip title={p.error}>
+        <Tag color="red" style={{ margin: 0 }}>
+          探测失败
+        </Tag>
+      </Tooltip>
+    );
+  }
+  const ups = p.upstreams ?? [];
+  const shown = ups.slice(0, 3);
+  return (
+    <Space size={4} wrap>
+      <Tag color="green" style={{ margin: 0 }}>
+        {p.pipeline === 'planner' ? '规划器 · Vercel' : '直连 · OpenRouter'}
+      </Tag>
+      {shown.map((u) => (
+        <Tag key={u} color="geekblue" style={{ margin: 0 }}>
+          {u}
+        </Tag>
+      ))}
+      {ups.length > shown.length && (
+        <Tooltip title={ups.join('、')}>
+          <Tag style={{ margin: 0 }}>+{ups.length - shown.length}</Tag>
+        </Tooltip>
+      )}
+      {ups.length === 0 && <Tag style={{ margin: 0 }}>无可用渠道</Tag>}
+      {p.pinState === 'ignored' && (
+        <Tooltip title="网关忽略钉住参数：该模型的渠道清单不可信">
+          <Tag color="orange" style={{ margin: 0 }}>
+            参数被忽略
+          </Tag>
+        </Tooltip>
+      )}
+    </Space>
+  );
+}
+
 export default function Catalog() {
   const { message } = App.useApp();
   const models = useModels();
@@ -98,27 +139,14 @@ export default function Catalog() {
             { title: '模型', dataIndex: 'id', render: (v: string) => <Typography.Text code>{v}</Typography.Text> },
             {
               title: '类型 / 探测结果',
-              width: 260,
+              width: 320,
               render: (_, r) => {
                 const id = String(r.id);
                 const p = probes[id];
                 if (!p) {
                   return id.includes(':free') ? <Tag color="green">:free 可精确钉住</Tag> : <Tag>规划器管理</Tag>;
                 }
-                if (!p.ok) {
-                  return (
-                    <Tooltip title={p.error}>
-                      <Tag color="red">探测失败</Tag>
-                    </Tooltip>
-                  );
-                }
-                return (
-                  <Space size={4} wrap>
-                    <Tag color="green">{p.pipeline === 'planner' ? '规划器 · Vercel' : '直连 · OpenRouter'}</Tag>
-                    <Tag color="geekblue">{p.upstreams?.length ?? 0} 渠道</Tag>
-                    {p.pinState === 'ignored' && <Tag color="red">参数被忽略</Tag>}
-                  </Space>
-                );
+                return <ProbeTags p={p} />;
               },
             },
             {

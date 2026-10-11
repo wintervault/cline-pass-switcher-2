@@ -2,6 +2,7 @@ import {
   ArrowDownOutlined,
   ArrowUpOutlined,
   DownloadOutlined,
+  ExclamationCircleFilled,
   HolderOutlined,
   SearchOutlined,
   StopOutlined,
@@ -9,7 +10,6 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
-  App,
   Button,
   Card,
   Checkbox,
@@ -135,7 +135,8 @@ function UpstreamRow({
   upstream: string;
   cfg: PerModelConfig;
   meta: ModelMeta | null;
-  onSave: (patch: Partial<PerModelConfig>) => void;
+  /** note 是给用户看的回执文案（每类改动说清做了什么） */
+  onSave: (patch: Partial<PerModelConfig>, note: string) => void;
   drag: RowDragProps;
 }) {
   const { token } = theme.useToken();
@@ -147,19 +148,25 @@ function UpstreamRow({
 
   const toggleSelect = () => {
     if (selected) {
-      onSave({ upstreams: cfg.upstreams.filter((x) => x !== upstream) });
+      onSave({ upstreams: cfg.upstreams.filter((x) => x !== upstream) }, `已移出清单：${upstream}`);
     } else {
-      onSave({
-        upstreams: [...cfg.upstreams.filter((x) => !cfg.exclude.includes(x)), upstream],
-        exclude: cfg.exclude.filter((x) => x !== upstream),
-      });
+      onSave(
+        {
+          upstreams: [...cfg.upstreams.filter((x) => !cfg.exclude.includes(x)), upstream],
+          exclude: cfg.exclude.filter((x) => x !== upstream),
+        },
+        `已加入清单（第 ${cfg.upstreams.filter((x) => !cfg.exclude.includes(x)).length + 1} 位）：${upstream}`,
+      );
     }
   };
   const toggleExclude = () => {
     if (excluded) {
-      onSave({ exclude: cfg.exclude.filter((x) => x !== upstream) });
+      onSave({ exclude: cfg.exclude.filter((x) => x !== upstream) }, `已取消排除：${upstream}`);
     } else {
-      onSave({ upstreams: cfg.upstreams.filter((x) => x !== upstream), exclude: [...cfg.exclude, upstream] });
+      onSave(
+        { upstreams: cfg.upstreams.filter((x) => x !== upstream), exclude: [...cfg.exclude, upstream] },
+        `已排除（网关回退也不会用到）：${upstream}`,
+      );
     }
   };
   const move = (dir: -1 | 1) => {
@@ -172,7 +179,7 @@ function UpstreamRow({
     if (a === undefined || b === undefined) return;
     list[i] = b;
     list[j] = a;
-    onSave({ upstreams: list });
+    onSave({ upstreams: list }, `${upstream} 已调到第 ${j + 1} 位`);
   };
 
   return (
@@ -259,7 +266,6 @@ function UpstreamRow({
 }
 
 export default function Models() {
-  const { message } = App.useApp();
   const models = useModels();
   const qc = useQueryClient();
   const save = useSaveModelConfig();
@@ -279,7 +285,7 @@ export default function Models() {
   const current = rows.find((r) => r.id === selectedId) ?? rows[0] ?? null;
   const filteredRows = rows.filter((r) => !modelFilter || r.id.toLowerCase().includes(modelFilter.toLowerCase()));
 
-  const saveConfig = (modelId: string, patch: Partial<PerModelConfig>) => {
+  const saveConfig = (modelId: string, patch: Partial<PerModelConfig>, note: string) => {
     const currentCfg = rows.find((r) => r.id === modelId)?.config ?? EMPTY_CFG;
     const merged: PerModelConfig = { ...currentCfg, ...patch };
     // 乐观更新：面板立刻反映，onSuccess 的失效会拉回服务端真实状态
@@ -288,7 +294,7 @@ export default function Models() {
         ? { ...old, subscription: old.subscription.map((s) => (s.id === modelId ? { ...s, config: merged } : s)) }
         : old,
     );
-    save.mutate({ modelId, config: merged });
+    save.mutate({ modelId, config: merged, note });
   };
 
   // 校验进行中时轮询：服务端每批校验会渐进写入渠道状态，2 秒一拉让进度可见
@@ -307,46 +313,24 @@ export default function Models() {
 
   const runProbe = (): void => {
     if (!current) return;
-    probe.mutate(current.id, {
-      onSuccess: (r) =>
-        r.ok
-          ? message.success(`${current.id} 探测完成：上游 ${r.upstreams.length} 个`)
-          : message.error(`探测失败：${r.error ?? '未知错误'}`),
-      onError: (e) => message.error(String(e)),
-    });
+    probe.mutate(current.id);
   };
   const runTest = (): void => {
     if (!current) return;
-    test.mutate(
-      { model: current.id, upstreams: cfg.upstreams, exclude: cfg.exclude },
-      {
-        onSuccess: (r) =>
-          r.ok
-            ? message.success(`测试通过：命中 ${r.actual ?? '未知'}（${r.ms ?? 0}ms）`)
-            : message.error(`测试失败：${r.error ?? '未知错误'}`),
-        onError: (e) => message.error(String(e)),
-      },
-    );
+    test.mutate({ model: current.id, upstreams: cfg.upstreams, exclude: cfg.exclude });
   };
   const runValidate = (): void => {
     if (!current) return;
-    validate.mutate(current.id, {
-      onSuccess: (r) =>
-        message.success(
-          `校验完成：可用 ${r.summary.ok ?? 0} · 限流 ${r.summary.limited ?? 0} · 不可钉 ${r.summary.bad ?? 0} · key错 ${r.summary.auth ?? 0}`,
-        ),
-      onError: () => message.error('校验失败'),
-    });
+    validate.mutate(current.id);
   };
 
-  /** 拉取官方模型清单（页头按钮与首屏引导共用）。 */
+  /** 拉取官方模型清单（页头按钮与首屏引导共用）。结果回执由 mutation 统一给出。 */
   const runFetchOfficial = (): void => {
     fetchOfficial.mutate(undefined, {
       onSuccess: (r) =>
         setFetchNote(
-          r.added.length ? `新增 ${r.added.length} 个：${r.added.join('、')}` : `清单已是最新（官方 ${r.found} 个）`,
+          r.added.length ? `新增 ${r.added.length} 个：${r.added.join('、')}` : `已是最新（官方 ${r.found} 个）`,
         ),
-      onError: () => setFetchNote('拉取失败，请稍后重试'),
     });
   };
 
@@ -485,16 +469,22 @@ export default function Models() {
                 </Space>
               </div>
 
+              {/*
+                钉住被网关忽略：一行紧凑提示（此前用 Alert，占掉四行高度，
+                把「渠道优先级」挤到首屏之外）。原因放进悬停，需要时再看。
+              */}
               {pinIgnored && (
-                <Alert
-                  type="warning"
-                  showIcon
-                  message="网关已忽略钉住参数（账号风控或策略变更）"
-                  description={
+                <Tooltip
+                  title={
                     meta?.pinDisabledReason ??
                     '钉住/排除/排序均不生效；勾选仅保留意图，网关恢复执行后自动生效。换个账号或稍后重新探测可能恢复。'
                   }
-                />
+                >
+                  <div className="cps-notice cps-notice-warn">
+                    <ExclamationCircleFilled />
+                    <span>网关已忽略钉住参数：当前按网关默认路由，勾选与排序暂不生效</span>
+                  </div>
+                </Tooltip>
               )}
 
               {/* 元信息行：自由折行，窄窗口下自动换行而不互相挤压 */}
@@ -549,16 +539,23 @@ export default function Models() {
                   <Space size={8} style={{ marginLeft: 'auto' }}>
                     <Button
                       size="small"
-                      onClick={() =>
-                        saveConfig(current.id, {
-                          upstreams: ups.filter((u) => !cfg.exclude.includes(u)),
-                          exclude: cfg.exclude,
-                        })
-                      }
+                      onClick={() => {
+                        const list = ups.filter((u) => !cfg.exclude.includes(u));
+                        saveConfig(
+                          current.id,
+                          { upstreams: list, exclude: cfg.exclude },
+                          `已把 ${list.length} 个渠道全部加入清单`,
+                        );
+                      }}
                     >
                       全部使用
                     </Button>
-                    <Button size="small" onClick={() => saveConfig(current.id, { upstreams: [], exclude: [] })}>
+                    <Button
+                      size="small"
+                      onClick={() =>
+                        saveConfig(current.id, { upstreams: [], exclude: [] }, '已清空渠道清单（改为完全由网关选择）')
+                      }
+                    >
                       清空清单
                     </Button>
                   </Space>
@@ -574,7 +571,7 @@ export default function Models() {
                             upstream={u}
                             cfg={cfg}
                             meta={meta}
-                            onSave={(patch) => saveConfig(current.id, patch)}
+                            onSave={(patch, note) => saveConfig(current.id, patch, note)}
                             drag={{
                               isDragging: dragFrom !== null && dragFrom === rowOrder,
                               isDropTarget: dragTo !== null && dragTo === rowOrder && dragFrom !== rowOrder,
@@ -586,7 +583,7 @@ export default function Models() {
                                   const [item] = list.splice(dragFrom, 1);
                                   if (item) {
                                     list.splice(o, 0, item);
-                                    saveConfig(current.id, { upstreams: list });
+                                    saveConfig(current.id, { upstreams: list }, `${item} 已拖到第 ${o + 1} 位`);
                                   }
                                 }
                                 setDragFrom(null);
@@ -625,7 +622,13 @@ export default function Models() {
                     <Select
                       style={{ width: 180 }}
                       value={cfg.pinMode}
-                      onChange={(v) => saveConfig(current.id, { pinMode: v })}
+                      onChange={(v) =>
+                        saveConfig(
+                          current.id,
+                          { pinMode: v },
+                          `钉住模式已改为「${v === 'strict' ? '严格钉住' : '优先 + 回退'}」`,
+                        )
+                      }
                       options={[
                         { value: 'strict', label: '严格钉住' },
                         { value: 'preferred', label: '优先 + 回退' },
@@ -642,7 +645,14 @@ export default function Models() {
                     <Select
                       style={{ width: 180 }}
                       value={cfg.sort ?? ''}
-                      onChange={(v) => saveConfig(current.id, { sort: (v || null) as SortKey | null })}
+                      onChange={(v) => {
+                        const label = { '': '网关智能选', cost: '最低成本', ttft: '最快首字', tps: '最高吞吐' }[v] ?? v;
+                        saveConfig(
+                          current.id,
+                          { sort: (v || null) as SortKey | null },
+                          `渠道排序偏好已改为「${label}」`,
+                        );
+                      }}
                       options={[
                         { value: '', label: '网关智能选' },
                         { value: 'cost', label: '最低成本' },

@@ -40,15 +40,25 @@ const darkToken = {
   colorBorderSecondary: '#25272e',
 };
 
-/** 部件级微调：表头去掉列分隔灰线（按行分隔足够，视觉更干净）。 */
+/**
+ * 部件级微调：
+ * - 表头去掉列分隔灰线（按行分隔足够，视觉更干净）。
+ * - 气泡提醒（消息）用弹层底色而不是容器底色：它浮在所有内容之上，
+ *   用「更高一层」的表面色，层次才对；内边距也放宽一点，短文案不显得局促。
+ */
 const sharedComponents = {
   Table: { headerSplitColor: 'transparent' },
+  Message: { contentPadding: '10px 16px' },
 };
 
 export const darkTheme = {
   algorithm: theme.darkAlgorithm,
   token: darkToken,
-  components: sharedComponents,
+  components: {
+    ...sharedComponents,
+    // 暗色下默认的消息底色偏黑，与侧栏/内容面糊在一起；抬到弹层色才看得出是浮层
+    Message: { ...sharedComponents.Message, contentBg: darkToken.colorBgElevated },
+  },
 };
 
 export const lightTheme = {
