@@ -1,0 +1,76 @@
+/**
+ * 「浏览器表面」的主题化：滚动条 / 文本选中 / 焦点环 / 原生列表项反馈。
+ * 这些默认值不属于任何设计系统，是「被设计过而非拼装出来」的最便宜信号。
+ * 颜色优先走 antd CSS 变量（antd 6 默认注入，亮暗自动跟随），
+ * 带亮暗通用的半透明兜底，避免元素落在变量作用域之外时样式失效。
+ */
+
+:root {
+  --cps-thumb: rgba(127, 127, 127, 0.35);
+  --cps-thumb-hover: rgba(127, 127, 127, 0.55);
+}
+
+/* 细滚动条：内容区内滚是主场景，滚动条出现频率高 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--cps-thumb) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--cps-thumb);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--cps-thumb-hover);
+}
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::selection {
+  background: var(--ant-color-primary-bg-hover, rgba(79, 140, 255, 0.25));
+}
+
+/* 幽灵列表项（模型列表）：默认安静无面，悬停浮现浅底，选中态由内联样式接管 */
+.cps-ghost {
+  border: 1px solid transparent;
+  background: transparent;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+.cps-ghost:hover {
+  background: var(--ant-color-fill-quaternary);
+}
+.cps-ghost:focus-visible {
+  outline: 2px solid var(--ant-color-primary);
+  outline-offset: 1px;
+}
+
+/* 无边框列表行（渠道清单）：悬停浅底；选中行的内联背景不受影响 */
+.cps-row {
+  transition: background-color 0.15s ease;
+}
+.cps-row:hover {
+  background: var(--ant-color-fill-quaternary);
+}
+
+/* 侧栏导航：选中项在栏左缘显示指示条 */
+.cps-nav {
+  position: relative;
+}
+.cps-nav-active::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 22px;
+  border-radius: 2px;
+  background: var(--ant-color-primary);
+}

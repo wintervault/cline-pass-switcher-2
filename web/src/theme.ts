@@ -16,14 +16,28 @@ export function persistTheme(mode: ThemeMode): void {
 }
 
 /**
- * 品牌与部件级 token 覆盖：亮暗共用一套语义——主色只用于主操作 / 选中 / 状态，
- * 层次交给 antd 算法，保证两个主题下观感一致。页面标题排版在此统一收口。
+ * 品牌与体系 token（亮暗共用语义）。排版角色固定四层：
+ * 20 页标题 / 14 正文与控件 / 13 说明文字 / 12 小注与数据。
+ * 主色只用于主操作、选中与状态，其余交给 antd 算法。
  */
 const sharedToken = {
   colorPrimary: '#4f8cff',
   colorInfo: '#4f8cff',
   borderRadius: 6,
   fontSizeHeading3: 20,
+};
+
+/**
+ * 暗色专用：antd 默认纯黑布局底（#000）在桌面应用里过于生硬。
+ * 抬升为三层体系——布局底 / 容器面 / 弹层，层次靠亮度差与极淡描边，
+ * 而不是靠高对比边框。
+ */
+const darkToken = {
+  ...sharedToken,
+  colorBgLayout: '#0e0f12',
+  colorBgContainer: '#16181d',
+  colorBgElevated: '#1e2026',
+  colorBorderSecondary: '#25272e',
 };
 
 /** 部件级微调：表头去掉列分隔灰线（按行分隔足够，视觉更干净）。 */
@@ -33,7 +47,7 @@ const sharedComponents = {
 
 export const darkTheme = {
   algorithm: theme.darkAlgorithm,
-  token: sharedToken,
+  token: darkToken,
   components: sharedComponents,
 };
 

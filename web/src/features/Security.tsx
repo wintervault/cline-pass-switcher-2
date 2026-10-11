@@ -13,7 +13,7 @@ function Section({ title, desc, children }: { title: string; desc?: string; chil
         {title}
       </Typography.Title>
       {desc && (
-        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+        <Typography.Text type="secondary" style={{ fontSize: 13, display: 'block', marginTop: 4 }}>
           {desc}
         </Typography.Text>
       )}
@@ -60,7 +60,7 @@ export default function Security() {
   const data = security.data;
 
   return (
-    <div style={{ maxWidth: 720 }}>
+    <div style={{ maxWidth: 720, margin: '0 auto' }}>
       <PageHeader title="访问与安全" desc="下游接入地址、代理密钥与跨源防护。低频配置，改完记得保存。" />
 
       <Section
@@ -72,7 +72,7 @@ export default function Security() {
         </Typography.Text>
       </Section>
 
-      <Divider style={{ margin: '20px 0' }} />
+      <Divider style={{ margin: '24px 0' }} />
 
       <Section title="公网代理地址（展示用）" desc="门户与状态栏展示的公网地址；本地使用留空。">
         <Input
@@ -83,7 +83,7 @@ export default function Security() {
         />
       </Section>
 
-      <Divider style={{ margin: '20px 0' }} />
+      <Divider style={{ margin: '24px 0' }} />
 
       <Section
         title="下游代理密钥"
@@ -109,7 +109,7 @@ export default function Security() {
         />
       </Section>
 
-      <Divider style={{ margin: '20px 0' }} />
+      <Divider style={{ margin: '24px 0' }} />
 
       <Section
         title="跨源访问（CORS 白名单）"
@@ -124,7 +124,7 @@ export default function Security() {
         />
       </Section>
 
-      <div style={{ marginTop: 20 }}>
+      <div style={{ marginTop: 24 }}>
         <Button type="primary" loading={save.isPending} onClick={persist}>
           保存以上修改
         </Button>
@@ -133,7 +133,7 @@ export default function Security() {
         </Typography.Text>
       </div>
 
-      <Divider style={{ margin: '20px 0' }} />
+      <Divider style={{ margin: '24px 0' }} />
 
       <Section title="目录暴露" desc="把完整目录模型加入 /v1/models。默认关闭：客户端只看到订阅模型。">
         <Space align="center">
@@ -142,7 +142,7 @@ export default function Security() {
             onChange={(v) => save.mutate({ exposeCatalog: v })}
             loading={save.isPending}
           />
-          <Typography.Text style={{ fontSize: 13 }}>
+          <Typography.Text style={{ fontSize: 14 }}>
             {data?.exposeCatalog ? '已开启：/v1/models 包含完整目录' : '已关闭：只暴露订阅模型'}
           </Typography.Text>
         </Space>

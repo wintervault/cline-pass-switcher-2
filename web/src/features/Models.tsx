@@ -9,6 +9,7 @@ import {
   Descriptions,
   Empty,
   Select,
+  Skeleton,
   Space,
   Tag,
   Tooltip,
@@ -57,15 +58,16 @@ function ModelItem({ row, active, onClick }: { row: SubscriptionRow; active: boo
     <button
       type="button"
       onClick={onClick}
+      className="cps-ghost"
       style={{
         textAlign: 'left',
         cursor: 'pointer',
-        border: `1px solid ${active ? token.colorPrimaryBorder : token.colorBorderSecondary}`,
-        background: active ? token.colorPrimaryBg : token.colorBgContainer,
+        border: active ? `1px solid ${token.colorPrimaryBorder}` : undefined,
+        background: active ? token.colorPrimaryBg : undefined,
         borderRadius: token.borderRadius,
-        padding: '10px 12px',
+        padding: 12,
         display: 'grid',
-        gap: 6,
+        gap: 8,
         font: 'inherit',
       }}
     >
@@ -96,7 +98,7 @@ function ModelItem({ row, active, onClick }: { row: SubscriptionRow; active: boo
         )}
       </Space>
       {meta?.lastProvider && (
-        <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           最近 {meta.lastProvider}
           {meta.lastMs ? ` · ${meta.lastMs}ms` : ''}
         </Typography.Text>
@@ -156,11 +158,12 @@ function UpstreamRow({
 
   return (
     <div
+      className="cps-row"
       style={{
         display: 'flex',
         alignItems: 'center',
         gap: 12,
-        padding: '7px 12px',
+        padding: '8px 12px',
         borderRadius: token.borderRadius,
         background: selected ? token.colorPrimaryBg : undefined,
         opacity: excluded ? 0.5 : 1,
@@ -170,9 +173,7 @@ function UpstreamRow({
         {selected ? (
           <Badge count={order + 1} color={token.colorPrimary} overflowCount={99} />
         ) : (
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            —
-          </Typography.Text>
+          <Typography.Text style={{ fontSize: 12, color: token.colorTextQuaternary }}>—</Typography.Text>
         )}
       </span>
       <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
@@ -180,7 +181,7 @@ function UpstreamRow({
           {upstream}
         </Typography.Text>
         {detail?.name && (
-          <Typography.Text type="secondary" style={{ fontSize: 11 }} ellipsis>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }} ellipsis>
             {detail.name}
             {detail.endpoints !== undefined && detail.endpoints > 1 ? ` ×${detail.endpoints}` : ''}
           </Typography.Text>
@@ -316,12 +317,26 @@ export default function Models() {
         }
       />
 
-      {rows.length === 0 ? (
-        <Empty description="暂无订阅模型：点右上角「拉取官方最新模型」同步清单" />
+      {models.isError ? (
+        <Alert
+          type="error"
+          showIcon
+          message="订阅模型加载失败"
+          description="服务可能正在重启；稍候重试，或用状态栏的刷新按钮。"
+          action={
+            <Button size="small" onClick={() => void models.refetch()}>
+              重试
+            </Button>
+          }
+        />
+      ) : models.isLoading && !models.data ? (
+        <Skeleton active paragraph={{ rows: 8 }} />
+      ) : rows.length === 0 ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无订阅模型：点右上角「拉取官方最新模型」同步清单" />
       ) : (
-        <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+        <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
           {/* 左：模型列表（常驻可见，状态一屏扫完） */}
-          <div style={{ width: 292, flexShrink: 0, display: 'grid', gap: 6, position: 'sticky', top: 0 }}>
+          <div style={{ width: 292, flexShrink: 0, display: 'grid', gap: 8, position: 'sticky', top: 0 }}>
             {rows.map((r) => (
               <ModelItem key={r.id} row={r} active={current?.id === r.id} onClick={() => setSelectedId(r.id)} />
             ))}
@@ -433,7 +448,7 @@ export default function Models() {
                 }
               >
                 {ups.length ? (
-                  <div style={{ display: 'grid', gap: 2 }}>
+                  <div style={{ display: 'grid', gap: 4 }}>
                     {ups.map((u) => (
                       <UpstreamRow
                         key={u}

@@ -34,6 +34,7 @@ import { type ComponentType, useEffect, useState } from 'react';
 
 import { getAuthKey, setAuthKey } from './api/client.ts';
 import { useMeta, useRefresh } from './api/hooks.ts';
+import './app.css';
 import Accounts from './features/Accounts.tsx';
 import Catalog from './features/Catalog.tsx';
 import History from './features/History.tsx';
@@ -67,7 +68,7 @@ function SideNav({ nav, onNav }: { nav: string; onNav: (key: string) => void }) 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '12px 0', gap: 4 }}>
       <Tooltip title="Cline Pass 控制台" placement="right">
-        <div style={{ marginBottom: 14 }}>
+        <div style={{ marginBottom: 16 }}>
           <Logo size={28} />
         </div>
       </Tooltip>
@@ -78,6 +79,7 @@ function SideNav({ nav, onNav }: { nav: string; onNav: (key: string) => void }) 
             <Button
               type="text"
               aria-label={p.label}
+              className={active ? 'cps-nav cps-nav-active' : 'cps-nav'}
               onClick={() => onNav(p.key)}
               style={{
                 width: 44,
@@ -199,7 +201,7 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
         </Layout.Sider>
 
         <Layout style={{ background: 'transparent', minWidth: 0 }}>
-          <Layout.Content style={{ overflow: 'auto', padding: '20px 24px 32px' }}>
+          <Layout.Content style={{ overflow: 'auto', padding: '24px 24px 32px' }}>
             <div style={{ maxWidth: 1400, margin: '0 auto' }}>
               {meta.data && !meta.data.configured && (
                 <Alert
@@ -226,10 +228,10 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
           <Layout.Footer
             style={{
               height: 34,
-              padding: '0 14px',
+              padding: '0 16px',
               display: 'flex',
               alignItems: 'center',
-              gap: 14,
+              gap: 16,
               background: token.colorBgContainer,
               borderTop: `1px solid ${token.colorBorderSecondary}`,
             }}

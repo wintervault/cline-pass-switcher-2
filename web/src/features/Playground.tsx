@@ -18,7 +18,7 @@ function TraceView({ trace }: { trace?: TraceEntry[] }) {
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         尝试序列
       </Typography.Text>
-      <div style={{ marginTop: 6, display: 'grid', gap: 6 }}>
+      <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
         {trace.map((t) => (
           <Space key={`${t.upstream ?? 'auto'}|${t.status}|${t.ms}`} size={8} style={{ fontSize: 12 }}>
             <Badge status={dotStatus(t.status)} />
@@ -75,7 +75,7 @@ export default function Playground() {
   const hit = result?.ok && (!result.targets.length || result.actual === result.targets[0]);
 
   return (
-    <div>
+    <div style={{ maxWidth: 920, margin: '0 auto' }}>
       <PageHeader
         title="测试台"
         desc="任选模型与渠道发最小请求（max_tokens=256），看网关实际路由与每次尝试的先后与耗时。"
@@ -97,13 +97,17 @@ export default function Playground() {
       </Space>
 
       {!result && (
-        <Empty style={{ marginTop: 64 }} description="选择模型后发送测试；不指定渠道 = 按当前路由策略自动选择" />
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          style={{ marginTop: 64 }}
+          description="选择模型后发送测试；不指定渠道 = 按当前路由策略自动选择"
+        />
       )}
 
       {result && (
         <Card
           size="small"
-          style={{ marginTop: 16, maxWidth: 920 }}
+          style={{ marginTop: 16 }}
           title={
             <Space size={8}>
               {result.ok ? <Tag color="green">成功</Tag> : <Tag color="red">失败</Tag>}
@@ -115,7 +119,7 @@ export default function Playground() {
           {!result.ok ? (
             <Alert type="error" showIcon message={`请求失败：${result.error ?? '未知错误'}`} />
           ) : (
-            <div style={{ display: 'grid', gap: 14 }}>
+            <div style={{ display: 'grid', gap: 16 }}>
               <Descriptions
                 size="small"
                 column={3}
@@ -171,9 +175,9 @@ export default function Playground() {
                   </Typography.Text>
                   <Typography.Paragraph
                     style={{
-                      marginTop: 6,
+                      marginTop: 8,
                       marginBottom: 0,
-                      padding: '10px 12px',
+                      padding: '12px 16px',
                       background: token.colorFillQuaternary,
                       borderRadius: token.borderRadius,
                       fontFamily: 'monospace',
