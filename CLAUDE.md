@@ -134,11 +134,12 @@ web/src/      api/{client,types,hooks} / features/* / panel.tsx(区块容器) / 
    而关闭 → OS 终止整棵树。壳崩溃/被强杀也覆盖——这是不依赖代码路径的兜底。
 2. 优雅优先：退出先请求 `POST /api/shutdown`（服务端只放行回环 + 无 Origin/Referer），
    等待 ≤8s，超时 TerminateJobObject。服务的优雅路径与 SIGTERM 是同一条。
-3. 退出路径唯一：托盘「退出」→ stop → app.exit(0)。关窗只是 hide，不退出；启动同理——
-   **冷启动**仅驻留托盘、不自动弹窗；窗口只由**用户动作**唤起：托盘左键、托盘菜单
-   「打开控制台」、**以及再次双击图标**（single-instance 回调调 show_main）。
-   这两条不矛盾：冷启动是「后台起来」，二次启动是「我手上就想要界面」——
-   v2.9.7 曾把二次启动也一起静音，v2.9.10 改回来（真实反馈：双击图标没反应）。
+3. 退出路径唯一：托盘「退出」→ stop → app.exit(0)。关窗只是 hide，不退出。
+   **启动方式 = 平常的桌面软件**（v2.9.11 起）：双击图标 → 服务就绪后开窗
+   （启动线程 wait_healthz 成功后 `run_on_main_thread(show_main)`）。v2.9.7~2.9.10
+   那几版「启动只驻留托盘、不弹窗」是**理解偏了**——用户要的是「双击就该看到界面」，
+   别再按「后台服务」那套改回去。二次启动把已经开着的窗口叫到前面（single-instance
+   回调 show_main）。托盘仍然在：关窗后落到托盘，左键 / 菜单可随时叫回来。
 
 其他不变式：启停 IPC 全部异步派发 + server_status 轮询（无阻塞 invoke）；spawn 幂等
 （try_wait 检测）；single-instance 插件防双开；initialization_script 注入 window.cpsHost

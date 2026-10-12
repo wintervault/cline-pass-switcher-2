@@ -9,7 +9,7 @@
 //! 2. **优雅关停优先**：正常退出先请求服务端的 /api/shutdown（仅放行回环 + 无 Origin，
 //!    浏览器跨源被中间件拦截），等服务落盘退出（≤8s），超时才 TerminateJobObject 兜底。
 //! 3. **退出路径唯一**：托盘「退出」→ stop → app.exit(0)。关窗只是隐藏进托盘，不退出。
-//!    启动同理：仅驻留托盘、不自动弹窗；窗口只由用户动作（托盘 / 二次启动）唤起。
+//!    启动方式与平常的桌面软件一致：双击图标就打开控制台（服务先就绪再开窗）。
 //!
 //! **控制通道走 HTTP，不走 Tauri IPC**（2.9.2 的根因修复，别再改回去）：
 //! 控制台页面是 `WebviewUrl::External("http://127.0.0.1:3123/")`。对外部 URL，
@@ -124,14 +124,10 @@ impl ServerState {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // 二次启动 = 用户又双击了一次图标/快捷方式，那是明确的「我要用」，
-            // 把控制台叫出来（与托盘左键、托盘菜单「打开控制台」同一条路径）。
-            //
-            // 与「启动不弹窗」不冲突，两者说的是不同的事：
-            // - **冷启动**（没有实例在跑）只驻留托盘、不弹窗——这是既定要求；
-            // - **二次启动**说明用户手上就想要界面，此时还埋伏在托盘里才是毛病。
+            // 二次启动 = 用户又双击了一次图标/快捷方式 → 把已经开着的窗口叫到前面来。
+            // （冷启动自己就会开窗，见下面的启动线程；这里只管「已经在跑」的那种。）
             let state = app.state::<Arc<ServerState>>();
-            state.log("[壳] 收到第二次启动：打开控制台");
+            state.log("[壳] 收到第二次启动：把控制台窗口叫到前面");
             show_main(app);
         }))
         .setup(|app| {
@@ -173,8 +169,9 @@ fn main() {
                 std::thread::spawn(move || control_server(control));
             }
 
-            // 启动后仅驻留托盘：服务在后台就绪，窗口只在用户主动打开时出现。
-            // 失败也不弹窗——托盘「打开控制台」会重试，状态与原因都落在控制通道和日志里。
+            // 启动即打开控制台：跟平常的桌面软件一样，双击图标就该看到界面。
+            // 先等服务就绪再开窗（约半秒），用户不会看到 webview 的连接错误页；
+            // 窗口本身在隐藏状态下构建、一次性 show，也不会闪白。
             std::thread::spawn(move || {
                 let state = handle.state::<Arc<ServerState>>();
                 if let Err(err) = spawn_server(&state) {
@@ -183,11 +180,14 @@ fn main() {
                     return;
                 }
                 let started = Instant::now();
-                if wait_healthz(PORT, HEALTHZ_TIMEOUT) {
-                    state.log(&format!("[壳] 服务就绪（{}ms），驻留托盘", started.elapsed().as_millis()));
-                } else {
-                    state.log("[壳] 服务未能就绪：可从托盘「打开控制台」重试");
+                if !wait_healthz(PORT, HEALTHZ_TIMEOUT) {
+                    state.log("[壳] 服务未能就绪：未开窗，可从托盘「打开控制台」重试");
+                    return;
                 }
+                state.log(&format!("[壳] 服务就绪（{}ms），打开控制台", started.elapsed().as_millis()));
+                // 窗口操作交给主线程执行（std::thread 里不能直接建窗）
+                let app = handle.clone();
+                let _ = handle.run_on_main_thread(move || show_main(&app));
             });
 
             Ok(())
