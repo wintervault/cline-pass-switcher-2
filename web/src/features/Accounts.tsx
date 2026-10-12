@@ -137,7 +137,7 @@ export default function Accounts() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <PageHeader
         title="账号池"
-        desc="粘性模式保住上游 prompt cache：只有账号级错误（key 失效 / 额度用完）才轮转到下一账号。所有修改即时保存。"
+        desc="只有账号级错误（key 失效 / 额度用完）才轮转到下一账号——频繁切换会让上游缓存失效、成本变高。所有修改即时保存。"
         actions={
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setModal({ index: null, name: '', key: '' })}>
             添加账号

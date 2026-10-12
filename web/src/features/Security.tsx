@@ -128,12 +128,17 @@ export default function Security() {
               label="API Key"
               hint={
                 <span>
-                  客户端请求头带上{' '}
+                  {data?.hasProxyKey
+                    ? '下游客户端访问代理时必须在请求头带上它：'
+                    : '设置后，下游客户端访问代理时必须在请求头带上它：'}
                   <Typography.Text code style={{ fontSize: 12 }}>
                     Authorization: Bearer &lt;API Key&gt;
                   </Typography.Text>
-                  。<b>只保护 /v1 代理端点</b>；本机打开这个控制台不需要它——控制台是机器主人的工具，
-                  不会用一把下发给客户端的密钥把你锁在门外。
+                  。只作用于{' '}
+                  <Typography.Text code style={{ fontSize: 12 }}>
+                    /v1
+                  </Typography.Text>{' '}
+                  接口；在 这台机器上打开控制台不需要密钥。
                 </span>
               }
             >
@@ -176,7 +181,7 @@ export default function Security() {
                   {data?.hasProxyKey && (
                     <Popconfirm
                       title="清除 API Key？"
-                      description="清除后下游客户端无需密钥即可调用代理（仅本机绑定时安全）；公网部署不要这样做。"
+                      description="清除后，下游客户端无需密钥即可调用代理。仅在服务只绑本机时安全；公网部署请勿清除。"
                       okText="清除"
                       okButtonProps={{ danger: true }}
                       cancelText="取消"

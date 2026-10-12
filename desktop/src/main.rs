@@ -124,8 +124,11 @@ impl ServerState {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // 二次启动：把已有实例的窗口带到前台（避免双实例抢端口）
-            show_main(app);
+            // 二次启动：只阻止第二个实例（端口/托盘冲突），**不弹出窗口**。
+            // 用户的明确要求是「一打开软件就进托盘、不显示界面」——双击图标不该
+            // 把窗口叫出来。要开控制台走托盘：左键单击图标，或右键菜单「打开控制台」。
+            let state = app.state::<Arc<ServerState>>();
+            state.log("[壳] 已有一个实例在托盘运行，本次启动不弹出窗口（托盘图标 → 打开控制台）");
         }))
         .setup(|app| {
             let (data_dir, portable) = resolve_data_dir(app.handle());

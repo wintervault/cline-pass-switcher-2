@@ -37,7 +37,7 @@ export function RoutingFields({
           />
         </Space>
         <Typography.Text type="secondary" style={{ fontSize: 12, lineHeight: '18px', display: 'block', marginTop: 6 }}>
-          严格钉住：只走清单内渠道，网关不听话视为失败并切换；优先 + 回退：仅最后一个候选放开网关选择
+          严格钉住：只走清单内渠道，网关未按清单路由时视为失败并切换；优先 + 回退：仅最后一个候选放开网关选择
         </Typography.Text>
       </div>
       <div>

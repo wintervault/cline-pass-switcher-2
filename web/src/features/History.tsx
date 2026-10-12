@@ -212,6 +212,7 @@ export default function History() {
           }
         >
           <Table<HistoryEntry>
+            className="cps-table-center"
             rowKey={(r) => `${r.ts}-${r.model}-${r.attempts.join('|')}`}
             size="small"
             sticky
@@ -269,7 +270,6 @@ export default function History() {
               {
                 title: '耗时',
                 width: 76,
-                align: 'right',
                 render: (_, r) =>
                   r.ms != null ? (
                     <Typography.Text className="cps-num">{r.ms} ms</Typography.Text>

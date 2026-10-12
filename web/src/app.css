@@ -189,6 +189,16 @@ body {
   line-height: 20px;
 }
 
+/* 数据表：单元格内容**水平 + 垂直居中**（用户要求）。
+   用类而不是全局改 .ant-table —— 只作用于我们标记过的数据表。
+   注意：列上如果写了 align，antd 会打内联 style，比这条规则优先；
+   标记了本类的表格就不要再给列写 align。 */
+.cps-table-center .ant-table-thead > tr > th,
+.cps-table-center .ant-table-tbody > tr > td {
+  text-align: center;
+  vertical-align: middle;
+}
+
 /* ---------- 自绘标题栏（桌面壳） ---------- */
 .cps-titlebar {
   position: fixed;

@@ -56,7 +56,7 @@ function RoutingPanel({ model, cfg, meta }: { model: string; cfg: PerModelConfig
           <span>该模型当前的路由策略</span>
           <Typography.Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>
             {cfg.pinMode === 'strict'
-              ? '严格钉住：只走清单内渠道，网关不听话按失败处理'
+              ? '严格钉住：只走清单内渠道；网关未按清单路由时按失败处理'
               : '优先 + 回退：逐个严格尝试，仅最后一个候选放开网关'}
           </Typography.Text>
         </Space>
@@ -164,6 +164,7 @@ function TraceTable({ trace, targets }: { trace?: TraceEntry[]; targets: string[
   }
   return (
     <Table<TraceEntry>
+      className="cps-table-center"
       size="small"
       rowKey={(r, i) => `${r.upstream ?? 'auto'}-${i}`}
       pagination={false}
@@ -198,7 +199,6 @@ function TraceTable({ trace, targets }: { trace?: TraceEntry[]; targets: string[
         {
           title: '耗时',
           width: 100,
-          align: 'right',
           render: (_, r) => <Typography.Text className="cps-num">{r.ms} ms</Typography.Text>,
         },
         {
@@ -283,7 +283,7 @@ export default function Playground() {
             <Select style={{ width: 240 }} value={upstream} onChange={setUpstream} options={upstreamOptions} />
           </Space>
           <Space size={6} align="center">
-            <Tooltip title="写入请求体的 max_tokens。太小会让推理模型烧完预算返回空内容（HTTP 500 empty response content）">
+            <Tooltip title="写入请求体的 max_tokens。太小会让推理模型在推理阶段就耗尽预算、返回空内容">
               <Typography.Text type="secondary" style={{ fontSize: 13 }}>
                 最大输出
               </Typography.Text>

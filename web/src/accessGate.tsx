@@ -83,7 +83,7 @@ export function AccessGate({
             <Typography.Text code style={{ fontSize: 12 }}>
               http://127.0.0.1:3123
             </Typography.Text>
-            —— 本机访问永远不需要密钥，进去后在「访问与安全」里就能看到或重设。
+            免密钥进入，可在「访问与安全」里重设。
           </Typography.Text>
           <Typography.Text type="secondary" style={{ fontSize: 12, lineHeight: '19px' }}>
             ② 编辑服务器上的{' '}

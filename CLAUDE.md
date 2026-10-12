@@ -70,6 +70,12 @@ web/src/      api/{client,types,hooks} / features/* / panel.tsx(区块容器) / 
 自检：六页的「标题顶 / 首个区块顶 / 左边缘」三组数字必须完全一致。
 ```
 
+**界面文案的准则**：只说「这是什么 / 我该做什么 / 会发生什么」。
+**不解释「我们为什么这样设计」**（那是给评审者看的，不是给用户看的）、
+不出现版本号、报错原文、源码标识符、口语化的拟人说法（「网关不听话」）。
+改文案时按这条自查——v2.9.7 就是因为一句「控制台是机器主人的工具，不会用一把
+下发给客户端的密钥把你锁在门外」被指出来，才发现同类还有三处。
+
 **分层规则**：`upstream/` 与 `proxy/candidates` 是纯函数（不读全局状态，依赖注入）——
 这是可测性的根基，新代码必须遵守。路由层只做协议转换，业务逻辑在 service/chain。
 
@@ -114,7 +120,9 @@ web/src/      api/{client,types,hooks} / features/* / panel.tsx(区块容器) / 
 2. 优雅优先：退出先请求 `POST /api/shutdown`（服务端只放行回环 + 无 Origin/Referer），
    等待 ≤8s，超时 TerminateJobObject。服务的优雅路径与 SIGTERM 是同一条。
 3. 退出路径唯一：托盘「退出」→ stop → app.exit(0)。关窗只是 hide，不退出；启动同理——
-   仅驻留托盘、不自动弹窗，窗口只由用户动作（托盘 / 二次启动）唤起。
+   仅驻留托盘、不自动弹窗，窗口**只**由用户动作（托盘左键 / 托盘菜单）唤起。
+   **再次双击图标也不弹窗**（single-instance 回调只阻止第二个实例）——这是用户的
+   明确要求，别为了「防双开顺手把窗口带出来」把这条改回去。
 
 其他不变式：启停 IPC 全部异步派发 + server_status 轮询（无阻塞 invoke）；spawn 幂等
 （try_wait 检测）；single-instance 插件防双开；initialization_script 注入 window.cpsHost
