@@ -68,7 +68,7 @@ export function TitleBar() {
     >
       <div className="cps-titlebar-brand">
         <Logo size={18} />
-        <span>Cline Pass</span>
+        <span>Cline Pass Switcher</span>
       </div>
       <div className="cps-titlebar-gap" />
       <div className="cps-titlebar-actions" style={{ color: token.colorTextSecondary }}>

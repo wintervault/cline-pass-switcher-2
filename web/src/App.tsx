@@ -11,7 +11,7 @@ import {
   TeamOutlined,
 } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
-import { Alert, App as AntdApp, Button, ConfigProvider, Layout, Tooltip, Typography, theme } from 'antd';
+import { Alert, App as AntdApp, Button, ConfigProvider, Layout, Tooltip, theme } from 'antd';
 import zhCN from 'antd/es/locale/zh_CN';
 import { type ComponentType, useCallback, useEffect, useState } from 'react';
 import { AccessGate } from './accessGate.tsx';
@@ -27,7 +27,6 @@ import Security from './features/Security.tsx';
 import { useFeedback } from './feedback.ts';
 import { useHostControl } from './hostBridge.ts';
 import { PAGE_GUTTER, PAGE_WIDTH } from './layout.ts';
-import { Logo } from './logo.tsx';
 import { ServiceBanner } from './serviceBanner.tsx';
 import { StatusBar } from './statusBar.tsx';
 import { darkTheme, initialTheme, lightTheme, persistTheme, type ThemeMode } from './theme.ts';
@@ -65,25 +64,36 @@ function SideNav({
 }) {
   const { token } = theme.useToken();
   const btnBase = { height: 44, width: '100%', gap: 10, paddingInline: collapsed ? 0 : 10 } as const;
+  const gutter = collapsed ? '0 10px' : '0 12px';
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '12px 0' }}>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          padding: collapsed ? '0 0 0 18px' : '0 16px',
-          marginBottom: 16,
-        }}
-      >
-        <Logo size={28} />
-        {!collapsed && (
-          <Typography.Text strong style={{ fontSize: 14, whiteSpace: 'nowrap' }}>
-            Cline Pass
-          </Typography.Text>
-        )}
+    /*
+      侧栏顶部这一段（20 + 28 + 8 = 56px）原本是「logo + Cline Pass」品牌块，
+      与自绘标题栏的标识完全重复——按反馈删掉。删除后这段空间不能就这么空着，
+      也不能让下面的导航往上提（会与标题栏贴在一起），所以交给侧栏**自己的**折叠
+      开关占据：它是侧栏这一列唯一的自有控件，放在列的顶端正好是它的位置。
+      20px 这个上边距不是随手值：它让开关的顶边与页面标题的顶边同在一条直线上
+      （标题栏 36 + 内容区上内边距 20）。
+    */
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '20px 0 12px' }}>
+      <div style={{ display: 'flex', justifyContent: collapsed ? 'center' : 'flex-end', padding: gutter }}>
+        <Tooltip title={collapsed ? '展开侧栏' : '收起侧栏'} placement={collapsed ? 'right' : 'bottomRight'}>
+          <Button
+            type="text"
+            aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
+            onClick={onToggle}
+            style={{
+              width: 28,
+              minWidth: 28,
+              height: 28,
+              padding: 0,
+              fontSize: 14,
+              color: token.colorTextTertiary,
+            }}
+            icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+          />
+        </Tooltip>
       </div>
-      <div style={{ display: 'grid', gap: 4, padding: collapsed ? '0 10px' : '0 12px' }}>
+      <div style={{ display: 'grid', gap: 4, padding: gutter, marginTop: 8 }}>
         {PAGES.map((p) => {
           const active = nav === p.key;
           const isPinned = pinned === p.key;
@@ -131,24 +141,6 @@ function SideNav({
             </div>
           );
         })}
-      </div>
-      <div style={{ marginTop: 'auto', padding: collapsed ? '0 10px' : '0 12px' }}>
-        <Tooltip title={collapsed ? '展开侧栏' : undefined} placement="right">
-          <Button
-            type="text"
-            aria-label={collapsed ? '展开侧栏' : '折叠侧栏'}
-            onClick={onToggle}
-            style={{
-              ...btnBase,
-              height: 40,
-              justifyContent: collapsed ? 'center' : 'flex-start',
-              color: token.colorTextTertiary,
-            }}
-            icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-          >
-            {!collapsed && <span style={{ fontSize: 13 }}>收起侧栏</span>}
-          </Button>
-        </Tooltip>
       </div>
     </div>
   );

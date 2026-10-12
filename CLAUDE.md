@@ -150,7 +150,10 @@ capability 的自定义命令会被直接拒绝（tauri-apps/tauri#4837、#15190
 占位，保证空目录在 zip 中存活）。
 
 窗口为 `decorations(false)` + 自绘标题栏（`web/src/titleBar.tsx`）：改窗口样式时两边
-一起改，否则标题栏会重复或缺失。
+一起改，否则标题栏会重复或缺失。**窗口默认尺寸由显示器算出来**（`default_window_size`，
+不再写死像素）：目标逻辑宽 1506 = `PAGE_WIDTH` 1240 + 展开侧栏 200 + 留白 56 +
+滚动条槽位 10 —— 这四处的任何一个改了，都要同步 `TARGET_LOGICAL_W`。侧栏顶部那
+56px 归侧栏自己的折叠开关（原来放的是与标题栏重复的品牌块，已删）。
 
 构建：`npm run desktop:build`（= 前后端 build + scripts/prepare-runtime.mjs 精简出
 7MB 运行时 + tauri build）。Rust 侧警告零容忍，与 TS 侧一致。

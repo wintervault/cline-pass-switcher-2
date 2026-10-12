@@ -216,8 +216,11 @@ body {
   align-items: center;
   gap: 8px;
   padding: 0 14px;
+  /* 标题栏是应用名唯一的落点（侧栏那块重复的已删），所以用正文字色 + 中等字重，
+     不再压成次要色——压下去会让整个窗口看起来没有名字。 */
   font-size: 13px;
-  color: var(--ant-color-text-secondary);
+  font-weight: 500;
+  color: var(--ant-color-text);
   white-space: nowrap;
 }
 .cps-titlebar-gap {

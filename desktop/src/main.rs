@@ -640,9 +640,15 @@ fn show_main(app: &AppHandle) {
         return;
     }
     let url: tauri::Url = format!("http://127.0.0.1:{PORT}/").parse().expect("valid url");
+    let ws = default_window_size(app);
     let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
-        .title("Cline Pass 上游控制台")
-        .inner_size(1280.0, 860.0)
+        .title(APP_TITLE)
+        // 尺寸按**逻辑**像素给（Tauri 的 inner_size 单位就是逻辑像素，见
+        // webview_window.rs 的属性文档）。**不要再追加一次 `set_size` 去钉物理像素**：
+        // 实测那样反而会把客户区顶高 43px（tao 在 Windows 上按「带装饰的窗口」估算
+        // 外框，把标题栏算进去了，而本窗口 decorations(false)），只留一条路径时
+        // 客户区就等于请求值（1506×900）。
+        .inner_size(ws.logical_w, ws.logical_h)
         .min_inner_size(960.0, 640.0)
         // 无系统标题栏：标题栏由页面自绘（右上角最小化/最大化/关闭），
         // 暗色下不再有一条与页面无关的灰条，内容区也多出 30px。
@@ -651,10 +657,66 @@ fn show_main(app: &AppHandle) {
         .initialization_script(&bridge_script(app))
         .build()
         .expect("failed to create main window");
-    // 服务已就绪才走到这里；先隐藏构建、再一次性 show，避免空白闪烁
+    let _ = window.center();
+    {
+        // 记「按什么尺寸创建」而不是读回：读回要等窗口真正显示之后才稳定
+        // （窗口还隐藏时读到的是过渡中的值，实测差 43px）。
+        let state = app.state::<Arc<ServerState>>();
+        state.log(&format!(
+            "[壳] 窗口按 {}x{} 逻辑像素创建（缩放 {}，显示器 {}x{} 物理）",
+            ws.logical_w, ws.logical_h, ws.scale, ws.screen_w, ws.screen_h
+        ));
+    }
+    // 服务已就绪才走到这里；先隐藏构建、再 show，避免空白闪烁
     let _ = window.show();
     let _ = window.set_focus();
 }
+
+/// 窗口标题：带上 switcher，别只写 Cline Pass（那是订阅服务的名字，不是这个工具）。
+const APP_TITLE: &str = "Cline Pass Switcher";
+
+/// 窗口尺寸的决策结果。
+struct WindowSize {
+    /// 界面逻辑尺寸（给窗口构建器；也是页面拿到的视口大小）
+    logical_w: f64,
+    logical_h: f64,
+    scale: f64,
+    /// 显示器物理尺寸（诊断用：解释这个窗口尺寸是怎么算出来的）
+    screen_w: u32,
+    screen_h: u32,
+}
+
+/// 默认窗口尺寸：先按显示器的工作区定**逻辑**尺寸，再交给窗口构建器换算。
+///
+/// 不写死一个拍脑袋的数字：写死在高分屏上会小得可怜、在小屏上又会超出屏幕。
+/// 界面需要的是逻辑像素（布局宽度就是它），而屏幕给的约束是物理像素——
+/// 所以先用缩放比把屏幕换算成同一套单位，再取「设计需要」与「屏幕装得下」中小的那个。
+fn default_window_size(app: &AppHandle) -> WindowSize {
+    let monitor = app.primary_monitor().ok().flatten();
+    let scale = monitor.as_ref().map(|m| m.scale_factor()).unwrap_or(1.0);
+    let (sw, sh) = monitor
+        .as_ref()
+        .map(|m| (m.size().width, m.size().height))
+        .unwrap_or((1920, 1080));
+    let (avail_w, avail_h) = (sw as f64 / scale, sh as f64 / scale);
+    WindowSize {
+        logical_w: TARGET_LOGICAL_W.min(avail_w * 0.92).max(960.0),
+        logical_h: TARGET_LOGICAL_H.min(avail_h * 0.90).max(640.0),
+        scale,
+        screen_w: sw,
+        screen_h: sh,
+    }
+}
+
+/// 目标逻辑宽度：**刚好放得下界面的内容列**。
+/// 内容列 1240 + 展开侧栏 200 + 内容区左右留白 56 + 滚动条槽位 10 = 1506。
+/// 比这更宽，内容列也还是 1240（它在 `layout.ts` 里封顶），只是两侧空白变多；
+/// 比这更窄，内容列就会被压窄、表格开始横向滚动——所以这是下限的意义上的默认值。
+/// 改 `web/src/layout.ts` 的 PAGE_WIDTH 或侧栏宽度时要同步改这里。
+const TARGET_LOGICAL_W: f64 = 1506.0;
+/// 目标逻辑高度：900。各页在 760～1000 之间都不溢出，900 取的是「表格能同时看到
+/// 足够多行」与「不顶到任务栏」之间的中点。
+const TARGET_LOGICAL_H: f64 = 900.0;
 
 /// 注入脚本 = 模板 + 运行期确定的控制端口。
 fn bridge_script(app: &AppHandle) -> String {
@@ -688,7 +750,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
     TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().expect("bundle icon").clone())
-        .tooltip("Cline Pass 上游控制台")
+        .tooltip(APP_TITLE)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| {
