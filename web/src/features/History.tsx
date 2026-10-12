@@ -218,9 +218,13 @@ export default function History() {
             sticky
             loading={history.isLoading}
             dataSource={visible}
-            /* 940 = 各定宽列之和 + 尝试序列的下限。定在 1000 时，用户那台
-               （125% 缩放后内容区约 998px）会为 2px 溢出一条横向滚动条。 */
-            scroll={{ x: 900 }}
+            /* 表的最小宽度 = 定宽列之和 + 尝试序列的下限：
+               84+232+132+128+76+58 = 710（前六列）+ 56（复制列）+ 124（尝试序列）= 890。
+               这个数不是随手填的——定得比「窄窗口下的内容列宽」大一点，就会为
+               一两个像素溢出一条横向滚动条（1165 宽的窗口下内容列 899，原来定 900
+               正好溢出）；定得比下限小，尝试序列就会被压到看不清。再窄就横向滚动，
+               而不是继续压缩每一列。 */
+            scroll={{ x: 890 }}
             locale={{
               emptyText: (
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无请求记录：agent 发出请求后会出现在这里" />
@@ -300,8 +304,13 @@ export default function History() {
                   ),
               },
               {
-                title: '',
-                width: 40,
+                /* 操作列：宽度必须容得下按钮本身（24）与单元格内边距（两侧各 16），
+                   否则按钮会被挤在 24px 的框里——这就是反馈里「复制按钮被挤压变形」。
+                   `fixed: 'right'` 让它永远贴在表格右侧：表格横向滚动时它不会
+                   跟着滑走，也就不会被切掉一半。 */
+                title: '操作',
+                width: 56,
+                fixed: 'right',
                 render: (_, r) => (
                   <Tooltip title="复制这条请求的完整信息（排查时贴给别人看）">
                     <Button

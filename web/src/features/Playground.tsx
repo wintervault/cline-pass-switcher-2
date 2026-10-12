@@ -1,10 +1,15 @@
-import { CopyOutlined, ExclamationCircleFilled, PlayCircleOutlined, SettingOutlined } from '@ant-design/icons';
+import {
+  CopyOutlined,
+  ExclamationCircleFilled,
+  InfoCircleOutlined,
+  PlayCircleOutlined,
+  SettingOutlined,
+} from '@ant-design/icons';
 import {
   Alert,
   Badge,
   Button,
   Descriptions,
-  Empty,
   InputNumber,
   Select,
   Space,
@@ -265,7 +270,10 @@ export default function Playground() {
             </Typography.Text>
             <Select
               showSearch
-              style={{ width: 320, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+              /* 280 而不是 320：这一行的控件在 890 宽的内容列里必须排成一行。
+                 放不下就会折成两行，整页凭空长高 48px——正好把「不出现纵向滚动条」
+                 的余量吃掉。 */
+              style={{ width: 280, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
               placeholder="选择模型"
               value={active || undefined}
               onChange={(v) => {
@@ -280,7 +288,7 @@ export default function Playground() {
             <Typography.Text type="secondary" style={{ fontSize: 13 }}>
               渠道
             </Typography.Text>
-            <Select style={{ width: 240 }} value={upstream} onChange={setUpstream} options={upstreamOptions} />
+            <Select style={{ width: 200 }} value={upstream} onChange={setUpstream} options={upstreamOptions} />
           </Space>
           <Space size={6} align="center">
             <Tooltip title="写入请求体的 max_tokens。太小会让推理模型在推理阶段就耗尽预算、返回空内容">
@@ -351,17 +359,13 @@ export default function Playground() {
         }
       >
         {!result ? (
-          <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={
-              <Space direction="vertical" size={2}>
-                <span>还没有测试结果</span>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  点「发送测试」发一次真实请求（消耗极小额度）
-                </Typography.Text>
-              </Space>
-            }
-          />
+          /* 空态压成一行。占满一块的 antd Empty（大插图 + 两行字）让这一页在
+             默认窗口下几乎顶到滚动条——空态本来只是「还没测过」这一句，
+             没有资格占掉一百多像素。 */
+          <div className="cps-notice">
+            <InfoCircleOutlined style={{ color: 'var(--ant-color-text-tertiary)' }} />
+            <span>还没有测试结果——点「发送测试」发一次真实请求（消耗极小额度），结果与候选尝试序列会显示在这里</span>
+          </div>
         ) : !result.ok ? (
           <Alert type="error" showIcon message={`请求失败：${result.error ?? '未知错误'}`} />
         ) : (
