@@ -128,17 +128,10 @@ export default function Security() {
               label="API Key"
               hint={
                 <span>
-                  {data?.hasProxyKey
-                    ? '下游客户端访问代理时必须在请求头带上它：'
-                    : '设置后，下游客户端访问代理时必须在请求头带上它：'}
                   <Typography.Text code style={{ fontSize: 12 }}>
                     Authorization: Bearer &lt;API Key&gt;
                   </Typography.Text>
-                  。只作用于{' '}
-                  <Typography.Text code style={{ fontSize: 12 }}>
-                    /v1
-                  </Typography.Text>{' '}
-                  接口；在 这台机器上打开控制台不需要密钥。
+                  是下游客户端访问代理时要带的请求头；密钥只作用于 /v1 接口，在这台机器上打开控制台不需要它。
                 </span>
               }
             >
