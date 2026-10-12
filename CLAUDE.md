@@ -135,9 +135,10 @@ web/src/      api/{client,types,hooks} / features/* / panel.tsx(区块容器) / 
 2. 优雅优先：退出先请求 `POST /api/shutdown`（服务端只放行回环 + 无 Origin/Referer），
    等待 ≤8s，超时 TerminateJobObject。服务的优雅路径与 SIGTERM 是同一条。
 3. 退出路径唯一：托盘「退出」→ stop → app.exit(0)。关窗只是 hide，不退出；启动同理——
-   仅驻留托盘、不自动弹窗，窗口**只**由用户动作（托盘左键 / 托盘菜单）唤起。
-   **再次双击图标也不弹窗**（single-instance 回调只阻止第二个实例）——这是用户的
-   明确要求，别为了「防双开顺手把窗口带出来」把这条改回去。
+   **冷启动**仅驻留托盘、不自动弹窗；窗口只由**用户动作**唤起：托盘左键、托盘菜单
+   「打开控制台」、**以及再次双击图标**（single-instance 回调调 show_main）。
+   这两条不矛盾：冷启动是「后台起来」，二次启动是「我手上就想要界面」——
+   v2.9.7 曾把二次启动也一起静音，v2.9.10 改回来（真实反馈：双击图标没反应）。
 
 其他不变式：启停 IPC 全部异步派发 + server_status 轮询（无阻塞 invoke）；spawn 幂等
 （try_wait 检测）；single-instance 插件防双开；initialization_script 注入 window.cpsHost
@@ -165,10 +166,11 @@ capability 的自定义命令会被直接拒绝（tauri-apps/tauri#4837、#15190
 占位，保证空目录在 zip 中存活）。
 
 窗口为 `decorations(false)` + 自绘标题栏（`web/src/titleBar.tsx`）：改窗口样式时两边
-一起改，否则标题栏会重复或缺失。**窗口默认尺寸由显示器算出来**（`default_window_size`，
-不再写死像素）：目标逻辑宽 1506 = `PAGE_WIDTH` 1240 + 展开侧栏 200 + 留白 56 +
-滚动条槽位 10 —— 这四处的任何一个改了，都要同步 `TARGET_LOGICAL_W`。侧栏顶部那
-56px 归侧栏自己的折叠开关（原来放的是与标题栏重复的品牌块，已删）。
+一起改，否则标题栏会重复或缺失。**窗口默认尺寸 1170×860 逻辑像素**（用户定尺，
+`TARGET_LOGICAL_W/H`）：屏幕装不下时按工作区的 92% / 90% 退让并居中。它有约束——
+内容列 = 1170 − 展开侧栏 200 − 留白 56 − 滚动条槽位 10 = **904**，必须放得下最宽的
+那张表（请求历史最小宽度 890）：改窗口宽度 / 侧栏宽度 / 那张表的列宽时，三处一起看。
+侧栏顶部那 56px 归侧栏自己的折叠开关（原来放的是与标题栏重复的品牌块，已删）。
 
 构建：`npm run desktop:build`（= 前后端 build + scripts/prepare-runtime.mjs 精简出
 7MB 运行时 + tauri build）。Rust 侧警告零容忍，与 TS 侧一致。
