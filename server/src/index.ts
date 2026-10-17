@@ -1,3 +1,4 @@
+import { ClassifyService } from './accounts/classify.ts';
 import { AccountPool } from './accounts/pool.ts';
 import type { AppContext } from './appContext.ts';
 import { isConfigured, publicProxyBase } from './config/derive.ts';
@@ -107,6 +108,16 @@ async function main(): Promise<void> {
       }),
     orEndpoints: (slug) => catalog.orEndpoints(slug),
   });
+  // 依赖用函数注入：配置与 metadata 都是就地更新的，每次体检都读最新值
+  const classify = new ClassifyService(() => ({
+    upstreamBase: configStore.value.upstreamBase,
+    classifyModel: configStore.value.classifyModel,
+    get: (name) => metaStore.value.accountClass[name],
+    set: (name, record) =>
+      metaStore.update((meta) => {
+        meta.accountClass[name] = record;
+      }),
+  }));
   chain.onChannelFailure(learnFromFailure(configStore, metaStore));
 
   // onShutdown 在 server 创建之后回填（关停要引用 server；路由要先有 ctx 才能建 server）
@@ -119,6 +130,7 @@ async function main(): Promise<void> {
     health,
     chain,
     probe,
+    classify,
     catalog,
   };
 

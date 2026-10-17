@@ -112,6 +112,27 @@ describe('loadMetaStore', () => {
     expect(m?.upstreamDetail).toEqual({});
     expect(m?.lastProvider).toBeNull();
   });
+
+  it('accountClass：保留有效结论，丢弃全空记录，非法输入不拖垮整个文件', async () => {
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        accountClass: {
+          a: { class: 'private', checkedAt: 111 },
+          b: { class: 'normal', checkedAt: 222, note: '上次失败：HTTP 429' },
+          empty: { class: 'unknown', checkedAt: null },
+          broken: { class: '风控', checkedAt: 'x' },
+        },
+      }),
+    );
+    const { store, notes } = await loadMetaStore(file);
+    expect(store.value.accountClass['a']).toEqual({ class: 'private', checkedAt: 111 });
+    expect(store.value.accountClass['b']?.note).toContain('429');
+    // 全默认值 = 没有信息量（和模型观测记录同一套规则），丢弃而不是留一堆空记录
+    expect(store.value.accountClass['empty']).toBeUndefined();
+    expect(store.value.accountClass['broken']).toBeUndefined();
+    expect(notes.join()).toContain('丢弃了 2 条损坏或无信息量的账号体检记录');
+  });
 });
 
 describe('MetaStore 写回', () => {

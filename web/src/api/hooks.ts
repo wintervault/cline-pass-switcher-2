@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRef } from 'react';
 
-import { useFeedback } from '../feedback.ts';
+import { type Feedback, useFeedback } from '../feedback.ts';
 import { api } from './client.ts';
 import type {
   AccountsResponse,
+  ClassifyResponse,
   HistoryEntry,
   MetaInfo,
   ModelsResponse,
@@ -157,6 +159,32 @@ export function useTestAccount() {
       else fb.fail(`${vars.label} 不可用`, r.error ?? '未通过连通性测试');
     },
     onError: (err, vars) => fb.fail(`${vars.label} 测试请求失败`, err),
+  });
+}
+
+/**
+ * 风控体检。批量可能跑十几秒（串行、每账号 1 发最小请求），所以用两段式回执：
+ * 按下时「正在体检…」，跑完换成结果（成功与失败都必带原因）。
+ */
+export function useClassifyAccounts() {
+  const refresh = useRefresh();
+  const fb = useFeedback();
+  const busy = useRef<ReturnType<Feedback['busy']> | null>(null);
+  return useMutation({
+    mutationFn: (vars: { names?: string[] }) => api<ClassifyResponse>('/api/accounts/classify', { json: vars }),
+    onMutate: (vars) => {
+      busy.current = fb.busy(vars.names?.length ? `正在体检 ${vars.names.length} 个账号…` : '正在体检全部启用账号…');
+    },
+    onSuccess: (r) => {
+      refresh();
+      const s = r.summary;
+      const tail = s.failed ? `，${s.failed} 个未得出结论` : '';
+      busy.current?.ok(`体检完成：正常 ${s.normal} · 风控 ${s.private} · 未判定 ${s.unknown}${tail}`);
+    },
+    onError: (err) => busy.current?.fail('体检失败', err),
+    onSettled: () => {
+      busy.current = null;
+    },
   });
 }
 

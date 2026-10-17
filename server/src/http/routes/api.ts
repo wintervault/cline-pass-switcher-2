@@ -1,6 +1,9 @@
 import type { IncomingMessage } from 'node:http';
 
+import { expiryState } from '../../accounts/expiry.ts';
+import { ensureUniqueAccountNames } from '../../accounts/naming.ts';
 import { type AppContext, updateConfig } from '../../appContext.ts';
+import { isIsoDate } from '../../config/date.ts';
 import { isConfigured, publicProxyBase } from '../../config/derive.ts';
 import type { Account, Config, PerModelConfig } from '../../config/schema.ts';
 import type { ChainResult } from '../../proxy/chain.ts';
@@ -65,21 +68,88 @@ export function normalizePerModel(raw: unknown): PerModelConfig {
  * key 的归属由每行的 `existingIndex`（编辑开始时在旧列表里的下标）显式指定，
  * **绝不能按当前行号对位**：删除一行会让后面的行错位继承别人的密钥（数据破坏）。
  * 前端拿不到明文，留空 = 用 existingIndex 指向的旧 key；掩码串原样传回也当作「未修改」。
+ *
+ * `expiresAt` 是三态语义：缺省 = 保持不变（老客户端/局部提交），`null`/空串 = 清空，
+ * 合法日期 = 设置。非法日期同样按「保持」处理——手抖打错不该把已有日期清掉。
  */
 export function mergeAccounts(existing: Account[], incoming: unknown): Account[] {
+  return mergeAccountsDetailed(existing, incoming).accounts;
+}
+
+export interface AccountMergeResult {
+  accounts: Account[];
+  /** 名字变了的账号（旧名 → 新名），调用方据此迁移按名字索引的观测数据。 */
+  renames: Array<{ from: string; to: string }>;
+}
+
+export function mergeAccountsDetailed(existing: Account[], incoming: unknown): AccountMergeResult {
   const rows = Array.isArray(incoming) ? incoming : [];
-  return rows
-    .map((raw, i) => {
-      const a = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-      const name = String(a['name'] ?? `账号${i + 1}`).slice(0, 50);
-      const key = String(a['key'] ?? '').trim();
-      const safeKey = /^[•*]+$/.test(key.slice(0, -4)) || key.includes('•') ? '' : key;
-      const keepIdx = a['existingIndex'];
-      const kept =
-        typeof keepIdx === 'number' && Number.isInteger(keepIdx) && keepIdx >= 0 ? (existing[keepIdx]?.key ?? '') : '';
-      return { name, key: safeKey || kept, enabled: a['enabled'] !== false };
-    })
-    .filter((a) => a.key);
+  const picked: Array<{ account: Account; priorName: string | null }> = [];
+
+  rows.forEach((raw, i) => {
+    const a = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+    const name = String(a['name'] ?? `账号${i + 1}`).slice(0, 50);
+    const key = String(a['key'] ?? '').trim();
+    const safeKey = /^[•*]+$/.test(key.slice(0, -4)) || key.includes('•') ? '' : key;
+    const keepIdx = a['existingIndex'];
+    const prior =
+      typeof keepIdx === 'number' && Number.isInteger(keepIdx) && keepIdx >= 0 ? existing[keepIdx] : undefined;
+    const finalKey = safeKey || prior?.key || '';
+    if (!finalKey) return; // 新行没填 key 就丢弃（空账号没有意义）
+
+    let expiresAt = prior?.expiresAt;
+    const rawExpires = a['expiresAt'];
+    if (rawExpires === null || rawExpires === '') expiresAt = undefined;
+    else if (typeof rawExpires === 'string' && isIsoDate(rawExpires)) expiresAt = rawExpires;
+
+    picked.push({
+      account: {
+        name,
+        key: finalKey,
+        enabled: a['enabled'] !== false,
+        ...(expiresAt ? { expiresAt } : {}),
+      },
+      priorName: prior?.name ?? null,
+    });
+  });
+
+  const unified = ensureUniqueAccountNames(picked.map((p) => p.account));
+  const renames: Array<{ from: string; to: string }> = [];
+  unified.accounts.forEach((account, i) => {
+    const priorName = picked[i]?.priorName ?? null;
+    if (priorName && priorName !== account.name) renames.push({ from: priorName, to: account.name });
+  });
+  return { accounts: unified.accounts, renames };
+}
+
+/**
+ * 账号改名 / 删除后整理按账号名索引的观测数据（用量统计、风控结论）。
+ *
+ * 两段式（先全部取出并删除，再写入新名）是必须的：改名可以成环
+ * （A→B、B→A），逐条搬会把目标位置的旧数据覆盖掉。
+ * 历史记录不动——那是行为日志，账号名在里面是历史事实。
+ */
+function migrateAccountMeta(ctx: AppContext, renames: Array<{ from: string; to: string }>, names: string[]): void {
+  const alive = new Set(names);
+  const hasStale = [...Object.keys(ctx.metaStore.value.stats), ...Object.keys(ctx.metaStore.value.accountClass)].some(
+    (n) => !alive.has(n),
+  );
+  if (!renames.length && !hasStale) return;
+
+  ctx.metaStore.update((meta) => {
+    const moves = renames.map((r) => ({ ...r, stats: meta.stats[r.from], cls: meta.accountClass[r.from] }));
+    for (const r of renames) {
+      delete meta.stats[r.from];
+      delete meta.accountClass[r.from];
+    }
+    for (const m of moves) {
+      if (!alive.has(m.to)) continue;
+      if (m.stats) meta.stats[m.to] = m.stats;
+      if (m.cls) meta.accountClass[m.to] = m.cls;
+    }
+    for (const name of Object.keys(meta.stats)) if (!alive.has(name)) delete meta.stats[name];
+    for (const name of Object.keys(meta.accountClass)) if (!alive.has(name)) delete meta.accountClass[name];
+  });
 }
 
 /** 订阅模型 + 配置 + 观测数据（控制台主表数据源）。 */
@@ -261,6 +331,7 @@ export function registerApiRoutes(
   router.get('/api/accounts', (c: Ctx) => {
     const cfg = config();
     const stats = meta().stats;
+    const accountClass = meta().accountClass;
     // 不回传明文 key：只给掩码与指纹（末 4 位），编辑时留空 = 保持不变
     sendJSON(c.res, 200, {
       accounts: cfg.accounts.map((a) => ({
@@ -269,9 +340,15 @@ export function registerApiRoutes(
         keyMasked: maskSecret(a.key),
         keyTail: a.key.slice(-4),
         hasKey: !!a.key,
+        expiresAt: a.expiresAt ?? null,
+        /** 到期状态由**服务端**算（时钟以服务端为准；i18n 时前端按 kind 取词）。 */
+        expiry: expiryState(a.expiresAt),
+        /** 风控体检结论（观测值，可能为空 = 从未体检过）。 */
+        classify: accountClass[a.name] ?? null,
       })),
       mode: cfg.accountMode,
       active: cfg.activeAccount,
+      classifyModel: cfg.classifyModel,
       stats,
     });
   });
@@ -283,22 +360,58 @@ export function registerApiRoutes(
       accounts?: unknown;
       mode?: unknown;
       active?: unknown;
+      classifyModel?: unknown;
     };
-    const accounts = mergeAccounts(config().accounts, payload.accounts);
+    const { accounts, renames } = mergeAccountsDetailed(config().accounts, payload.accounts);
     if (!accounts.length) return sendError(c.res, 400, '至少需要一个有效账号（key 非空）');
+
+    const classifyModel = typeof payload.classifyModel === 'string' ? payload.classifyModel.trim().slice(0, 120) : '';
 
     updateConfig(ctx, (cfg) => {
       cfg.accounts = accounts;
       cfg.accountMode = payload.mode === 'roundrobin' ? 'roundrobin' : payload.mode === 'single' ? 'single' : 'sticky';
       const wanted = Number(payload.active);
       cfg.activeAccount = Number.isInteger(wanted) ? Math.min(Math.max(0, wanted), accounts.length - 1) : 0;
+      if (classifyModel) cfg.classifyModel = classifyModel;
     });
+    // 账号名是观测数据的键：改名要迁走、删除要清掉（历史记录是日志，保留历史账号名）
+    migrateAccountMeta(
+      ctx,
+      renames,
+      accounts.map((a) => a.name),
+    );
+
     sendJSON(c.res, 200, {
       ok: true,
       accounts: accounts.length,
       mode: config().accountMode,
       active: config().activeAccount,
+      classifyModel: config().classifyModel,
+      renamed: renames,
     });
+  });
+
+  /**
+   * 风控体检：每个账号发**一次**最小请求，看网关默认路由到哪个渠道。
+   * 显式传 `names` 时只体检这些（允许体检停用账号）；不传则体检全部启用账号。
+   * 串行执行——串行不会打满上游速率限制，也让「1 发/账号」的额度消耗可解释。
+   */
+  router.post('/api/accounts/classify', async (c: Ctx) => {
+    const body = await readJsonBody(c.req);
+    if (!body.ok) return sendError(c.res, 400, body.reason === 'bad-json' ? 'invalid JSON body' : 'body too large');
+    const payload = (body.value ?? {}) as { names?: unknown };
+    const wanted = Array.isArray(payload.names)
+      ? new Set(payload.names.filter((n): n is string => typeof n === 'string' && n.length > 0))
+      : null;
+    const targets = config().accounts.filter((a) => !!a.key && (wanted ? wanted.has(a.name) : a.enabled !== false));
+    if (!targets.length) {
+      return sendError(c.res, 400, wanted ? '没有匹配的账号' : '没有可体检的启用账号');
+    }
+    if (ctx.classify.isRunning()) return sendError(c.res, 409, '体检正在进行中，请稍候');
+    const batch = await ctx.classify.classifyMany(targets, c.abortSignal);
+    // 客户端中途离开：不再写响应（socket 已断）
+    if (batch.cancelled) return;
+    sendJSON(c.res, 200, { ok: true, ...batch });
   });
 
   router.post('/api/accounts/test', async (c: Ctx) => {

@@ -1,3 +1,4 @@
+import type { ClassifyService } from './accounts/classify.ts';
 import type { AccountPool } from './accounts/pool.ts';
 import type { Config } from './config/schema.ts';
 import type { ChatChain } from './proxy/chain.ts';
@@ -14,6 +15,8 @@ export interface AppContext {
   configStore: JsonStore<Config>;
   metaStore: JsonStore<MetaFile>;
   pool: AccountPool;
+  /** 账号风控体检（观测值写 metadata，见 accounts/classify.ts）。 */
+  classify: ClassifyService;
   health: ChannelHealth;
   chain: ChatChain;
   probe: ProbeService;

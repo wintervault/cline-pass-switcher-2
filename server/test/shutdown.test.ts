@@ -38,6 +38,7 @@ function makeCtx(onShutdown?: (reason: string) => void): AppContext {
     health: new ChannelHealth(),
     chain: {} as AppContext['chain'],
     probe: {} as AppContext['probe'],
+    classify: {} as AppContext['classify'],
     catalog: {} as AppContext['catalog'],
     onShutdown,
   };

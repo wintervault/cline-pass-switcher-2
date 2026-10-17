@@ -1,3 +1,4 @@
+import { ensureUniqueAccountNames } from '../accounts/naming.ts';
 import { moduleLogger } from '../log/logger.ts';
 import { atomicWriteFile, readJsonFile } from '../store/jsonStore.ts';
 import { isPlainObject, migrateConfig } from './migrate.ts';
@@ -92,6 +93,12 @@ export async function loadConfig(file: string): Promise<LoadResult> {
   }
   if (droppedAccounts) notes.push(`丢弃了 ${droppedAccounts} 个无效账号（缺少 key 或字段类型错误）`);
 
+  // 账号名是账号的标识（usage 统计与风控分类都按名字存）→ 必须唯一
+  const unified = ensureUniqueAccountNames(accounts);
+  if (unified.renamed.length)
+    notes.push(`账号名重复，已自动改名：${unified.renamed.map((r) => `${r.from} → ${r.to}`).join('、')}`);
+  const namedAccounts = unified.accounts;
+
   // perModel 同理；同时保证 exclude 优先于 upstreams
   const perModel: Record<string, PerModelConfig> = {};
   let droppedModels = 0;
@@ -108,11 +115,11 @@ export async function loadConfig(file: string): Promise<LoadResult> {
 
   // activeAccount 越界钳制（删账号后下标可能悬空）
   let activeAccount = base.activeAccount;
-  if (accounts.length === 0) {
+  if (namedAccounts.length === 0) {
     activeAccount = 0;
-  } else if (activeAccount > accounts.length - 1) {
-    notes.push(`activeAccount=${activeAccount} 越界，已钳制为 ${accounts.length - 1}`);
-    activeAccount = accounts.length - 1;
+  } else if (activeAccount > namedAccounts.length - 1) {
+    notes.push(`activeAccount=${activeAccount} 越界，已钳制为 ${namedAccounts.length - 1}`);
+    activeAccount = namedAccounts.length - 1;
   }
 
   const unknownKeys = Object.keys(migrated).filter((k) => !KNOWN_KEYS.has(k));
@@ -121,7 +128,7 @@ export async function loadConfig(file: string): Promise<LoadResult> {
   if (notes.length) log.warn({ notes }, '配置已迁移/修正');
 
   return {
-    config: { ...base, accounts, perModel, activeAccount },
+    config: { ...base, accounts: namedAccounts, perModel, activeAccount },
     notes,
     backupPath: null,
     fresh: false,

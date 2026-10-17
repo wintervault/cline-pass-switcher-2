@@ -1,9 +1,10 @@
-import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EditOutlined, MedicineBoxOutlined, PlusOutlined } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   App,
   Button,
+  DatePicker,
   Empty,
   Input,
   Modal,
@@ -13,13 +14,16 @@ import {
   Skeleton,
   Space,
   Switch,
+  Tag,
   Tooltip,
   Typography,
 } from 'antd';
+import dayjs from 'dayjs';
 import { useState } from 'react';
 
-import { qk, useAccounts, useSaveAccounts, useTestAccount } from '../api/hooks.ts';
-import type { AccountMode, AccountsResponse } from '../api/types.ts';
+import { qk, useAccounts, useClassifyAccounts, useModels, useSaveAccounts, useTestAccount } from '../api/hooks.ts';
+import type { AccountClassRecord, AccountMode, AccountsResponse, AccountView, ExpiryState } from '../api/types.ts';
+import { ACCOUNT_CLASS_TAG } from '../api/types.ts';
 import { PageHeader } from '../pageHeader.tsx';
 import { Panel, PanelHint } from '../panel.tsx';
 
@@ -28,6 +32,8 @@ interface DraftAccount {
   name: string;
   key: string;
   enabled: boolean;
+  /** `YYYY-MM-DD`；null = 没有到期时间。 */
+  expiresAt: string | null;
   /**
    * 该行在已存列表里的下标；新增行为 null。
    * key 的归属由它指定——**不能按当前行号对位**：删除一行会让后面的行
@@ -42,6 +48,7 @@ interface EditModal {
   index: number | null;
   name: string;
   key: string;
+  expiresAt: string | null;
 }
 
 /** 最近使用时间：当天只显示时刻，跨天带日期。 */
@@ -53,28 +60,111 @@ function fmtUsed(ts: number): string {
     : `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+/**
+ * 风控分类徽标。
+ *
+ * 这是**观测值**：同一个账号的默认路由会随时间翻转（docs/pinning.md 第五节），
+ * 所以悬停必须给出判定时间，文案也要说清适用范围——它只解释 planner 管线的
+ * 默认路由，不代表这个账号「废了」：direct（OpenRouter 类）模型两类账号都能钉。
+ */
+function ClassifyTag({ record }: { record: AccountClassRecord | null }) {
+  const kind = record?.class ?? 'unknown';
+  const tag = ACCOUNT_CLASS_TAG[kind];
+  const checked = record?.checkedAt ? `判定于 ${fmtUsed(record.checkedAt)}` : '还没有体检过';
+  const tip = (
+    <span>
+      {checked}
+      {record?.note ? `；最近一次体检未成功：${record.note}` : ''}
+      <br />
+      「风控」= 网关默认把这个账号的请求路由到 openai-compatible-private，钉不住 planner 模型； OpenRouter
+      类模型（direct）两类账号都能用。
+    </span>
+  );
+  return (
+    <Tooltip title={tip}>
+      <Tag color={tag.color} style={{ margin: 0 }}>
+        {tag.label}
+      </Tag>
+    </Tooltip>
+  );
+}
+
+/**
+ * 到期徽标。三种形态之外还有一条常被误解的规则：**到期不会自动停用账号**。
+ * 日期可能只是没续上，停用是破坏性动作——所以这里只标记，不改变行为。
+ */
+function ExpiryTag({ expiry, expiresAt }: { expiry: ExpiryState; expiresAt: string | null }) {
+  if (expiry.kind === 'none' || !expiresAt) {
+    return (
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        未设置到期时间
+      </Typography.Text>
+    );
+  }
+  if (expiry.kind === 'expired') {
+    return (
+      <Tooltip title={`到期日 ${expiresAt}。到期不会自动停用账号，需要你手动处理。`}>
+        <Tag color="red" style={{ margin: 0 }}>
+          已过期{expiry.days !== null ? ` ${Math.abs(expiry.days)} 天` : ''}
+        </Tag>
+      </Tooltip>
+    );
+  }
+  if (expiry.kind === 'soon' && expiry.days !== null) {
+    return (
+      <Tooltip title={`到期日 ${expiresAt}，记得续期`}>
+        <Tag color="gold" style={{ margin: 0 }}>
+          {expiry.days === 0 ? '今天到期' : `${expiry.days} 天后到期`}
+        </Tag>
+      </Tooltip>
+    );
+  }
+  return (
+    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+      到期 {expiresAt}
+    </Typography.Text>
+  );
+}
+
 export default function Accounts() {
   const { message } = App.useApp();
   const qc = useQueryClient();
   const accounts = useAccounts();
+  const models = useModels();
   const save = useSaveAccounts();
   const testKey = useTestAccount();
+  const classify = useClassifyAccounts();
   const [modal, setModal] = useState<EditModal | null>(null);
 
   const data = accounts.data;
   const rows = data?.accounts ?? [];
   const mode = data?.mode ?? 'sticky';
   const active = data?.active ?? 0;
+  const classifyModel = data?.classifyModel ?? '';
+
+  const unclassified = rows.filter((a) => (a.classify?.class ?? 'unknown') === 'unknown').length;
+  const noExpiry = rows.filter((a) => !a.expiresAt).length;
+
+  /** 判定模型的可选清单：订阅模型 + 当前值（当前值可能已不在清单里，不能因此消失）。 */
+  const modelIds = (models.data?.subscription ?? []).map((m) => m.id);
+  const classifyOptions = [...new Set([...modelIds, ...(classifyModel ? [classifyModel] : [])])].map((id) => ({
+    value: id,
+    label: id,
+  }));
 
   /** 把服务端当前状态组装成提交数组（key 留空 = 保持不变）。 */
   const draftFromServer = (): DraftAccount[] =>
-    rows.map((a, i) => ({ name: a.name, key: '', enabled: a.enabled, existingIndex: i }));
+    rows.map((a, i) => ({ name: a.name, key: '', enabled: a.enabled, expiresAt: a.expiresAt, existingIndex: i }));
 
   /** 就地保存：只改传入的字段，其余保持服务端当前值。note 是给用户的回执文案。 */
-  const commit = (next: { accounts?: DraftAccount[]; mode?: AccountMode; active?: number }, note: string): void => {
+  const commit = (
+    next: { accounts?: DraftAccount[]; mode?: AccountMode; active?: number; classifyModel?: string },
+    note: string,
+  ): void => {
     const nextAccounts = next.accounts ?? draftFromServer();
     const nextMode = next.mode ?? mode;
     const nextActive = next.active ?? active;
+    const nextModel = next.classifyModel ?? classifyModel;
     // 乐观更新缓存：连续操作（连点开关 / 连切策略）时，下一次 draftFromServer()
     // 读到的必须包含上一次改动——否则后一次提交会用旧缓存覆盖前一次（丢改动）
     qc.setQueryData<AccountsResponse>(qk.accounts, (old) =>
@@ -84,6 +174,8 @@ export default function Accounts() {
             accounts: nextAccounts.map((a) => {
               const prev = a.existingIndex !== null ? old.accounts[a.existingIndex] : undefined;
               const key = a.key.trim();
+              const expiresAt = a.expiresAt;
+              const unchanged = (prev?.expiresAt ?? null) === expiresAt;
               return {
                 name: a.name,
                 enabled: a.enabled,
@@ -92,14 +184,32 @@ export default function Accounts() {
                   : (prev?.keyMasked ?? '—'),
                 keyTail: key ? key.slice(-4) : (prev?.keyTail ?? ''),
                 hasKey: !!key || !!prev?.hasKey,
-              };
+                expiresAt,
+                // 日期变了就先按「到期 <日期>」展示，服务端刷新后换成准确的天数
+                expiry: unchanged
+                  ? (prev?.expiry ?? { kind: 'none', days: null })
+                  : { kind: expiresAt ? 'active' : 'none', days: null },
+                classify: prev?.classify ?? null,
+              } satisfies AccountView;
             }),
             mode: nextMode,
             active: nextActive,
+            classifyModel: nextModel,
           }
         : old,
     );
-    save.mutate({ payload: { accounts: nextAccounts, mode: nextMode, active: nextActive }, note });
+    save.mutate(
+      {
+        payload: {
+          accounts: nextAccounts,
+          mode: nextMode,
+          active: nextActive,
+          classifyModel: nextModel,
+        },
+        note,
+      },
+      { onSuccess: () => qc.invalidateQueries({ queryKey: qk.accounts }) },
+    );
   };
 
   const testAccount = (i: number, name: string): void => {
@@ -117,9 +227,9 @@ export default function Accounts() {
     const draft = draftFromServer();
     const editing = modal.index !== null;
     if (modal.index === null) {
-      draft.push({ name, key, enabled: true, existingIndex: null });
+      draft.push({ name, key, enabled: true, expiresAt: modal.expiresAt, existingIndex: null });
     } else {
-      draft[modal.index] = { ...(draft[modal.index] as DraftAccount), name, key };
+      draft[modal.index] = { ...(draft[modal.index] as DraftAccount), name, key, expiresAt: modal.expiresAt };
     }
     commit({ accounts: draft }, editing ? `已更新账号「${name}」` : `已添加账号「${name}」`);
     setModal(null);
@@ -139,47 +249,92 @@ export default function Accounts() {
         title="账号池"
         desc="只有账号级错误（key 失效 / 额度用完）才轮转到下一账号——频繁切换会让上游缓存失效、成本变高。所有修改即时保存。"
         actions={
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModal({ index: null, name: '', key: '' })}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setModal({ index: null, name: '', key: '', expiresAt: null })}
+          >
             添加账号
           </Button>
         }
       />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {/* 区域一：策略（决定下面这份名单怎么被使用） */}
-        <Panel title="选择策略" extra={<PanelHint>改动即时保存</PanelHint>}>
-          <div style={{ display: 'grid', gap: 8 }}>
-            <Select
-              style={{ width: 280 }}
-              value={mode}
-              onChange={(v) =>
-                commit(
-                  { mode: v },
-                  {
-                    sticky: '已切换为粘性模式：保住上游 prompt cache',
-                    single: '已切换为单账号模式：由你手动指定使用哪一个',
-                    roundrobin: '已切换为每请求轮转（会牺牲 prompt cache）',
-                  }[v as AccountMode],
-                )
-              }
-              options={[
-                { value: 'sticky', label: '粘性（推荐 · 保 prompt cache）' },
-                { value: 'single', label: '单账号（手动指定）' },
-                { value: 'roundrobin', label: '每请求轮转（牺牲缓存）' },
-              ]}
-            />
-            <Typography.Text type="secondary" style={{ fontSize: 12, lineHeight: '18px' }}>
-              {mode === 'single'
-                ? '点下方账号左侧圆点，指定实际使用哪一个'
-                : mode === 'sticky'
-                  ? '持续使用当前账号；只有 key 失效 / 额度用完这类账号级错误才轮转到下一个'
-                  : '每个请求都换一个账号——上游 prompt cache 会全部失效，成本明显更高'}
-            </Typography.Text>
+        {/* 区域一：池级设置（策略 + 体检判定模型）。两件都不是「某一个账号」的属性 */}
+        <Panel title="账号池设置" extra={<PanelHint>改动即时保存</PanelHint>}>
+          <div style={{ display: 'grid', gap: 16 }}>
+            <div style={{ display: 'grid', gap: 8 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                选择策略
+              </Typography.Text>
+              <Select
+                style={{ width: 280 }}
+                value={mode}
+                onChange={(v) =>
+                  commit(
+                    { mode: v },
+                    {
+                      sticky: '已切换为粘性模式：保住上游 prompt cache',
+                      single: '已切换为单账号模式：由你手动指定使用哪一个',
+                      roundrobin: '已切换为每请求轮转（会牺牲 prompt cache）',
+                    }[v as AccountMode],
+                  )
+                }
+                options={[
+                  { value: 'sticky', label: '粘性（推荐 · 保 prompt cache）' },
+                  { value: 'single', label: '单账号（手动指定）' },
+                  { value: 'roundrobin', label: '每请求轮转（牺牲缓存）' },
+                ]}
+              />
+              <Typography.Text type="secondary" style={{ fontSize: 12, lineHeight: '18px' }}>
+                {mode === 'single'
+                  ? '点下方账号左侧圆点，指定实际使用哪一个'
+                  : mode === 'sticky'
+                    ? '持续使用当前账号；只有 key 失效 / 额度用完这类账号级错误才轮转到下一个'
+                    : '每个请求都换一个账号——上游 prompt cache 会全部失效，成本明显更高'}
+              </Typography.Text>
+            </div>
+
+            <div style={{ display: 'grid', gap: 8 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                体检判定模型
+              </Typography.Text>
+              <Select
+                style={{ width: 280, fontFamily: 'var(--cps-font-mono)' }}
+                showSearch
+                value={classifyModel || undefined}
+                onChange={(v: string) => commit({ classifyModel: v }, `已把体检判定模型改为 ${v}`)}
+                options={classifyOptions}
+              />
+              <Typography.Text type="secondary" style={{ fontSize: 12, lineHeight: '18px' }}>
+                「体检」向这个模型发一次最小请求，看网关把它默认路由到哪：落到 openai-compatible-private 即风控号。要用
+                planner 管线的模型（cline-pass/*）才判得出来；每个账号消耗一次最小额度。
+              </Typography.Text>
+            </div>
           </div>
         </Panel>
 
         {/* 区域二：账号名单 */}
-        <Panel title="账号" extra={<PanelHint>{rows.length} 个</PanelHint>} flush>
+        <Panel
+          title="账号"
+          extra={
+            <Space size={12} align="center">
+              <PanelHint>{rows.length} 个</PanelHint>
+              {unclassified > 0 && <PanelHint>{unclassified} 个未判定</PanelHint>}
+              {noExpiry > 0 && <PanelHint>{noExpiry} 个未设置到期</PanelHint>}
+              <Button
+                size="small"
+                icon={<MedicineBoxOutlined />}
+                loading={classify.isPending}
+                disabled={!rows.some((a) => a.enabled)}
+                onClick={() => classify.mutate({})}
+              >
+                全部体检
+              </Button>
+            </Space>
+          }
+          flush
+        >
           {accounts.isError ? (
             <Alert
               type="error"
@@ -206,7 +361,7 @@ export default function Accounts() {
                 <Button
                   type="primary"
                   icon={<PlusOutlined />}
-                  onClick={() => setModal({ index: null, name: '', key: '' })}
+                  onClick={() => setModal({ index: null, name: '', key: '', expiresAt: null })}
                 >
                   添加账号
                 </Button>
@@ -217,6 +372,11 @@ export default function Accounts() {
               {rows.map((a, i) => {
                 const st = data?.stats[a.name];
                 const isActive = active === i && mode === 'single';
+                const testingThis =
+                  classify.isPending &&
+                  ((classify.variables?.names?.length ?? 0) > 0
+                    ? classify.variables?.names?.includes(a.name)
+                    : a.enabled);
                 return (
                   <div
                     key={`${a.name}-${a.keyMasked}`}
@@ -232,8 +392,13 @@ export default function Accounts() {
                         />
                       </Tooltip>
 
-                      <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 8 }}>
-                        <Typography.Text strong>{a.name || '（未命名）'}</Typography.Text>
+                      <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 6 }}>
+                        {/* 名称行带两个徽标：扫一眼就知道「这个号能不能用 / 什么时候到期」 */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
+                          <Typography.Text strong>{a.name || '（未命名）'}</Typography.Text>
+                          <ClassifyTag record={a.classify} />
+                          <ExpiryTag expiry={a.expiry} expiresAt={a.expiresAt} />
+                        </div>
                         <Typography.Text code style={{ fontSize: 12 }}>
                           {a.keyMasked}
                         </Typography.Text>
@@ -266,30 +431,42 @@ export default function Accounts() {
                       </Tooltip>
 
                       <Space size={4}>
-                        <Button
-                          size="small"
-                          loading={
-                            testKey.isPending &&
-                            testKey.variables !== undefined &&
-                            'index' in testKey.variables.payload &&
-                            testKey.variables.payload.index === i
-                          }
-                          onClick={() => testAccount(i, a.name)}
-                        >
-                          测试
-                        </Button>
-                        <Tooltip title="编辑名称与密钥">
+                        <Tooltip title="发一次最小请求，确认这个账号的密钥可用">
+                          <Button
+                            size="small"
+                            loading={
+                              testKey.isPending &&
+                              testKey.variables !== undefined &&
+                              'index' in testKey.variables.payload &&
+                              testKey.variables.payload.index === i
+                            }
+                            onClick={() => testAccount(i, a.name)}
+                          >
+                            测试
+                          </Button>
+                        </Tooltip>
+                        <Tooltip title="发一次最小请求，判断这个账号是不是风控号（消耗一次最小额度）">
+                          <Button
+                            size="small"
+                            icon={<MedicineBoxOutlined />}
+                            aria-label="体检"
+                            loading={testingThis}
+                            disabled={classify.isPending && !testingThis}
+                            onClick={() => classify.mutate({ names: [a.name] })}
+                          />
+                        </Tooltip>
+                        <Tooltip title="编辑名称、密钥与到期时间">
                           <Button
                             size="small"
                             type="text"
                             icon={<EditOutlined />}
                             aria-label="编辑账号"
-                            onClick={() => setModal({ index: i, name: a.name, key: '' })}
+                            onClick={() => setModal({ index: i, name: a.name, key: '', expiresAt: a.expiresAt })}
                           />
                         </Tooltip>
                         <Popconfirm
                           title={`删除账号「${a.name}」？`}
-                          description="删除后其密钥将从配置中移除，无法恢复。"
+                          description="删除后其密钥将从配置中移除，用量统计与体检结论一并清除，无法恢复。"
                           okText="删除"
                           okButtonProps={{ danger: true }}
                           cancelText="取消"
@@ -342,6 +519,20 @@ export default function Accounts() {
               value={modal?.key ?? ''}
               onChange={(e) => setModal((m) => (m ? { ...m, key: e.target.value } : m))}
             />
+          </div>
+          <div>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              到期时间
+            </Typography.Text>
+            <DatePicker
+              style={{ marginTop: 4, width: '100%' }}
+              placeholder="可选，留空表示未设置"
+              value={modal?.expiresAt ? dayjs(modal.expiresAt) : null}
+              onChange={(d) => setModal((m) => (m ? { ...m, expiresAt: d ? d.format('YYYY-MM-DD') : null } : m))}
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
+              只用来提醒，不会自动停用账号。
+            </Typography.Text>
           </div>
         </Space>
       </Modal>

@@ -65,7 +65,8 @@ server/src/
   store/      jsonStore(原子写:tmp→fsync→rename) / metaStore(metadata.json 校验兜底)
   upstream/   routing(纯函数:管道判定+偏好注入) / errors(三分类) / client / response(unwrap)
               probe(探测+校验) / catalog(目录+官方清单)
-  accounts/   pool(sticky默认/单账号/轮询,账号级错误才轮转)
+  accounts/   pool(sticky默认/单账号/轮询,账号级错误才轮转) / classify(风控体检)
+              naming(账号名唯一) / expiry(到期状态) / types(观测值类型)
   proxy/      candidates(候选生成纯函数) / chain(故障转移执行器) / health(冷却) / stream(增量解析)
   http/       server(生命周期) / router / respond / routes/{api,chat,static}
   security/   compare(timingSafeEqual/掩码) / bind(启动闸门) / middleware(鉴权/Origin/CORS)
@@ -132,6 +133,18 @@ web/src/      api/{client,types,hooks} / features/* / panel.tsx(区块容器) / 
 
 - **prompt cache 是一等约束**：agent 多轮对话每轮带全上下文，切渠道/账号 = 缓存全失效。
   所以账号默认粘性、一次请求固定账号、失败渠道冷却沉底而非剔除。
+- **账号的标识是 `name`**（3.0 起）：全局唯一，在**加载、环境变量注入、保存**三处强制
+  （重名自动改成 `名字-2`，可见且不丢密钥）。用量统计与风控结论都按名字存，所以改名要
+  迁移观测数据（两段式搬运，防止 A/B 互换名字互相覆盖），删除账号要清掉孤儿记录
+  （历史记录不动——那是日志）。
+- **账号风控分类是观测值，不是配置**：体检 = 用该账号 key 发一次**不带钉住参数**的最小
+  请求，看网关默认路由——`openai-compatible-private` = 风控，其它真实渠道 = 正常。
+  - `unknown` 是一等状态：没体检过 / 429 / 网络失败 / 网关没返回路由信息都不猜
+  - **失败保留上一次的结论**（只更新 note），一次抖动不抹掉已知事实
+  - 绝不参与路由决策：结论会随时间翻转，路由永远按实际请求的结果走
+  - 只解释 planner 管线；direct（OpenRouter 类）模型两类账号都能钉
+- **到期时间只提醒、不停用**：`expiresAt` 是用户声明（本地日期 `YYYY-MM-DD`），
+  状态由服务端按服务端时钟计算。停用是破坏性动作，日期可能只是没续上。
 - **错误三分类**（`upstream/errors.ts`）：账号级→立即换账号；渠道级→重试后切换；
   请求级→重试一次即切。判定顺序有讲究（文本先于状态码、限流先于配额），注释里有原因。
 - **failover 全局预算**：`failover.budgetMs` 封顶，agent 场景绝不久挂。

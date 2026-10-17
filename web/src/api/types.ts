@@ -84,6 +84,29 @@ export interface AccountView {
   keyMasked: string;
   keyTail: string;
   hasKey: boolean;
+  /** 用户声明的到期日期（YYYY-MM-DD）；未设置为 null。 */
+  expiresAt: string | null;
+  /** 到期状态由服务端计算（时钟与 i18n 都以服务端为准）。 */
+  expiry: ExpiryState;
+  /** 风控体检结论；从未体检过为 null。 */
+  classify: AccountClassRecord | null;
+}
+
+/** 风控分类：观测值，会随时间翻转（见 server/src/accounts/types.ts）。 */
+export type AccountClassKind = 'normal' | 'private' | 'unknown';
+
+export interface AccountClassRecord {
+  class: AccountClassKind;
+  checkedAt: number | null;
+  note?: string;
+}
+
+export type ExpiryKind = 'none' | 'active' | 'soon' | 'expired';
+
+export interface ExpiryState {
+  kind: ExpiryKind;
+  /** 距到期还有几天（今天 = 0，已过期为负）；未设置时为 null。 */
+  days: number | null;
 }
 
 export interface AccountStats {
@@ -96,7 +119,22 @@ export interface AccountsResponse {
   accounts: AccountView[];
   mode: AccountMode;
   active: number;
+  /** 风控体检的判定模型。 */
+  classifyModel: string;
   stats: Record<string, AccountStats>;
+}
+
+export interface ClassifyResult extends AccountClassRecord {
+  name: string;
+  /** 本次是否新得出结论（false = 沿用旧结论，note 是失败原因）。 */
+  fresh: boolean;
+}
+
+export interface ClassifyResponse {
+  ok: boolean;
+  results: ClassifyResult[];
+  summary: { normal: number; private: number; unknown: number; failed: number };
+  cancelled: boolean;
 }
 
 export interface SecurityResponse {
@@ -170,3 +208,10 @@ export const STATUS_TAG: Record<UpstreamStatusKind, { label: string; color: stri
 
 /** 校验状态排序权重：可用优先、不可钉最后。 */
 export const STATUS_RANK: Record<UpstreamStatusKind, number> = { ok: 0, limited: 1, unknown: 2, auth: 3, bad: 4 };
+
+/** 风控分类 → 徽标文案与颜色（页面只引用，不各自写一份）。 */
+export const ACCOUNT_CLASS_TAG: Record<AccountClassKind, { label: string; color: string }> = {
+  normal: { label: '正常', color: 'green' },
+  private: { label: '风控', color: 'orange' },
+  unknown: { label: '未判定', color: 'default' },
+};

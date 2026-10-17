@@ -1,7 +1,18 @@
 import { z } from 'zod';
 
+import { isIsoDate } from './date.ts';
+
 /** 当前配置格式版本。加载到更低版本会触发迁移，更高版本拒绝启动（避免新版写的配置被旧版改坏）。 */
 export const CONFIG_VERSION = 2;
+
+/**
+ * 账号风控体检用的默认判定模型。
+ *
+ * 为什么是 flash 型号：体检每次都要真实发请求，要快、要便宜；而且必须是
+ * **planner 管线**的模型（`cline-pass/*`）——我们要看的正是它的默认路由。
+ * direct 模型（OpenRouter 类）两类账号都能钉住，判不出风控（docs/pinning.md 第五节）。
+ */
+export const DEFAULT_CLASSIFY_MODEL = 'cline-pass/deepseek-v4.1-flash';
 
 /** 上游网关默认地址（Cline 官方）。 */
 export const DEFAULT_UPSTREAM_BASE = 'https://api.cline.bot/api/v1';
@@ -32,6 +43,13 @@ export const AccountSchema = z.object({
   name: z.string().min(1).max(50).catch('账号'),
   key: z.string().min(1),
   enabled: z.boolean().catch(true),
+  /**
+   * 用户声明的到期日期（本地日期 `YYYY-MM-DD`，可缺省）。
+   * 非法日期按「未设置」处理而不是丢弃整个账号——手改配置写错一个数字，
+   * 不该把密钥一起丢掉。**到期不自动停用账号**：可能只是没续期日期，
+   * 停用是破坏性动作（ROADMAP §3）。
+   */
+  expiresAt: z.string().refine(isIsoDate, '日期格式应为 YYYY-MM-DD').optional().catch(undefined),
 });
 export type Account = z.infer<typeof AccountSchema>;
 
@@ -97,6 +115,8 @@ export const ConfigSchema = z.object({
   accounts: z.array(z.unknown()).catch([]).default([]),
   accountMode: AccountModeSchema.catch('sticky').default('sticky'),
   activeAccount: z.number().int().min(0).catch(0).default(0),
+  /** 账号风控体检的判定模型（见上方 DEFAULT_CLASSIFY_MODEL 的注释）。 */
+  classifyModel: z.string().min(1).catch(DEFAULT_CLASSIFY_MODEL).default(DEFAULT_CLASSIFY_MODEL),
 
   // ---- 模型 ----
   // 键缺失或值损坏 → 恢复默认清单；显式写 [] → 尊重用户清空，不复活
@@ -135,6 +155,7 @@ export function defaultConfig(): Config {
     accounts: [],
     accountMode: 'sticky',
     activeAccount: 0,
+    classifyModel: DEFAULT_CLASSIFY_MODEL,
     knownModels: [...DEFAULT_KNOWN_MODELS],
     perModel: {},
     failover: FailoverSchema.parse({}),

@@ -1,3 +1,4 @@
+import { ensureUniqueAccountNames } from '../accounts/naming.ts';
 import type { Config } from './schema.ts';
 
 /**
@@ -11,7 +12,12 @@ export function applyEnvOverrides(config: Config, env: NodeJS.ProcessEnv = proce
 
   const clineKey = env.CLINE_PASS_KEY?.trim();
   if (clineKey && !config.accounts.some((a) => a.key === clineKey)) {
-    config.accounts = [{ name: 'env-account', key: clineKey, enabled: true }, ...config.accounts];
+    const merged = ensureUniqueAccountNames([
+      { name: 'env-account', key: clineKey, enabled: true },
+      ...config.accounts,
+    ]);
+    config.accounts = merged.accounts;
+    for (const r of merged.renamed) notes.push(`账号名重复，已自动改名：${r.from} → ${r.to}`);
     notes.push('CLINE_PASS_KEY 已注入账号池');
   }
 

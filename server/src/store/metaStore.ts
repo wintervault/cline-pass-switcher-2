@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import type { AccountClassRecord } from '../accounts/types.ts';
 import { moduleLogger } from '../log/logger.ts';
 import {
   type AccountStats,
@@ -75,6 +76,17 @@ const AccountStatsSchema = z.object({
   lastError: z.string().nullable().catch(null).default(null),
 });
 
+/**
+ * 账号风控体检结论。`unknown` 是一等状态：没体检过、或最近一次体检没能
+ * 得出结论（失败原因在 note），**不允许**用「不是 private 就是 normal」这种
+ * 二分法把失败当成正常。
+ */
+const AccountClassSchema = z.object({
+  class: z.enum(['normal', 'private', 'unknown']).catch('unknown').default('unknown'),
+  checkedAt: z.number().nullable().catch(null).default(null),
+  note: z.string().optional().catch(undefined),
+});
+
 const OfficialModelsFetchSchema = z.object({
   ts: z.number().catch(0).default(0),
   sources: z.array(z.string()).catch([]).default([]),
@@ -95,6 +107,11 @@ export function parseHistoryEntry(raw: unknown): HistoryEntry | null {
 
 export function parseAccountStats(raw: unknown): AccountStats | null {
   const r = AccountStatsSchema.safeParse(raw);
+  return r.success ? r.data : null;
+}
+
+export function parseAccountClass(raw: unknown): AccountClassRecord | null {
+  const r = AccountClassSchema.safeParse(raw);
   return r.success ? r.data : null;
 }
 
@@ -124,6 +141,10 @@ function isMeaningfulHistory(e: HistoryEntry): boolean {
 
 function isMeaningfulStats(s: AccountStats): boolean {
   return s.requests > 0 || s.lastUsed !== null || s.lastError !== null;
+}
+
+function isMeaningfulAccountClass(c: AccountClassRecord): boolean {
+  return c.class !== 'unknown' || c.checkedAt !== null || c.note !== undefined;
 }
 
 export interface LoadMetaResult {
@@ -191,6 +212,17 @@ export async function loadMetaStore(file: string): Promise<LoadMetaResult> {
     }
   }
   if (droppedStats) notes.push(`丢弃了 ${droppedStats} 条损坏的账号统计`);
+
+  let droppedClass = 0;
+  const accountClass = source['accountClass'];
+  if (typeof accountClass === 'object' && accountClass !== null && !Array.isArray(accountClass)) {
+    for (const [name, entry] of Object.entries(accountClass as Record<string, unknown>)) {
+      const parsed = parseAccountClass(entry);
+      if (parsed && isMeaningfulAccountClass(parsed)) meta.accountClass[name] = parsed;
+      else droppedClass += 1;
+    }
+  }
+  if (droppedClass) notes.push(`丢弃了 ${droppedClass} 条损坏或无信息量的账号体检记录`);
 
   if (Array.isArray(source['catalog']))
     meta.catalog = (source['catalog'] as unknown[]).filter((x): x is string => typeof x === 'string');
