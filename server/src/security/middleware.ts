@@ -46,7 +46,9 @@ export function authMiddleware(getProxyKey: (ctx: Ctx) => string, options: AuthO
     const admin = String(ctx.req.headers['x-admin-key'] ?? '').trim();
     if ((bearer && safeEqual(bearer, key)) || (admin && safeEqual(admin, key))) return next();
 
-    sendError(ctx.res, 401, 'unauthorized: 访问密钥缺失或错误', 'auth_error');
+    // 这句是给 OpenAI 兼容客户端看的（代理端点），用英文；控制台自己的 401
+    // 由 access gate 处理，不依赖这段文案
+    sendError(ctx.res, 401, 'unauthorized: missing or invalid API key', 'auth_error');
   };
 }
 
