@@ -37,6 +37,22 @@ npm run build       # server(tsc) + web(vite)
 
 真实网关行为：按 `docs/UAT.md` 手动验收（消耗极小额真实额度）。
 
+## 开发 / 自测隔离（用户明确要求，2026-10-17）
+
+**正在运行的线上实例永远不在开发流程里被暂停、替换或重启**——那是用户日常使用的实例
+（便携版 + 托盘，稳定跑着）。开发与自测一律另起隔离实例，端口也不许撞：
+
+```bash
+npm run dev:isolated                                  # 端口 3133、数据目录 %TEMP%/cps-dev
+node scripts/dev-server.mjs --port 3134 --data <目录>  # 自定义
+node scripts/dev-server.mjs --from "<线上 data 目录>"  # 只复制 config/metadata，不复制日志
+```
+
+- 脚本**拒绝** 3123（线上实例）与 3122（桌面壳控制通道）
+- 自测（浏览器/DOM 检查、真实网关实验）走隔离实例的端口；对线上 3123 只做**只读 GET**
+- 真实网关实验先算清「最小必要请求数」再发——消耗的是用户的订阅额度
+- **不要把开发中的构建产物热替换进线上目录**（旧做法已废止）；要上线就走发版流程
+
 ## 技术栈与结构
 
 npm workspaces：`server/`（Node ≥20，原生 http + TS）+ `web/`（Vite + React 19 + antd 6 暗色）。
@@ -124,6 +140,9 @@ web/src/      api/{client,types,hooks} / features/* / panel.tsx(区块容器) / 
 - `max_tokens` 太小 → HTTP 500 `empty response content`，是推理烧完预算，不是路由故障。
 - Windows 上 `child.kill('SIGTERM')` 是无条件终止，优雅退出逻辑要直接单测 `shutdownServer`。
 - biome.json 不接受注释；`noNonNullAssertion` 是 error 级，用显式 undefined 检查替代 `!`。
+- **读 `data/config.json` 时不要图省事把整个账号对象 `ConvertTo-Json` 打印出来**——
+  `accounts[].key` 会明文进对话/日志（2026-10-17 踩过两次）。只取需要的字段，
+  需要认证就把 key 直接放进请求头，不落地、不回显。
 
 ## 桌面壳（desktop/，Tauri 2）
 
