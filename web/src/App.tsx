@@ -12,6 +12,7 @@ import {
 } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
 import { Alert, App as AntdApp, Button, ConfigProvider, Layout, Tooltip, theme } from 'antd';
+import enUS from 'antd/es/locale/en_US';
 import zhCN from 'antd/es/locale/zh_CN';
 import { type ComponentType, useCallback, useEffect, useState } from 'react';
 import { AccessGate } from './accessGate.tsx';
@@ -27,6 +28,7 @@ import Playground from './features/Playground.tsx';
 import { useFeedback } from './feedback.ts';
 import { GatewayScopeProvider } from './gatewayScope.tsx';
 import { useHostControl } from './hostBridge.ts';
+import { I18nProvider, type MsgKey, useI18n, useT } from './i18n/index.tsx';
 import { PAGE_GUTTER, PAGE_WIDTH } from './layout.ts';
 import { ServiceBanner } from './serviceBanner.tsx';
 import { StatusBar } from './statusBar.tsx';
@@ -38,13 +40,13 @@ const PIN_KEY = 'cps_pinned_page';
 const SIDEBAR_KEY = 'cps_sidebar';
 
 /** 导航注册表：壳层只认这张表；页面增减只改这里。 */
-const PAGES: { key: string; label: string; icon: ComponentType; element: ComponentType }[] = [
-  { key: 'models', label: '订阅模型', icon: NodeIndexOutlined, element: Models },
-  { key: 'accounts', label: '账号池', icon: TeamOutlined, element: Accounts },
-  { key: 'gateways', label: '网关', icon: GatewayOutlined, element: Gateways },
-  { key: 'playground', label: '测试台', icon: ExperimentOutlined, element: Playground },
-  { key: 'history', label: '请求历史', icon: HistoryOutlined, element: History },
-  { key: 'catalog', label: '完整目录', icon: AppstoreOutlined, element: Catalog },
+const PAGES: { key: string; labelKey: MsgKey; icon: ComponentType; element: ComponentType }[] = [
+  { key: 'models', labelKey: 'nav.models', icon: NodeIndexOutlined, element: Models },
+  { key: 'accounts', labelKey: 'nav.accounts', icon: TeamOutlined, element: Accounts },
+  { key: 'gateways', labelKey: 'nav.gateways', icon: GatewayOutlined, element: Gateways },
+  { key: 'playground', labelKey: 'nav.playground', icon: ExperimentOutlined, element: Playground },
+  { key: 'history', labelKey: 'nav.history', icon: HistoryOutlined, element: History },
+  { key: 'catalog', labelKey: 'nav.catalog', icon: AppstoreOutlined, element: Catalog },
 ];
 
 /** 左侧导航：可折叠（64px 图标 ⇄ 200px 图标+文字）；悬停可钉住页面（打开时默认落到此页）。 */
@@ -64,6 +66,7 @@ function SideNav({
   onTogglePin: (key: string) => void;
 }) {
   const { token } = theme.useToken();
+  const t = useT();
   const btnBase = { height: 44, width: '100%', gap: 10, paddingInline: collapsed ? 0 : 10 } as const;
   const gutter = collapsed ? '0 10px' : '0 12px';
   return (
@@ -77,10 +80,13 @@ function SideNav({
     */
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '20px 0 12px' }}>
       <div style={{ display: 'flex', justifyContent: collapsed ? 'center' : 'flex-end', padding: gutter }}>
-        <Tooltip title={collapsed ? '展开侧栏' : '收起侧栏'} placement={collapsed ? 'right' : 'bottomRight'}>
+        <Tooltip
+          title={collapsed ? t('sidebar.expand') : t('sidebar.collapse')}
+          placement={collapsed ? 'right' : 'bottomRight'}
+        >
           <Button
             type="text"
-            aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
+            aria-label={collapsed ? t('sidebar.expand') : t('sidebar.collapse')}
             onClick={onToggle}
             style={{
               width: 28,
@@ -101,10 +107,10 @@ function SideNav({
           const Comp = p.icon;
           return (
             <div key={p.key} className="cps-nav-item">
-              <Tooltip title={collapsed ? p.label : undefined} placement="right">
+              <Tooltip title={collapsed ? t(p.labelKey) : undefined} placement="right">
                 <Button
                   type="text"
-                  aria-label={p.label}
+                  aria-label={t(p.labelKey)}
                   className={[
                     'cps-nav',
                     active ? 'cps-nav-active' : '',
@@ -123,15 +129,15 @@ function SideNav({
                   icon={<Comp />}
                 >
                   {!collapsed && (
-                    <span style={{ fontSize: 14, paddingRight: 18, whiteSpace: 'nowrap' }}>{p.label}</span>
+                    <span style={{ fontSize: 14, paddingRight: 18, whiteSpace: 'nowrap' }}>{t(p.labelKey)}</span>
                   )}
                 </Button>
               </Tooltip>
               {!collapsed && (
-                <Tooltip title={isPinned ? '取消钉住' : '钉住：打开控制台时默认显示此页'}>
+                <Tooltip title={isPinned ? t('pin.unpin') : t('pin.hint')}>
                   <button
                     type="button"
-                    aria-label={isPinned ? `取消钉住${p.label}` : `钉住${p.label}`}
+                    aria-label={`${isPinned ? t('pin.unpin') : t('pin.pin')} ${t(p.labelKey)}`}
                     className={isPinned ? 'cps-pin cps-pinned' : 'cps-pin'}
                     onClick={() => onTogglePin(p.key)}
                   >
@@ -149,6 +155,7 @@ function SideNav({
 
 function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () => void }) {
   const { token } = theme.useToken();
+  const { t, lang, setLang } = useI18n();
   const meta = useMeta();
   const refresh = useRefresh();
   const qc = useQueryClient();
@@ -181,17 +188,19 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
   };
 
   const togglePin = (key: string): void => {
-    const label = PAGES.find((p) => p.key === key)?.label ?? key;
+    const page = PAGES.find((p) => p.key === key);
+    const name = page ? t(page.labelKey) : key;
     setPinned((p) => {
       const next = p === key ? null : key;
       if (next) localStorage.setItem(PIN_KEY, next);
       else localStorage.removeItem(PIN_KEY);
-      fb.ok(next ? `已钉住「${label}」：下次打开控制台直接进这里` : `已取消钉住「${label}」`);
+      fb.ok(next ? t('pin.done', { name }) : t('pin.undone', { name }));
       return next;
     });
   };
 
-  const [authKey, setKey] = useState(getAuthKey());
+  /** 存一份状态只为在密钥变化时触发重渲染（值本身不再显示）。 */
+  const [, setKey] = useState(getAuthKey());
   /**
    * 需要密钥才能读控制台 API（只可能出现在**远端访问**的部署上）。
    *
@@ -237,20 +246,21 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
   const tryKey = async (): Promise<void> => {
     const candidate = keyDraft.trim();
     if (!candidate) {
-      setKeyError('请先填入访问密钥');
+      setKeyError(t('key.required'));
       return;
     }
     setKeyChecking(true);
     setKeyError(null);
     try {
       const res = await fetch('/api/models', { headers: { 'X-Admin-Key': candidate } });
-      if (!res.ok) throw new Error(res.status === 401 ? '密钥不正确' : `服务端返回 ${res.status}`);
+      if (!res.ok)
+        throw new Error(res.status === 401 ? t('key.invalid') : t('key.serverStatus', { status: res.status }));
       setAuthKey(candidate);
       setKey(candidate);
       setNeedKey(false);
       setKeyDraft('');
       void qc.invalidateQueries();
-      fb.ok('密钥有效，已进入控制台');
+      fb.ok(t('key.ok'));
     } catch (err) {
       setKeyError((err as Error).message);
     } finally {
@@ -329,11 +339,11 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
                         type="error"
                         showIcon
                         style={{ marginBottom: 16 }}
-                        message="尚未配置上游 API Key"
-                        description="在「账号池」里添加你的 Cline Pass 账号（sk_ 开头的 key）并保存；也可通过 CLINE_PASS_KEY 环境变量提供。"
+                        message={t('app.notConfigured.title')}
+                        description={t('app.notConfigured.desc')}
                         action={
                           <Button size="small" danger onClick={() => setNav('accounts')}>
-                            去配置
+                            {t('app.notConfigured.action')}
                           </Button>
                         }
                       />
@@ -361,17 +371,12 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
               version={meta.data?.version}
               onOpenGateways={() => setNav('gateways')}
               mode={mode}
+              lang={lang}
+              onToggleLang={setLang}
               onToggleTheme={onToggleTheme}
               onRefresh={() => {
                 refresh();
-                fb.ok('已刷新全部数据');
-              }}
-              loggedIn={Boolean(authKey)}
-              onLogout={() => {
-                setAuthKey('');
-                setKey('');
-                void qc.invalidateQueries();
-                fb.info('已清除本机保存的访问密钥');
+                fb.ok(t('app.refreshed'));
               }}
             />
           </Layout>
@@ -381,8 +386,17 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
   );
 }
 
-/** 主题状态在最外层；Console 在 ConfigProvider 内部才能拿到主题 token。 */
+/** 语言与主题都在最外层：Console 在 ConfigProvider 内部才能拿到主题 token 与 locale。 */
 export default function App() {
+  return (
+    <I18nProvider>
+      <AppShell />
+    </I18nProvider>
+  );
+}
+
+function AppShell() {
+  const { lang } = useI18n();
   const [mode, setMode] = useState<ThemeMode>(initialTheme);
 
   const toggleTheme = (): void => {
@@ -392,7 +406,8 @@ export default function App() {
   };
 
   return (
-    <ConfigProvider theme={mode === 'dark' ? darkTheme : lightTheme} locale={zhCN}>
+    // antd 的组件内建文案（分页、空态、日期选择等）跟随语言即时切换
+    <ConfigProvider theme={mode === 'dark' ? darkTheme : lightTheme} locale={lang === 'zh-CN' ? zhCN : enUS}>
       <AntdApp>
         <Console mode={mode} onToggleTheme={toggleTheme} />
       </AntdApp>

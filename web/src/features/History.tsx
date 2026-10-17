@@ -20,24 +20,25 @@ import { useHistory } from '../api/hooks.ts';
 import type { HistoryEntry, TraceEntry } from '../api/types.ts';
 import { useFeedback } from '../feedback.ts';
 import { useGatewayScope } from '../gatewayScope.tsx';
+import { type MsgKey, useI18n } from '../i18n/index.tsx';
 import { PageHeader } from '../pageHeader.tsx';
 import { Panel } from '../panel.tsx';
 
 /** 自动刷新间隔（毫秒）；0 = 关闭。 */
-const REFRESH_OPTIONS = [
-  { value: 0, label: '自动刷新：关' },
-  { value: 5_000, label: '每 5 秒' },
-  { value: 15_000, label: '每 15 秒' },
-  { value: 30_000, label: '每 30 秒' },
+const REFRESH_OPTIONS: Array<{ value: number; labelKey: MsgKey }> = [
+  { value: 0, labelKey: 'history.interval.off' },
+  { value: 5_000, labelKey: 'history.interval.5s' },
+  { value: 15_000, labelKey: 'history.interval.15s' },
+  { value: 30_000, labelKey: 'history.interval.30s' },
 ];
 
 /** 相对时间：一眼知道「多久之前」，悬停看完整时间。 */
-function relTime(ts: number): string {
+function relTime(ts: number, t: (key: MsgKey, params?: Record<string, string | number>) => string): string {
   const diff = Date.now() - ts;
-  if (diff < 60_000) return '刚刚';
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
-  return `${Math.floor(diff / 86_400_000)} 天前`;
+  if (diff < 60_000) return t('history.rel.now');
+  if (diff < 3_600_000) return t('history.rel.minutes', { count: Math.floor(diff / 60_000) });
+  if (diff < 86_400_000) return t('history.rel.hours', { count: Math.floor(diff / 3_600_000) });
+  return t('history.rel.days', { count: Math.floor(diff / 86_400_000) });
 }
 
 /** 账号：邮箱太长只留首段 + 域名，完整值进悬停。纯文本呈现——
@@ -79,6 +80,7 @@ const dotStatus = (status: number): 'success' | 'warning' | 'error' | 'default' 
  */
 function TraceChain({ trace, attempts }: { trace?: TraceEntry[]; attempts: string[] }) {
   const { token } = theme.useToken();
+  const { t: tr } = useI18n();
   const list = trace?.length
     ? trace
     : (attempts ?? []).map((u) => ({ upstream: u === 'auto' ? null : u, status: 200, ms: 0, note: '' }));
@@ -87,22 +89,27 @@ function TraceChain({ trace, attempts }: { trace?: TraceEntry[]; attempts: strin
     <Tooltip
       title={
         <div style={{ display: 'grid', gap: 2 }}>
-          {list.map((t) => (
-            <div key={`${t.upstream ?? 'auto'}|${t.status}|${t.ms}|${t.note}`}>
-              {t.upstream ?? '自动'} · {fmtMs(t.ms)} · HTTP {t.status}
-              {t.note && t.note !== 'ok' ? ` · ${t.note}` : ''}
+          {list.map((entry) => (
+            <div key={`${entry.upstream ?? 'auto'}|${entry.status}|${entry.ms}|${entry.note}`}>
+              {entry.upstream ?? tr('history.trace.auto')} · {fmtMs(entry.ms)} · HTTP {entry.status}
+              {entry.note && entry.note !== 'ok' ? ` · ${entry.note}` : ''}
             </div>
           ))}
         </div>
       }
     >
       <div className="cps-trace">
-        {list.map((t, i) => (
-          <span key={`${t.upstream ?? 'auto'}|${t.status}|${t.ms}|${t.note}`} className="cps-trace-item">
+        {list.map((entry, i) => (
+          <span
+            key={`${entry.upstream ?? 'auto'}|${entry.status}|${entry.ms}|${entry.note}`}
+            className="cps-trace-item"
+          >
             {i > 0 && <span style={{ color: token.colorTextQuaternary }}>›</span>}
-            <Badge status={dotStatus(t.status)} />
-            <span className="cps-mono">{t.upstream ?? 'auto'}</span>
-            <span style={{ color: token.colorTextTertiary, fontVariantNumeric: 'tabular-nums' }}>{fmtMs(t.ms)}</span>
+            <Badge status={dotStatus(entry.status)} />
+            <span className="cps-mono">{entry.upstream ?? 'auto'}</span>
+            <span style={{ color: token.colorTextTertiary, fontVariantNumeric: 'tabular-nums' }}>
+              {fmtMs(entry.ms)}
+            </span>
           </span>
         ))}
       </div>
@@ -123,6 +130,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: str
 
 export default function History() {
   const { token } = theme.useToken();
+  const { t } = useI18n();
   const fb = useFeedback();
   const history = useHistory();
   const rows = history.data?.history ?? [];
@@ -156,16 +164,16 @@ export default function History() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <PageHeader title="请求历史" desc="每次请求的实际渠道、耗时与尝试序列；失败行整行标红，便于排查。" />
+      <PageHeader title={t('history.title')} desc={t('history.desc')} />
       {history.isError ? (
         <Alert
           type="error"
           showIcon
-          message="请求历史加载失败"
-          description="服务可能正在重启；稍候重试，或用状态栏的刷新按钮。"
+          message={t('history.loadFailed')}
+          description={t('history.loadFailed.desc')}
           action={
             <Button size="small" onClick={() => void history.refetch()}>
-              重试
+              {t('common.retry')}
             </Button>
           }
         />
@@ -176,23 +184,27 @@ export default function History() {
           flush
           title={
             <Space size={32} wrap>
-              <Stat label="成功" value={String(okRows.length)} tone={token.colorSuccess} />
-              <Stat label="失败" value={String(failed)} tone={failed ? token.colorError : undefined} />
-              <Stat label="平均耗时" value={`${avgMs}ms`} />
-              <Stat label="流式占比" value={`${streamPct}%`} />
+              <Stat label={t('history.stat.ok')} value={String(okRows.length)} tone={token.colorSuccess} />
+              <Stat
+                label={t('history.stat.failed')}
+                value={String(failed)}
+                tone={failed ? token.colorError : undefined}
+              />
+              <Stat label={t('history.stat.avg')} value={`${avgMs}ms`} />
+              <Stat label={t('history.stat.stream')} value={`${streamPct}%`} />
             </Space>
           }
           extra={
             /* 刷新控制：手动一次 / 按间隔自动（失败排查时开着它最省事） */
             <Space size={8}>
-              <Tooltip title="立即刷新">
+              <Tooltip title={t('history.refresh')}>
                 <Button
                   size="small"
                   icon={<ReloadOutlined spin={history.isFetching} />}
                   onClick={() => {
                     void history.refetch().then((r) => {
-                      if (r.isError) fb.fail('刷新失败', r.error);
-                      else fb.ok(`已刷新：共 ${r.data?.history.length ?? 0} 条记录`);
+                      if (r.isError) fb.fail(t('history.refreshFailed'), r.error);
+                      else fb.ok(t('history.refreshed', { count: r.data?.history.length ?? 0 }));
                     });
                   }}
                 />
@@ -202,7 +214,7 @@ export default function History() {
                 style={{ width: 132 }}
                 value={interval}
                 onChange={setIntervalMs}
-                options={REFRESH_OPTIONS}
+                options={REFRESH_OPTIONS.map((o) => ({ value: o.value, label: t(o.labelKey) }))}
               />
               {gateways.length > 1 && (
                 <Select
@@ -211,7 +223,7 @@ export default function History() {
                   value={gatewayFilter}
                   onChange={setGatewayFilter}
                   options={[
-                    { value: 'all', label: '全部网关' },
+                    { value: 'all', label: t('history.gateway.all') },
                     ...gateways.map((g) => ({ value: g.id, label: g.name })),
                   ]}
                 />
@@ -221,9 +233,9 @@ export default function History() {
                 value={view}
                 onChange={(v) => setView(v as typeof view)}
                 options={[
-                  { value: 'all', label: `全部 ${rows.length}` },
-                  { value: 'ok', label: `成功 ${okRows.length}` },
-                  { value: 'fail', label: `失败 ${failed}` },
+                  { value: 'all', label: t('history.view.all', { count: rows.length }) },
+                  { value: 'ok', label: t('history.view.ok', { count: okRows.length }) },
+                  { value: 'fail', label: t('history.view.fail', { count: failed }) },
                 ]}
               />
             </Space>
@@ -244,26 +256,24 @@ export default function History() {
                而不是继续压缩每一列。 */
             scroll={{ x: 870 }}
             locale={{
-              emptyText: (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无请求记录：agent 发出请求后会出现在这里" />
-              ),
+              emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('history.empty')} />,
             }}
             pagination={{ pageSize: 20, hideOnSinglePage: true, showSizeChanger: false }}
             onRow={(r) => ({ style: r.error ? { background: token.colorErrorBg } : undefined })}
             columns={[
               {
-                title: '时间',
+                title: t('history.col.time'),
                 width: 72,
                 render: (_, r) => (
                   <Tooltip title={new Date(r.ts).toLocaleString()}>
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      {relTime(r.ts)}
+                      {relTime(r.ts, t)}
                     </Typography.Text>
                   </Tooltip>
                 ),
               },
               {
-                title: '网关',
+                title: t('history.col.gateway'),
                 width: 76,
                 render: (_, r) => (
                   <Tooltip title={gatewayName(r.gateway)}>
@@ -274,7 +284,7 @@ export default function History() {
                 ),
               },
               {
-                title: '模型',
+                title: t('history.col.model'),
                 dataIndex: 'model',
                 width: 190,
                 /* 纯等宽文字，不用内联 code 芯片：芯片自带内边距与描边，一行里
@@ -285,23 +295,23 @@ export default function History() {
                   </Tooltip>
                 ),
               },
-              { title: '账号', width: 110, render: (_, r) => <AccountCell account={r.account} /> },
+              { title: t('history.col.account'), width: 110, render: (_, r) => <AccountCell account={r.account} /> },
               {
-                title: '实际渠道',
+                title: t('history.col.provider'),
                 width: 116,
                 render: (_, r) => (
                   <Space size={4}>
                     {r.provider ? <Tag color="geekblue">{r.provider}</Tag> : '—'}
                     {r.pinMismatch && (
-                      <Tooltip title="strict 钉住未生效：网关实际由别的渠道提供服务（流式只能标记，不能撤回）">
-                        <Tag color="red">未生效</Tag>
+                      <Tooltip title={t('history.pinMismatch')}>
+                        <Tag color="red">{t('history.pinMismatch.tag')}</Tag>
                       </Tooltip>
                     )}
                   </Space>
                 ),
               },
               {
-                title: '耗时',
+                title: t('history.col.ms'),
                 width: 72,
                 render: (_, r) =>
                   r.ms != null ? (
@@ -311,16 +321,16 @@ export default function History() {
                   ),
               },
               {
-                title: '方式',
+                title: t('history.col.mode'),
                 width: 54,
                 render: (_, r) => (
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    {r.stream ? '流式' : '非流式'}
+                    {r.stream ? t('history.stream') : t('history.nonStream')}
                   </Typography.Text>
                 ),
               },
               {
-                title: '尝试序列',
+                title: t('history.col.trace'),
                 render: (_, r) =>
                   r.error ? (
                     <Tooltip title={r.error}>
@@ -337,20 +347,20 @@ export default function History() {
                    否则按钮会被挤在 24px 的框里——这就是反馈里「复制按钮被挤压变形」。
                    `fixed: 'right'` 让它永远贴在表格右侧：表格横向滚动时它不会
                    跟着滑走，也就不会被切掉一半。 */
-                title: '操作',
+                title: t('history.col.actions'),
                 width: 56,
                 fixed: 'right',
                 render: (_, r) => (
-                  <Tooltip title="复制这条请求的完整信息（排查时贴给别人看）">
+                  <Tooltip title={t('history.copy.tip')}>
                     <Button
                       size="small"
                       type="text"
                       icon={<CopyOutlined />}
-                      aria-label="复制请求详情"
+                      aria-label={t('history.copy.tip')}
                       onClick={() => {
                         void navigator.clipboard.writeText(JSON.stringify(r, null, 2)).then(
-                          () => fb.copy('这条请求的完整信息'),
-                          () => fb.fail('复制失败', '剪贴板不可用'),
+                          () => fb.copy(t('history.copy')),
+                          () => fb.fail(t('common.copyFailed'), t('common.clipboardUnavailable')),
                         );
                       }}
                     />

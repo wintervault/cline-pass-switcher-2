@@ -72,7 +72,7 @@ server/src/
   http/       server(生命周期) / router / respond / routes/{api,chat,static}
   security/   compare(timingSafeEqual/掩码) / bind(启动闸门) / middleware(鉴权/Origin/CORS)
 web/src/      api/{client,types,hooks} / features/* / panel.tsx(区块容器) / theme.ts
-              gatewayScope.tsx(当前查看的网关:context + 页头切换器)
+              gatewayScope.tsx(当前查看的网关:context + 页头切换器) / i18n(词典/provider/codes)
 ```
 
 **界面结构只有一种拼法**：页面 = 页头 + 若干个 `Panel` 区块（`panel.tsx`）。
@@ -106,6 +106,16 @@ web/src/      api/{client,types,hooks} / features/* / panel.tsx(区块容器) / 
 - **`monospace` 的 CJK 回退在 Windows 上是 SimSun（宋体）**，mono 栈必须显式带上
   `"Microsoft YaHei UI"`；渲染自检用 canvas 像素比对（同串中文分别按元素栈与 SimSun 画），
   看是否落到 SimSun——不是看 `font-family` 字符串
+
+**界面文案只有一个来源**（3.0 P4 立）：`web/src/i18n/zh-CN.ts` 是类型源头，
+`en-US.ts` 的类型是 `Record<keyof typeof zhCN, string>`——**漏翻会直接让 typecheck 失败**。
+组件里不许写死文案，一律 `const { t } = useI18n(); t('area.element', { name })`。
+- key 是 `区域.元素`（`models.header.title`），不是文案；插值用 `{name}`，由 `t(key, params)` 替换
+- 切换语言只触发重渲染（不刷新页面），同时切 antd locale、dayjs locale 与 `<html lang>`
+- **后端不返回用户可见文案**：返回稳定的 `{ code, params }`，前端在 `i18n/codes.ts` 里映射；
+  未知 code 宁可不显示，也不把中文原文漏进英文界面（原始信息进日志）
+- 不翻译用户数据：模型 ID、账号名、网关名、上游错误原文
+- 自检：切到 English 后逐页扫 DOM 文本，除上述数据外不应有中文残留
 
 **「装得下」也是不变量**（v2.9.9 立）：默认窗口下**测试台不得出现纵向滚动条**
 （它是最高的一页：页头 + 三块），**请求历史不得出现横向滚动条**（它是最宽的一页）。

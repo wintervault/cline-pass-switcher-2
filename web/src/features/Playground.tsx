@@ -23,9 +23,10 @@ import { useState } from 'react';
 
 import { useModels, useSaveModelConfig, useTest } from '../api/hooks.ts';
 import type { ModelMeta, PerModelConfig, TestResult, TraceEntry } from '../api/types.ts';
-import { STATUS_TAG } from '../api/types.ts';
 import { useFeedback } from '../feedback.ts';
 import { GatewaySwitcher, useGatewayScope } from '../gatewayScope.tsx';
+import { useI18n, useT } from '../i18n/index.tsx';
+import { STATUS_TAG } from '../labels.ts';
 import { PageHeader } from '../pageHeader.tsx';
 import { Panel, PanelHint } from '../panel.tsx';
 import { RoutingFields } from './routingFields.tsx';
@@ -39,6 +40,7 @@ import { RoutingFields } from './routingFields.tsx';
  */
 function RoutingPanel({ model, cfg, meta }: { model: string; cfg: PerModelConfig; meta: ModelMeta | null }) {
   const { gatewayId } = useGatewayScope();
+  const t = useT();
   const save = useSaveModelConfig(gatewayId);
 
   const patch = (next: Partial<PerModelConfig>, note: string): void => {
@@ -60,11 +62,9 @@ function RoutingPanel({ model, cfg, meta }: { model: string; cfg: PerModelConfig
       title={
         <Space size={8}>
           <SettingOutlined />
-          <span>该模型当前的路由策略</span>
+          <span>{t('playground.routing.title')}</span>
           <Typography.Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>
-            {cfg.pinMode === 'strict'
-              ? '严格钉住：只走清单内渠道；网关未按清单路由时按失败处理'
-              : '优先 + 回退：逐个严格尝试，仅最后一个候选放开网关'}
+            {cfg.pinMode === 'strict' ? t('playground.routing.strict') : t('playground.routing.preferred')}
           </Typography.Text>
         </Space>
       }
@@ -73,7 +73,7 @@ function RoutingPanel({ model, cfg, meta }: { model: string; cfg: PerModelConfig
       {rows.length === 0 ? (
         <div className="cps-notice" style={{ marginTop: 12 }}>
           <ExclamationCircleFilled style={{ color: 'var(--ant-color-warning-text)' }} />
-          <span>该模型尚未探测到渠道：去「订阅模型」页点「探测渠道」，回来这里就能看到候选</span>
+          <span>{t('playground.routing.empty')}</span>
         </div>
       ) : (
         <Table
@@ -83,7 +83,7 @@ function RoutingPanel({ model, cfg, meta }: { model: string; cfg: PerModelConfig
           dataSource={rows}
           columns={[
             {
-              title: '顺序',
+              title: t('playground.col.order'),
               width: 64,
               render: (_, r) => (
                 <Typography.Text
@@ -95,43 +95,43 @@ function RoutingPanel({ model, cfg, meta }: { model: string; cfg: PerModelConfig
               ),
             },
             {
-              title: '渠道',
+              title: t('playground.col.channel'),
               dataIndex: 'name',
               render: (v: string, r) => (
                 <Space size={6}>
                   <Typography.Text
                     code
-                    copyable={{ text: v, tooltips: ['复制渠道名', '已复制'] }}
+                    copyable={{ text: v, tooltips: [t('playground.copyChannel'), t('common.copied')] }}
                     style={r.enabled ? undefined : { opacity: 0.5 }}
                   >
                     {v}
                   </Typography.Text>
                   {r.detail?.context ? (
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      {Math.round(r.detail.context / 1000)}K 上下文
+                      {t('playground.channel.context', { k: Math.round(r.detail.context / 1000) })}
                     </Typography.Text>
                   ) : null}
                 </Space>
               ),
             },
             {
-              title: '健康状态',
+              title: t('playground.col.health'),
               width: 130,
               render: (_, r) => {
                 const s = r.status;
-                if (!s) return <Typography.Text type="secondary">未判定</Typography.Text>;
+                if (!s) return <Typography.Text type="secondary">{t('labels.upstream.unknown')}</Typography.Text>;
                 const tag = STATUS_TAG[s.status];
                 return (
                   <Tooltip title={s.note ?? undefined}>
                     <Tag color={tag.color} style={{ margin: 0 }}>
-                      {tag.label}
+                      {t(tag.labelKey)}
                     </Tag>
                   </Tooltip>
                 );
               },
             },
             {
-              title: '最近耗时',
+              title: t('playground.col.lastMs'),
               width: 104,
               align: 'right',
               /* 来自「校验渠道」的实测往返（那是小请求，只用于渠道之间的相对比较）。
@@ -144,7 +144,7 @@ function RoutingPanel({ model, cfg, meta }: { model: string; cfg: PerModelConfig
                 ),
             },
             {
-              title: '参与路由',
+              title: t('playground.col.enabled'),
               width: 88,
               render: (_, r) => (
                 <Switch
@@ -154,7 +154,9 @@ function RoutingPanel({ model, cfg, meta }: { model: string; cfg: PerModelConfig
                   onChange={(v) =>
                     patch(
                       { exclude: v ? cfg.exclude.filter((x) => x !== r.name) : [...cfg.exclude, r.name] },
-                      v ? `已启用 ${r.name}` : `已排除 ${r.name}`,
+                      v
+                        ? t('playground.note.enabled', { name: r.name })
+                        : t('playground.note.excluded', { name: r.name }),
                     )
                   }
                 />
@@ -168,11 +170,14 @@ function RoutingPanel({ model, cfg, meta }: { model: string; cfg: PerModelConfig
 }
 
 function TraceTable({ trace, targets }: { trace?: TraceEntry[]; targets: string[] }) {
+  const t = useT();
   const list = trace ?? [];
   if (!list.length) {
     return (
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        没有候选尝试记录{targets.length ? `（目标：${targets.join(' → ')}）` : ''}
+        {targets.length
+          ? t('playground.trace.emptyTargets', { targets: targets.join(' → ') })
+          : t('playground.trace.empty')}
       </Typography.Text>
     );
   }
@@ -185,7 +190,7 @@ function TraceTable({ trace, targets }: { trace?: TraceEntry[]; targets: string[
       dataSource={list}
       columns={[
         {
-          title: '顺序',
+          title: t('playground.col.order'),
           width: 64,
           render: (_, __, i) => (
             <Typography.Text type="secondary" className="cps-num">
@@ -194,29 +199,31 @@ function TraceTable({ trace, targets }: { trace?: TraceEntry[]; targets: string[
           ),
         },
         {
-          title: '渠道',
+          title: t('playground.col.channel'),
           dataIndex: 'upstream',
           render: (v: string | null) =>
             v ? (
               <span className="cps-mono">{v}</span>
             ) : (
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                网关默认
+                {t('playground.trace.auto')}
               </Typography.Text>
             ),
         },
         {
-          title: '结果',
+          title: t('playground.col.result'),
           width: 120,
-          render: (_, r) => <Badge status={r.status === 200 ? 'success' : 'error'} text={`HTTP ${r.status}`} />,
+          render: (_, r) => (
+            <Badge status={r.status === 200 ? 'success' : 'error'} text={t('playground.http', { status: r.status })} />
+          ),
         },
         {
-          title: '耗时',
+          title: t('playground.col.lastMs'),
           width: 100,
           render: (_, r) => <Typography.Text className="cps-num">{r.ms} ms</Typography.Text>,
         },
         {
-          title: '备注',
+          title: t('playground.col.note'),
           dataIndex: 'note',
           render: (v: string) =>
             v ? (
@@ -234,6 +241,7 @@ function TraceTable({ trace, targets }: { trace?: TraceEntry[]; targets: string[
 
 export default function Playground() {
   const { gatewayId } = useGatewayScope();
+  const { t } = useI18n();
   const models = useModels(gatewayId);
   const test = useTest(gatewayId);
   const fb = useFeedback();
@@ -248,13 +256,13 @@ export default function Playground() {
   const cfg: PerModelConfig = activeRow?.config ?? { upstreams: [], exclude: [], pinMode: 'preferred', sort: null };
 
   const upstreamOptions = [
-    { value: '', label: '自动（按该模型的路由策略）' },
+    { value: '', label: t('playground.field.channel.auto') },
     ...cfg.upstreams.map((u) => ({ value: u, label: u })),
   ];
 
   const run = (): void => {
     if (!active) {
-      fb.fail('请先选择模型');
+      fb.fail(t('playground.validate.key'));
       return;
     }
     // 成功/失败的回执由 useTest 统一给出，这里只负责把结果放进结果区
@@ -267,17 +275,13 @@ export default function Playground() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <PageHeader
-        title="测试台"
-        desc="任选模型与渠道发一次最小请求，看网关实际路由到哪个渠道、每个候选花了多久。不指定渠道时按该模型的路由策略走。"
-        actions={<GatewaySwitcher />}
-      />
+      <PageHeader title={t('playground.title')} desc={t('playground.desc')} actions={<GatewaySwitcher />} />
 
-      <Panel title="测试参数" extra={<PanelHint>发一次最小请求，看网关实际怎么走</PanelHint>}>
+      <Panel title={t('playground.params.title')} extra={<PanelHint>{t('playground.params.hint')}</PanelHint>}>
         <Space wrap size={16} align="center">
           <Space size={6} align="center">
             <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-              模型
+              {t('playground.field.model')}
             </Typography.Text>
             <Select
               showSearch
@@ -285,7 +289,7 @@ export default function Playground() {
                  放不下就会折成两行，整页凭空长高 48px——正好把「不出现纵向滚动条」
                  的余量吃掉。 */
               style={{ width: 280, fontFamily: 'var(--cps-font-mono)' }}
-              placeholder="选择模型"
+              placeholder={t('playground.field.model.placeholder')}
               value={active || undefined}
               onChange={(v) => {
                 setModel(v);
@@ -297,14 +301,14 @@ export default function Playground() {
           </Space>
           <Space size={6} align="center">
             <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-              渠道
+              {t('playground.field.channel')}
             </Typography.Text>
             <Select style={{ width: 200 }} value={upstream} onChange={setUpstream} options={upstreamOptions} />
           </Space>
           <Space size={6} align="center">
-            <Tooltip title="写入请求体的 max_tokens。太小会让推理模型在推理阶段就耗尽预算、返回空内容">
+            <Tooltip title={t('playground.field.maxTokens.tip')}>
               <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-                最大输出
+                {t('playground.field.maxTokens')}
               </Typography.Text>
             </Tooltip>
             <InputNumber
@@ -323,7 +327,7 @@ export default function Playground() {
             onClick={run}
             style={{ marginLeft: 'auto' }}
           >
-            发送测试
+            {t('playground.send')}
           </Button>
         </Space>
       </Panel>
@@ -335,33 +339,41 @@ export default function Playground() {
         title={
           result ? (
             <Space size={8}>
-              {result.ok ? <Tag color="green">成功</Tag> : <Tag color="red">失败</Tag>}
+              {result.ok ? (
+                <Tag color="green">{t('playground.result.success')}</Tag>
+              ) : (
+                <Tag color="red">{t('playground.result.failed')}</Tag>
+              )}
               <Typography.Text code style={{ fontSize: 13 }}>
                 {active}
               </Typography.Text>
-              {result.ok && <Tag color={hit ? 'green' : 'orange'}>{hit ? '命中首个目标' : '未命中首个目标'}</Tag>}
+              {result.ok && (
+                <Tag color={hit ? 'green' : 'orange'}>
+                  {hit ? t('playground.result.hit') : t('playground.result.miss')}
+                </Tag>
+              )}
               {result.degraded && (
-                <Tooltip title="本地清单与网关实际可用渠道不一致，已按降级策略处理">
-                  <Tag color="gold">降级</Tag>
+                <Tooltip title={t('playground.result.degraded.tip')}>
+                  <Tag color="gold">{t('playground.result.degraded')}</Tag>
                 </Tooltip>
               )}
             </Space>
           ) : (
-            <span>测试结果</span>
+            <span>{t('playground.result.title')}</span>
           )
         }
         extra={
           result ? (
-            <Tooltip title="复制完整结果（含每次尝试）">
+            <Tooltip title={t('playground.result.copy.tip')}>
               <Button
                 size="small"
                 type="text"
                 icon={<CopyOutlined />}
-                aria-label="复制测试结果"
+                aria-label={t('playground.result.copy')}
                 onClick={() =>
                   void navigator.clipboard.writeText(JSON.stringify(result, null, 2)).then(
-                    () => fb.copy('测试结果'),
-                    () => fb.fail('复制失败', '剪贴板不可用'),
+                    () => fb.copy(t('playground.result.title')),
+                    () => fb.fail(t('common.copyFailed'), t('common.clipboardUnavailable')),
                   )
                 }
               />
@@ -375,47 +387,64 @@ export default function Playground() {
              没有资格占掉一百多像素。 */
           <div className="cps-notice">
             <InfoCircleOutlined style={{ color: 'var(--ant-color-text-tertiary)' }} />
-            <span>还没有测试结果——点「发送测试」发一次真实请求（消耗极小额度），结果与候选尝试序列会显示在这里</span>
+            <span>{t('playground.result.empty')}</span>
           </div>
         ) : !result.ok ? (
-          <Alert type="error" showIcon message={`请求失败：${result.error ?? '未知错误'}`} />
+          <Alert
+            type="error"
+            showIcon
+            message={t('playground.result.error', { error: result.error ?? t('playground.result.unknownError') })}
+          />
         ) : (
           <div style={{ display: 'grid', gap: 16 }}>
             <Descriptions
               size="small"
               column={3}
               items={[
-                { key: 'actual', label: '实际渠道', children: result.actual ?? result.actualName ?? '—' },
-                { key: 'ms', label: '总耗时', children: result.ms != null ? `${result.ms} ms` : '—' },
-                { key: 'account', label: '使用账号', children: result.account ?? '—' },
+                {
+                  key: 'actual',
+                  label: t('playground.desc.actual'),
+                  children: result.actual ?? result.actualName ?? '—',
+                },
+                {
+                  key: 'ms',
+                  label: t('playground.desc.ms'),
+                  children: result.ms != null ? t('common.ms', { value: result.ms }) : '—',
+                },
+                { key: 'account', label: t('playground.desc.account'), children: result.account ?? '—' },
                 {
                   key: 'targets',
-                  label: '目标渠道',
-                  children: result.targets.length ? result.targets.join(' → ') : '未指定（按策略）',
+                  label: t('playground.desc.targets'),
+                  children: result.targets.length ? result.targets.join(' → ') : t('playground.desc.targets.auto'),
                 },
                 {
                   key: 'pipeline',
-                  label: '管道',
-                  children: result.pipeline ? `/${result.pipeline}` : '未识别',
+                  label: t('playground.desc.pipeline'),
+                  children: result.pipeline ? `/${result.pipeline}` : t('playground.desc.pipeline.unknown'),
                 },
                 {
                   key: 'pin',
-                  label: '可钉住',
-                  children: result.pinnable == null ? '未知' : result.pinnable ? '是' : '否',
+                  label: t('playground.desc.pinnable'),
+                  children:
+                    result.pinnable == null
+                      ? t('playground.desc.unknown')
+                      : result.pinnable
+                        ? t('playground.desc.yes')
+                        : t('playground.desc.no'),
                 },
               ]}
             />
             {result.content && (
               <div>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  响应内容
+                  {t('playground.content')}
                 </Typography.Text>
                 <pre className="cps-pre">{result.content}</pre>
               </div>
             )}
             <div>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                候选尝试序列
+                {t('playground.trace')}
               </Typography.Text>
               <div style={{ marginTop: 6 }}>
                 <TraceTable trace={result.trace} targets={result.targets} />

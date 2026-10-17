@@ -1,6 +1,7 @@
 import { Select, Space, Typography } from 'antd';
 
 import type { PerModelConfig, SortKey } from '../api/types.ts';
+import { useT } from '../i18n/index.tsx';
 
 /**
  * 路由策略的两个控件（钉住模式 / 渠道排序）。
@@ -16,57 +17,63 @@ export function RoutingFields({
   cfg: PerModelConfig;
   onChange: (patch: Partial<PerModelConfig>, note: string) => void;
 }) {
+  const t = useT();
   const selectWidth = 180;
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '16px 40px' }}>
       <div>
         <Space size={12} align="center">
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            钉住模式
+            {t('routing.pinMode')}
           </Typography.Text>
           <Select
             style={{ width: selectWidth }}
             value={cfg.pinMode}
             onChange={(v) =>
-              onChange({ pinMode: v }, `钉住模式已改为「${v === 'strict' ? '严格钉住' : '优先 + 回退'}」`)
+              onChange(
+                { pinMode: v },
+                t('routing.note.pinMode', {
+                  name: v === 'strict' ? t('routing.pinMode.strict') : t('routing.pinMode.preferred'),
+                }),
+              )
             }
             options={[
-              { value: 'strict', label: '严格钉住' },
-              { value: 'preferred', label: '优先 + 回退' },
+              { value: 'strict', label: t('routing.pinMode.strict') },
+              { value: 'preferred', label: t('routing.pinMode.preferred') },
             ]}
           />
         </Space>
         <Typography.Text type="secondary" style={{ fontSize: 12, lineHeight: '18px', display: 'block', marginTop: 6 }}>
-          严格钉住：只走清单内渠道，网关未按清单路由时视为失败并切换；优先 + 回退：仅最后一个候选放开网关选择
+          {t('routing.pinMode.hint')}
         </Typography.Text>
       </div>
       <div>
         <Space size={12} align="center">
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            渠道排序
+            {t('routing.sort')}
           </Typography.Text>
           <Select
             style={{ width: selectWidth }}
             value={cfg.sort ?? ''}
             onChange={(v: string) => {
               const label: Record<string, string> = {
-                '': '网关智能选',
-                cost: '最低成本',
-                ttft: '最快首字',
-                tps: '最高吞吐',
+                '': t('routing.sort.auto'),
+                cost: t('routing.sort.cost'),
+                ttft: t('routing.sort.ttft'),
+                tps: t('routing.sort.tps'),
               };
-              onChange({ sort: (v || null) as SortKey | null }, `渠道排序偏好已改为「${label[v] ?? v}」`);
+              onChange({ sort: (v || null) as SortKey | null }, t('routing.note.sort', { name: label[v] ?? v }));
             }}
             options={[
-              { value: '', label: '网关智能选' },
-              { value: 'cost', label: '最低成本' },
-              { value: 'ttft', label: '最快首字' },
-              { value: 'tps', label: '最高吞吐' },
+              { value: '', label: t('routing.sort.auto') },
+              { value: 'cost', label: t('routing.sort.cost') },
+              { value: 'ttft', label: t('routing.sort.ttft') },
+              { value: 'tps', label: t('routing.sort.tps') },
             ]}
           />
         </Space>
         <Typography.Text type="secondary" style={{ fontSize: 12, lineHeight: '18px', display: 'block', marginTop: 6 }}>
-          多个可用渠道之间的执行顺序偏好
+          {t('routing.sort.hint')}
         </Typography.Text>
       </div>
     </div>

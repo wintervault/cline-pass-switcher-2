@@ -591,7 +591,13 @@ export function registerApiRoutes(
         200,
         authFail
           ? { ok: false, ms: Date.now() - started, error: `密钥无效或未授权：${message.slice(0, 160)}` }
-          : { ok: true, ms: Date.now() - started, model, note: `密钥鉴权通过；网关提示：${message.slice(0, 120)}` },
+          : {
+              ok: true,
+              ms: Date.now() - started,
+              model,
+              // 用户可见文案不在服务端拼：给稳定的 code + params，前端按语言映射
+              notice: { code: 'account.keyOkGatewayNotice', params: { message: message.slice(0, 120) } },
+            },
       );
     }
     sendJSON(c.res, 200, { ok: true, ms: Date.now() - started, model });

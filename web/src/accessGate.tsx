@@ -1,6 +1,8 @@
 import { KeyOutlined, LockOutlined } from '@ant-design/icons';
 import { Button, Input, Space, Typography, theme } from 'antd';
 
+import { useI18n } from './i18n/index.tsx';
+
 /**
  * 远端访问时的访问密钥入口。
  *
@@ -25,6 +27,7 @@ export function AccessGate({
   error: string | null;
 }) {
   const { token } = theme.useToken();
+  const { t } = useI18n();
   return (
     <div style={{ maxWidth: 520, margin: '40px auto 0' }}>
       <div
@@ -38,26 +41,26 @@ export function AccessGate({
         <Space size={10} align="center" style={{ marginBottom: 8 }}>
           <LockOutlined style={{ color: token.colorPrimary }} />
           <Typography.Text strong style={{ fontSize: 15 }}>
-            此部署需要访问密钥
+            {t('access.title')}
           </Typography.Text>
         </Space>
 
         <Typography.Paragraph type="secondary" style={{ fontSize: 13, lineHeight: '20px', marginBottom: 16 }}>
-          你正从本机之外访问这台服务器上的控制台，所以需要 API Key。填入后本机会记住它，下次不用再输。
+          {t('access.desc')}
         </Typography.Paragraph>
 
         <Space.Compact style={{ width: '100%' }}>
           <Input.Password
             autoFocus
             prefix={<KeyOutlined style={{ color: token.colorTextQuaternary }} />}
-            placeholder="API Key（即服务端 config.json 里的 proxyKey）"
+            placeholder={t('access.placeholder')}
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onPressEnter={onSubmit}
             status={error ? 'error' : undefined}
           />
           <Button type="primary" loading={checking} onClick={onSubmit}>
-            进入控制台
+            {t('access.submit')}
           </Button>
         </Space.Compact>
 
@@ -77,28 +80,30 @@ export function AccessGate({
             gap: 10,
           }}
         >
-          <Typography.Text style={{ fontSize: 13 }}>进不去？两条路：</Typography.Text>
+          <Typography.Text style={{ fontSize: 13 }}>{t('access.recover.title')}</Typography.Text>
           <Typography.Text type="secondary" style={{ fontSize: 12, lineHeight: '19px' }}>
-            ① <b>到这台服务器上直接打开</b>{' '}
+            {'① '}
+            <b>{t('access.recover.local.1')}</b>{' '}
             <Typography.Text code style={{ fontSize: 12 }}>
               http://127.0.0.1:3123
-            </Typography.Text>
-            免密钥进入，可在「访问与安全」里重设。
+            </Typography.Text>{' '}
+            {t('access.recover.local.2')}
           </Typography.Text>
           <Typography.Text type="secondary" style={{ fontSize: 12, lineHeight: '19px' }}>
-            ② 编辑服务器上的{' '}
+            {'② '}
+            {t('access.recover.config.1')}{' '}
             <Typography.Text code style={{ fontSize: 12 }}>
               data/config.json
-            </Typography.Text>
-            ，把{' '}
+            </Typography.Text>{' '}
+            {t('access.recover.config.2')}{' '}
             <Typography.Text code style={{ fontSize: 12 }}>
               proxyKey
             </Typography.Text>{' '}
-            改成新值后重启服务（或用{' '}
+            {t('access.recover.config.3')}{' '}
             <Typography.Text code style={{ fontSize: 12 }}>
               PROXY_KEY
             </Typography.Text>{' '}
-            环境变量注入）。
+            {t('access.recover.config.4')}
           </Typography.Text>
         </div>
       </div>

@@ -2,6 +2,7 @@ import { ReloadOutlined } from '@ant-design/icons';
 import { Alert, Button, Space } from 'antd';
 
 import type { HostControl } from './hostBridge.ts';
+import { useI18n } from './i18n/index.tsx';
 
 /**
  * 服务异常时的页面级提示。
@@ -14,6 +15,7 @@ import type { HostControl } from './hostBridge.ts';
  * 一直显示「已停止」，用户按提示点「启动服务」却毫无反应，是最迷惑的一种状态。
  */
 export function ServiceBanner({ control }: { control: HostControl }) {
+  const { t } = useI18n();
   const { host, status, busy, error } = control;
   if (!host) return null;
   if (status.state === 'running') return null;
@@ -24,8 +26,8 @@ export function ServiceBanner({ control }: { control: HostControl }) {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="服务正在启动…"
-        description="就绪后本页数据会自动恢复刷新。"
+        message={t('service.starting.title')}
+        description={t('service.starting.desc')}
       />
     );
   }
@@ -36,8 +38,8 @@ export function ServiceBanner({ control }: { control: HostControl }) {
         type="warning"
         showIcon
         style={{ marginBottom: 16 }}
-        message="服务正在停止…"
-        description="停止后页面显示的是最后一次缓存的数据。"
+        message={t('service.stopping.title')}
+        description={t('service.stopping.desc')}
       />
     );
   }
@@ -51,11 +53,11 @@ export function ServiceBanner({ control }: { control: HostControl }) {
         type="warning"
         showIcon
         style={{ marginBottom: 16 }}
-        message="服务已停止：页面显示的是上次缓存的数据"
-        description="下游客户端此刻无法连接。点右侧「启动服务」恢复，就绪后本页会自动刷新。"
+        message={t('service.stopped.title')}
+        description={t('service.stopped.desc')}
         action={
           <Button size="small" type="primary" loading={busy} onClick={() => void control.start()}>
-            启动服务
+            {t('service.action.start')}
           </Button>
         }
       />
@@ -69,8 +71,8 @@ export function ServiceBanner({ control }: { control: HostControl }) {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="桌面程序已退出，本页只是残留的界面"
-        description="服务不会自行恢复。请重新打开 Cline Pass（托盘或开始菜单），再回到这里。"
+        message={t('service.gone.title')}
+        description={t('service.gone.desc')}
       />
     );
   }
@@ -80,16 +82,16 @@ export function ServiceBanner({ control }: { control: HostControl }) {
       type="error"
       showIcon
       style={{ marginBottom: 16 }}
-      message="服务未能启动"
+      message={t('service.error.title')}
       description={
         <Space direction="vertical" size={8} style={{ width: '100%' }}>
-          <span>{status.error ?? error ?? '原因未知，详见日志。'}</span>
+          <span>{status.error ?? error ?? t('service.error.unknown')}</span>
           <Space size={8}>
             <Button size="small" type="primary" loading={busy} onClick={() => void control.start()}>
-              重试启动
+              {t('service.action.retryStart')}
             </Button>
             <Button size="small" icon={<ReloadOutlined />} onClick={control.openLogs}>
-              查看日志
+              {t('service.action.viewLogs')}
             </Button>
           </Space>
         </Space>

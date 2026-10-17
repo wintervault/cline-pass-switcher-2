@@ -173,6 +173,20 @@ export interface ClassifyResult extends AccountClassRecord {
   fresh: boolean;
 }
 
+/** 后端用户可见文案一律是稳定 code + params（前端按语言映射，未知 code 不显示原文）。 */
+export interface Notice {
+  code: string;
+  params?: Record<string, string>;
+}
+
+export interface AccountTestResult {
+  ok: boolean;
+  ms: number;
+  model?: string;
+  error?: string;
+  notice?: Notice;
+}
+
 export interface ClassifyResponse {
   ok: boolean;
   results: ClassifyResult[];
@@ -238,21 +252,5 @@ export interface MetaInfo {
   gateways: Array<{ id: string; name: string }>;
 }
 
-/** 上游状态 → 展示标签与颜色。 */
-export const STATUS_TAG: Record<UpstreamStatusKind, { label: string; color: string }> = {
-  ok: { label: '可用', color: 'green' },
-  limited: { label: '限流', color: 'gold' },
-  bad: { label: '不可钉', color: 'red' },
-  auth: { label: 'key 错误', color: 'volcano' },
-  unknown: { label: '未判定', color: 'default' },
-};
-
 /** 校验状态排序权重：可用优先、不可钉最后。 */
 export const STATUS_RANK: Record<UpstreamStatusKind, number> = { ok: 0, limited: 1, unknown: 2, auth: 3, bad: 4 };
-
-/** 风控分类 → 徽标文案与颜色（页面只引用，不各自写一份）。 */
-export const ACCOUNT_CLASS_TAG: Record<AccountClassKind, { label: string; color: string }> = {
-  normal: { label: '正常', color: 'green' },
-  private: { label: '风控', color: 'orange' },
-  unknown: { label: '未判定', color: 'default' },
-};

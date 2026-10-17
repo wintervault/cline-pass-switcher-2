@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { useModels, useProbe } from '../api/hooks.ts';
 import type { PinState, Pipeline } from '../api/types.ts';
 import { GatewaySwitcher, useGatewayScope } from '../gatewayScope.tsx';
+import { useI18n } from '../i18n/index.tsx';
 import { PageHeader } from '../pageHeader.tsx';
 import { Panel } from '../panel.tsx';
 
@@ -20,11 +21,12 @@ interface ProbeOutcome {
 /** 探测结果标签：管线 + **探测到的渠道名**。
  *  只显示「2 渠道」等于没说——用户探测就是为了知道背后是哪几个渠道。 */
 function ProbeTags({ p }: { p: ProbeOutcome }) {
+  const { t } = useI18n();
   if (!p.ok) {
     return (
       <Tooltip title={p.error}>
         <Tag color="red" style={{ margin: 0 }}>
-          探测失败
+          {t('catalog.probe.failed')}
         </Tag>
       </Tooltip>
     );
@@ -34,7 +36,7 @@ function ProbeTags({ p }: { p: ProbeOutcome }) {
   return (
     <Space size={4} wrap>
       <Tag color="green" style={{ margin: 0 }}>
-        {p.pipeline === 'planner' ? '规划器 · Vercel' : '直连 · OpenRouter'}
+        {p.pipeline === 'planner' ? t('models.pipeline.planner') : t('models.pipeline.direct')}
       </Tag>
       {shown.map((u) => (
         <Tag key={u} color="geekblue" style={{ margin: 0 }}>
@@ -42,15 +44,15 @@ function ProbeTags({ p }: { p: ProbeOutcome }) {
         </Tag>
       ))}
       {ups.length > shown.length && (
-        <Tooltip title={ups.join('、')}>
+        <Tooltip title={ups.join(t('models.meta.listSeparator'))}>
           <Tag style={{ margin: 0 }}>+{ups.length - shown.length}</Tag>
         </Tooltip>
       )}
-      {ups.length === 0 && <Tag style={{ margin: 0 }}>无可用渠道</Tag>}
+      {ups.length === 0 && <Tag style={{ margin: 0 }}>{t('catalog.noChannel')}</Tag>}
       {p.pinState === 'ignored' && (
-        <Tooltip title="网关忽略钉住参数：该模型的渠道清单不可信">
+        <Tooltip title={t('catalog.pinIgnored.tip')}>
           <Tag color="orange" style={{ margin: 0 }}>
-            参数被忽略
+            {t('models.tag.ignored')}
           </Tag>
         </Tooltip>
       )}
@@ -60,6 +62,7 @@ function ProbeTags({ p }: { p: ProbeOutcome }) {
 
 export default function Catalog() {
   const { message } = App.useApp();
+  const { t } = useI18n();
   // 目录是全局的；探测结果按网关存（同一个模型在不同网关可钉性不同）
   const { gatewayId } = useGatewayScope();
   const models = useModels(gatewayId);
@@ -84,23 +87,19 @@ export default function Catalog() {
             pinState: r.pinState,
           },
         }));
-        if (!r.ok) message.error(`${id} 探测失败：${r.error ?? '未知错误'}`);
+        if (!r.ok) message.error(t('catalog.probe.error', { id, error: r.error ?? t('common.unknownError') }));
       },
       onError: (e) => {
         const err = String(e);
         setProbes((prev) => ({ ...prev, [id]: { ok: false, error: err } }));
-        message.error(`${id} 探测失败：${err}`);
+        message.error(t('catalog.probe.error', { id, error: err }));
       },
     });
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <PageHeader
-        title="完整目录"
-        desc="Cline 公开目录的全部模型；:free 变体可精确钉住上游。探测结果就地显示（按网关分开）。"
-        actions={<GatewaySwitcher />}
-      />
+      <PageHeader title={t('catalog.title')} desc={t('catalog.desc')} actions={<GatewaySwitcher />} />
       {/* 区域：目录（搜索与计数属于这块区域的头，表格是它的体） */}
       <Panel
         flush
@@ -109,7 +108,7 @@ export default function Catalog() {
             style={{ width: 320 }}
             prefix={<SearchOutlined />}
             allowClear
-            placeholder="过滤… 如 free / glm / anthropic"
+            placeholder={t('catalog.filter.placeholder')}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
@@ -117,8 +116,12 @@ export default function Catalog() {
         extra={
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {filter
-              ? `匹配 ${matched.length} / ${models.data?.catalogCount ?? 0} 个（显示前 400 条）`
-              : `共 ${models.data?.catalogCount ?? 0} 个目录模型（显示前 400 条）`}
+              ? t('catalog.count.matched', {
+                  matched: matched.length,
+                  total: models.data?.catalogCount ?? 0,
+                  limit: 400,
+                })
+              : t('catalog.count.all', { total: models.data?.catalogCount ?? 0, limit: 400 })}
           </Typography.Text>
         }
       >
@@ -126,11 +129,11 @@ export default function Catalog() {
           <Alert
             type="error"
             showIcon
-            message="目录加载失败"
-            description="服务可能正在重启；稍候重试，或用状态栏的刷新按钮。"
+            message={t('catalog.loadFailed')}
+            description={t('catalog.loadFailed.desc')}
             action={
               <Button size="small" onClick={() => void models.refetch()}>
-                重试
+                {t('common.retry')}
               </Button>
             }
           />
@@ -144,11 +147,11 @@ export default function Catalog() {
             sticky
             loading={models.isLoading}
             dataSource={filtered.map((id) => ({ id }))}
-            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有匹配的模型" /> }}
+            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('catalog.empty')} /> }}
             pagination={false}
             columns={[
               {
-                title: '模型',
+                title: t('catalog.col.model'),
                 dataIndex: 'id',
                 /* 纯等宽文字（不用 code 芯片）：这一列是 400 行同样的标识，
                    每行一个带内边距与描边的芯片会变成一片栅格噪点。 */
@@ -159,19 +162,23 @@ export default function Catalog() {
                 ),
               },
               {
-                title: '类型 / 探测结果',
+                title: t('catalog.col.type'),
                 width: 320,
                 render: (_, r) => {
                   const id = String(r.id);
                   const p = probes[`${gatewayId}|${id}`];
                   if (!p) {
-                    return id.includes(':free') ? <Tag color="green">:free 可精确钉住</Tag> : <Tag>规划器管理</Tag>;
+                    return id.includes(':free') ? (
+                      <Tag color="green">{t('catalog.type.free')}</Tag>
+                    ) : (
+                      <Tag>{t('catalog.type.planner')}</Tag>
+                    );
                   }
                   return <ProbeTags p={p} />;
                 },
               },
               {
-                title: '操作',
+                title: t('catalog.col.actions'),
                 width: 76,
                 render: (_, r) => (
                   <Button
@@ -179,7 +186,7 @@ export default function Catalog() {
                     loading={probe.isPending && probe.variables === r.id}
                     onClick={() => runProbe(String(r.id))}
                   >
-                    探测
+                    {t('catalog.action.probe')}
                   </Button>
                 ),
               },

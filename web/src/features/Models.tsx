@@ -16,11 +16,12 @@ import {
   type ModelsResponse,
   type PerModelConfig,
   STATUS_RANK,
-  STATUS_TAG,
   type SubscriptionRow,
   type UpstreamStatusKind,
 } from '../api/types.ts';
 import { GatewaySwitcher, useGatewayScope } from '../gatewayScope.tsx';
+import { type Lang, type MsgKey, useI18n, useT } from '../i18n/index.tsx';
+import { STATUS_TAG } from '../labels.ts';
 import { PageHeader } from '../pageHeader.tsx';
 import { Panel, PanelHint } from '../panel.tsx';
 import { RoutingFields } from './routingFields.tsx';
@@ -33,14 +34,14 @@ export function sortedUpstreams(meta: ModelMeta | null): string[] {
   return [...(meta?.upstreams ?? [])].sort((a, b) => (STATUS_RANK[statusOf(a)] ?? 2) - (STATUS_RANK[statusOf(b)] ?? 2));
 }
 
-const statusTag = (kind: UpstreamStatusKind) => {
+const statusTag = (kind: UpstreamStatusKind, t: (key: MsgKey) => string) => {
   const s = STATUS_TAG[kind];
-  return <Tag color={s.color}>{s.label}</Tag>;
+  return <Tag color={s.color}>{t(s.labelKey)}</Tag>;
 };
 
-const fmtTime = (ts: number | null | undefined): string =>
+const fmtTime = (ts: number | null | undefined, lang: Lang): string =>
   ts
-    ? new Date(ts).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    ? new Date(ts).toLocaleString(lang, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
     : '—';
 
 /**
@@ -62,6 +63,7 @@ function ModelItem({
   onClick: () => void;
 }) {
   const { token } = theme.useToken();
+  const { t } = useI18n();
   const meta = row.meta;
   const cfg = row.config ?? EMPTY_CFG;
   const probed = (meta?.upstreams?.length ?? 0) > 0;
@@ -94,15 +96,15 @@ function ModelItem({
         {/* 状态跟着 ID 同行：它是扫读这一列时最需要看到的东西 */}
         {ignored ? (
           <Tag color="red" style={{ margin: 0, flex: '0 0 auto' }}>
-            参数被忽略
+            {t('models.tag.ignored')}
           </Tag>
         ) : probed ? (
           <Tag color="geekblue" style={{ margin: 0, flex: '0 0 auto' }}>
-            {meta?.upstreams?.length ?? 0} 渠道
+            {t('models.tag.channels', { count: meta?.upstreams?.length ?? 0 })}
           </Tag>
         ) : (
           <Typography.Text type="secondary" style={{ fontSize: 12, flex: '0 0 auto' }}>
-            未探测
+            {t('models.tag.untested')}
           </Typography.Text>
         )}
       </div>
@@ -110,18 +112,20 @@ function ModelItem({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           {cfg.upstreams.length > 0 && (
             <Tag color="blue" style={{ margin: 0, flex: '0 0 auto' }}>
-              使用 {cfg.upstreams.length}
+              {t('models.tag.using', { count: cfg.upstreams.length })}
             </Tag>
           )}
           {cfg.exclude.length > 0 && (
             <Tag color="red" style={{ margin: 0, flex: '0 0 auto' }}>
-              排除 {cfg.exclude.length}
+              {t('models.tag.excluded', { count: cfg.exclude.length })}
             </Tag>
           )}
           {meta?.lastProvider && (
             <Typography.Text type="secondary" style={{ fontSize: 12 }} className="cps-cell-ellipsis">
-              最近 {meta.lastProvider}
-              {meta.lastMs ? ` · ${meta.lastMs}ms` : ''}
+              {t('models.item.last', {
+                provider: meta.lastProvider,
+                suffix: meta.lastMs ? t('models.item.lastSuffix', { ms: meta.lastMs }) : '',
+              })}
             </Typography.Text>
           )}
         </div>
@@ -156,6 +160,7 @@ function UpstreamRow({
   drag: RowDragProps;
 }) {
   const { token } = theme.useToken();
+  const t = useT();
   const selected = cfg.upstreams.includes(upstream);
   const excluded = cfg.exclude.includes(upstream);
   const order = cfg.upstreams.indexOf(upstream);
@@ -164,24 +169,30 @@ function UpstreamRow({
 
   const toggleSelect = () => {
     if (selected) {
-      onSave({ upstreams: cfg.upstreams.filter((x) => x !== upstream) }, `已移出清单：${upstream}`);
+      onSave(
+        { upstreams: cfg.upstreams.filter((x) => x !== upstream) },
+        t('models.note.unselected', { name: upstream }),
+      );
     } else {
       onSave(
         {
           upstreams: [...cfg.upstreams.filter((x) => !cfg.exclude.includes(x)), upstream],
           exclude: cfg.exclude.filter((x) => x !== upstream),
         },
-        `已加入清单（第 ${cfg.upstreams.filter((x) => !cfg.exclude.includes(x)).length + 1} 位）：${upstream}`,
+        t('models.note.selected', {
+          index: cfg.upstreams.filter((x) => !cfg.exclude.includes(x)).length + 1,
+          name: upstream,
+        }),
       );
     }
   };
   const toggleExclude = () => {
     if (excluded) {
-      onSave({ exclude: cfg.exclude.filter((x) => x !== upstream) }, `已取消排除：${upstream}`);
+      onSave({ exclude: cfg.exclude.filter((x) => x !== upstream) }, t('models.note.unexcluded', { name: upstream }));
     } else {
       onSave(
         { upstreams: cfg.upstreams.filter((x) => x !== upstream), exclude: [...cfg.exclude, upstream] },
-        `已排除（网关回退也不会用到）：${upstream}`,
+        t('models.note.excluded', { name: upstream }),
       );
     }
   };
@@ -195,7 +206,7 @@ function UpstreamRow({
     if (a === undefined || b === undefined) return;
     list[i] = b;
     list[j] = a;
-    onSave({ upstreams: list }, `${upstream} 已调到第 ${j + 1} 位`);
+    onSave({ upstreams: list }, t('models.note.moved', { name: upstream, index: j + 1 }));
   };
 
   return (
@@ -225,7 +236,7 @@ function UpstreamRow({
           type="button"
           className="cps-grip"
           draggable
-          aria-label="拖拽调整顺序（键盘可用右侧箭头按钮）"
+          aria-label={t('models.upstream.drag.aria')}
           onDragStart={(e) => {
             e.dataTransfer.effectAllowed = 'move';
             drag.onDragStartRow(order);
@@ -248,10 +259,10 @@ function UpstreamRow({
           </Typography.Text>
         )}
       </div>
-      {status ? statusTag(status) : null}
-      <Tooltip title="纳入渠道清单：按序号顺序尝试，异常自动顺切">
+      {status ? statusTag(status, t) : null}
+      <Tooltip title={t('models.upstream.use.tip')}>
         <Checkbox checked={selected} disabled={excluded} onChange={toggleSelect}>
-          使用
+          {t('models.upstream.use')}
         </Checkbox>
       </Tooltip>
       {selected ? (
@@ -268,7 +279,7 @@ function UpstreamRow({
       ) : (
         <span style={{ width: 48 }} />
       )}
-      <Tooltip title={excluded ? '取消排除' : '排除：即使网关回退也不使用'}>
+      <Tooltip title={excluded ? t('models.upstream.unexclude.tip') : t('models.upstream.exclude.tip')}>
         <Button
           size="small"
           type="text"
@@ -283,6 +294,7 @@ function UpstreamRow({
 
 export default function Models() {
   const { gatewayId } = useGatewayScope();
+  const { t, lang } = useI18n();
   const models = useModels(gatewayId);
   const qc = useQueryClient();
   const save = useSaveModelConfig(gatewayId);
@@ -364,8 +376,8 @@ export default function Models() {
        之前用 calc(100vh - 448px) 的魔法数字，默认窗口下会空出 97px（实测）。 */
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, height: '100%' }}>
       <PageHeader
-        title="订阅模型"
-        desc="先「探测渠道」列出可用渠道，勾选「使用」并排好顺序；「校验」逐渠道体检可用性。"
+        title={t('models.title')}
+        desc={t('models.desc')}
         actions={
           /* 页头只放主操作。上次拉取的时间与来源塞进悬停——
              原来它们是一长串内联文字，会把页头挤成两行，于是本页的区块比别的页
@@ -375,12 +387,16 @@ export default function Models() {
             <Tooltip
               title={
                 official
-                  ? `上次拉取：${new Date(official.ts).toLocaleString()}（来源 ${official.sources.join(' + ')}，新增 ${official.added.length}）`
-                  : '还没有拉取过官方清单'
+                  ? t('models.official.last', {
+                      time: new Date(official.ts).toLocaleString(lang),
+                      sources: official.sources.join(' + '),
+                      added: official.added.length,
+                    })
+                  : t('models.official.none')
               }
             >
               <Button icon={<DownloadOutlined />} loading={fetchOfficial.isPending} onClick={runFetchOfficial}>
-                拉取官方最新模型
+                {t('models.pull')}
               </Button>
             </Tooltip>
           </Space>
@@ -391,11 +407,11 @@ export default function Models() {
         <Alert
           type="error"
           showIcon
-          message="订阅模型加载失败"
-          description="服务可能正在重启；稍候重试，或用状态栏的刷新按钮。"
+          message={t('models.loadFailed')}
+          description={t('models.loadFailed.desc')}
           action={
             <Button size="small" onClick={() => void models.refetch()}>
-              重试
+              {t('common.retry')}
             </Button>
           }
         />
@@ -404,29 +420,29 @@ export default function Models() {
       ) : rows.length === 0 ? (
         <Card style={{ maxWidth: 560, margin: '48px auto 0' }}>
           <Typography.Title level={5} style={{ marginTop: 0 }}>
-            开始使用
+            {t('models.onboarding.title')}
           </Typography.Title>
           <div style={{ display: 'grid', gap: 14 }}>
             <Space size={10}>
-              <Tag style={{ margin: 0 }}>第 1 步</Tag>
-              <Typography.Text>在「账号池」添加 Cline Pass API Key</Typography.Text>
+              <Tag style={{ margin: 0 }}>{t('models.onboarding.step', { index: 1 })}</Tag>
+              <Typography.Text>{t('models.onboarding.step1')}</Typography.Text>
               <Button
                 size="small"
                 onClick={() => window.dispatchEvent(new CustomEvent('cps:navigate', { detail: 'accounts' }))}
               >
-                去账号池
+                {t('models.onboarding.step1.action')}
               </Button>
             </Space>
             <Space size={10}>
-              <Tag style={{ margin: 0 }}>第 2 步</Tag>
-              <Typography.Text>拉取官方订阅模型清单</Typography.Text>
+              <Tag style={{ margin: 0 }}>{t('models.onboarding.step', { index: 2 })}</Tag>
+              <Typography.Text>{t('models.onboarding.step2')}</Typography.Text>
               <Button size="small" loading={fetchOfficial.isPending} onClick={runFetchOfficial}>
-                拉取
+                {t('models.onboarding.step2.action')}
               </Button>
             </Space>
             <Space size={10}>
-              <Tag style={{ margin: 0 }}>第 3 步</Tag>
-              <Typography.Text type="secondary">对模型点「探测渠道」，把可用渠道勾选「使用」</Typography.Text>
+              <Tag style={{ margin: 0 }}>{t('models.onboarding.step', { index: 3 })}</Tag>
+              <Typography.Text type="secondary">{t('models.onboarding.step3')}</Typography.Text>
             </Space>
           </div>
         </Card>
@@ -444,15 +460,15 @@ export default function Models() {
           <div style={{ display: 'flex', gap: 16, flex: '1 1 0', minHeight: 300 }}>
             {/* 左：模型列表（区域一） */}
             <Panel
-              title="模型列表"
-              extra={<PanelHint>{filteredRows.length} 个</PanelHint>}
+              title={t('models.list.title')}
+              extra={<PanelHint>{t('common.count', { count: filteredRows.length })}</PanelHint>}
               style={{ width: 292, flex: '0 0 292px' }}
             >
               <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, gap: 8 }}>
                 <Input
                   prefix={<SearchOutlined />}
                   allowClear
-                  placeholder="过滤模型…"
+                  placeholder={t('models.list.filter')}
                   value={modelFilter}
                   onChange={(e) => setModelFilter(e.target.value)}
                 />
@@ -472,7 +488,7 @@ export default function Models() {
                   ))}
                   {filteredRows.length === 0 && (
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      无匹配模型
+                      {t('models.list.noMatch')}
                     </Typography.Text>
                   )}
                 </div>
@@ -488,34 +504,34 @@ export default function Models() {
                     <Typography.Text
                       code
                       style={{ fontSize: 13 }}
-                      copyable={{ text: current.id, tooltips: ['复制模型 ID', '已复制'] }}
+                      copyable={{ text: current.id, tooltips: [t('models.detail.copyId'), t('common.copied')] }}
                     >
                       {current.id}
                     </Typography.Text>
                     {meta?.pinnable && (
                       <Tag color="green" style={{ margin: 0 }}>
-                        {meta.pipeline === 'planner' ? '规划器 · Vercel' : '直连 · OpenRouter'}
+                        {meta.pipeline === 'planner' ? t('models.pipeline.planner') : t('models.pipeline.direct')}
                       </Tag>
                     )}
                   </>
                 }
                 extra={
                   <Space size={8}>
-                    <Tooltip title="发一次探针请求：判断网关是否接受钉住参数，并列出该模型的可用渠道">
+                    <Tooltip title={t('models.action.probe.tip')}>
                       <Button size="small" type="primary" loading={probe.isPending} onClick={runProbe}>
-                        探测渠道
+                        {t('models.action.probe')}
                       </Button>
                     </Tooltip>
-                    <Tooltip title="按当前配置发一次最小请求，看实际命中哪个渠道">
+                    <Tooltip title={t('models.action.test.tip')}>
                       <Button size="small" loading={test.isPending} onClick={runTest}>
-                        试发一次
+                        {t('models.action.test')}
                       </Button>
                     </Tooltip>
                     <Tooltip
                       title={
                         pinIgnored
-                          ? '网关已忽略钉住参数：钉不住时每个渠道都会“成功”，校验结果不可信（先重新探测）'
-                          : `对清单内每个渠道各发一次最小请求（消耗 ${ups.length} 次最小额度），标注可用 / 限流 / 不可钉`
+                          ? t('models.action.validate.tip.ignored')
+                          : t('models.action.validate.tip', { count: ups.length })
                       }
                     >
                       <Button
@@ -524,7 +540,7 @@ export default function Models() {
                         loading={validate.isPending}
                         onClick={runValidate}
                       >
-                        {validate.isPending ? '校验中…' : '校验'}
+                        {validate.isPending ? t('models.action.validating') : t('models.action.validate')}
                       </Button>
                     </Tooltip>
                   </Space>
@@ -538,13 +554,14 @@ export default function Models() {
                   {pinIgnored && (
                     <Tooltip
                       title={
-                        meta?.pinDisabledReason ??
-                        '钉住/排除/排序均不生效；勾选仅保留意图，网关恢复执行后自动生效。换个账号或稍后重新探测可能恢复。'
+                        meta?.lastProvider
+                          ? `${t('models.pin.ignored.tip')} ${t('models.pin.ignored.routed', { provider: meta.lastProvider })}`
+                          : t('models.pin.ignored.tip')
                       }
                     >
                       <div className="cps-notice cps-notice-warn">
                         <ExclamationCircleFilled />
-                        <span>网关已忽略钉住参数：当前按网关默认路由，勾选与排序暂不生效</span>
+                        <span>{t('models.pin.ignored.notice')}</span>
                       </div>
                     </Tooltip>
                   )}
@@ -553,7 +570,7 @@ export default function Models() {
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 28px', fontSize: 12 }}>
                     {meta?.canonicalSlug && (
                       <span>
-                        <Typography.Text type="secondary">背后模型 </Typography.Text>
+                        <Typography.Text type="secondary">{t('models.meta.canonical')} </Typography.Text>
                         <Typography.Text code style={{ fontSize: 12 }}>
                           {meta.canonicalSlug}
                         </Typography.Text>
@@ -561,7 +578,7 @@ export default function Models() {
                     )}
                     {meta?.lastProvider && (
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                        <Typography.Text type="secondary">最近命中 </Typography.Text>
+                        <Typography.Text type="secondary">{t('models.meta.lastHit')} </Typography.Text>
                         <Tag color="geekblue" style={{ margin: 0 }}>
                           {meta.lastProvider}
                         </Tag>
@@ -574,17 +591,17 @@ export default function Models() {
                     )}
                     {meta?.tier0?.length ? (
                       <span>
-                        <Typography.Text type="secondary">tier-0 </Typography.Text>
-                        {meta.tier0.join('、')}
+                        <Typography.Text type="secondary">{t('models.meta.tier0')} </Typography.Text>
+                        {meta.tier0.join(t('models.meta.listSeparator'))}
                       </span>
                     ) : null}
                     <span>
-                      <Typography.Text type="secondary">探测 </Typography.Text>
-                      {fmtTime(meta?.probedAt)}
+                      <Typography.Text type="secondary">{t('models.meta.probed')} </Typography.Text>
+                      {fmtTime(meta?.probedAt, lang)}
                       {meta?.validatedAt ? (
                         <>
-                          <Typography.Text type="secondary"> · 校验 </Typography.Text>
-                          {fmtTime(meta.validatedAt)}
+                          <Typography.Text type="secondary">{t('models.meta.validated')} </Typography.Text>
+                          {fmtTime(meta.validatedAt, lang)}
                         </>
                       ) : null}
                     </span>
@@ -592,9 +609,9 @@ export default function Models() {
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}>
                     <Typography.Text strong style={{ fontSize: 13 }}>
-                      渠道优先级
+                      {t('models.chain.title')}
                     </Typography.Text>
-                    <PanelHint>{ups.length} 个渠道</PanelHint>
+                    <PanelHint>{t('models.chain.count', { count: ups.length })}</PanelHint>
                     <Space size={8} style={{ marginLeft: 'auto' }}>
                       <Button
                         size="small"
@@ -603,19 +620,17 @@ export default function Models() {
                           saveConfig(
                             current.id,
                             { upstreams: list, exclude: cfg.exclude },
-                            `已把 ${list.length} 个渠道全部加入清单`,
+                            t('models.note.allAdded', { count: list.length }),
                           );
                         }}
                       >
-                        全部使用
+                        {t('models.chain.all')}
                       </Button>
                       <Button
                         size="small"
-                        onClick={() =>
-                          saveConfig(current.id, { upstreams: [], exclude: [] }, '已清空渠道清单（改为完全由网关选择）')
-                        }
+                        onClick={() => saveConfig(current.id, { upstreams: [], exclude: [] }, t('models.note.cleared'))}
                       >
-                        清空清单
+                        {t('models.chain.clear')}
                       </Button>
                     </Space>
                   </div>
@@ -644,7 +659,11 @@ export default function Models() {
                                       const [item] = list.splice(dragFrom, 1);
                                       if (item) {
                                         list.splice(o, 0, item);
-                                        saveConfig(current.id, { upstreams: list }, `${item} 已拖到第 ${o + 1} 位`);
+                                        saveConfig(
+                                          current.id,
+                                          { upstreams: list },
+                                          t('models.note.dragged', { name: item, index: o + 1 }),
+                                        );
                                       }
                                     }
                                     setDragFrom(null);
@@ -660,15 +679,13 @@ export default function Models() {
                           })}
                         </ul>
                         <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 12 }}>
-                          勾选「使用」的渠道按序号依次尝试，异常自动顺切；标「排除」的渠道即使网关回退也不使用。
+                          {t('models.chain.footer')}
                         </Typography.Text>
                       </>
                     ) : (
                       <Empty
                         image={Empty.PRESENTED_IMAGE_SIMPLE}
-                        description={
-                          pinIgnored ? '钉住参数被忽略，渠道清单不可信' : '尚未探测到渠道，点上方「探测渠道」'
-                        }
+                        description={pinIgnored ? t('models.chain.emptyIgnored') : t('models.chain.empty')}
                       />
                     )}
                   </div>
@@ -679,7 +696,7 @@ export default function Models() {
 
           {/* 路由策略：整行放在两列之下 —— 右侧那一列因此不再需要任何外层滚动条 */}
           {current && (
-            <Panel title="路由策略" extra={<PanelHint>改动即时保存</PanelHint>}>
+            <Panel title={t('models.routing.title')} extra={<PanelHint>{t('models.routing.hint')}</PanelHint>}>
               <RoutingFields cfg={cfg} onChange={(patch, note) => saveConfig(current.id, patch, note)} />
             </Panel>
           )}

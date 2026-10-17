@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useI18n } from './i18n/index.tsx';
+
 /**
  * 桌面壳桥（由壳的初始化脚本注入 `window.cpsHost`）。
  *
@@ -43,14 +45,6 @@ export interface HostWindow {
   isMaximized: () => Promise<boolean>;
   dragMove: () => Promise<unknown>;
 }
-
-export const HOST_LABEL: Record<HostStatus['state'], string> = {
-  running: '运行中',
-  starting: '启动中',
-  stopping: '停止中',
-  stopped: '已停止',
-  error: '启动失败',
-};
 
 /**
  * 取壳注入的桥。只认「功能齐全」的桥：旧版壳注入的对象缺少窗口方法时
@@ -102,6 +96,7 @@ export interface HostControlOptions {
  * 上一版什么都不提示，用户按完只能猜——这正是「不知道到底成了没有」的来源。
  */
 export function useHostControl(options: HostControlOptions = {}): HostControl {
+  const { t } = useI18n();
   const host = getHostBridge();
   const [status, setStatus] = useState<HostStatus>({ state: 'running' });
   const [busy, setBusy] = useState(false);
@@ -113,18 +108,21 @@ export function useHostControl(options: HostControlOptions = {}): HostControl {
   /** 正在等待的目标状态（动作返回时还没到位，由轮询确认） */
   const awaiting = useRef<{ target: HostStatus['state']; okText: string } | null>(null);
 
-  const settle = useCallback((next: HostStatus): void => {
-    const pending = awaiting.current;
-    if (!pending) return;
-    if (next.state === pending.target) {
-      awaiting.current = null;
-      notify.current?.(pending.okText, 'ok');
-      changed.current?.();
-    } else if (next.state === 'error') {
-      awaiting.current = null;
-      notify.current?.(next.error ?? '服务启动失败', 'fail');
-    }
-  }, []);
+  const settle = useCallback(
+    (next: HostStatus): void => {
+      const pending = awaiting.current;
+      if (!pending) return;
+      if (next.state === pending.target) {
+        awaiting.current = null;
+        notify.current?.(pending.okText, 'ok');
+        changed.current?.();
+      } else if (next.state === 'error') {
+        awaiting.current = null;
+        notify.current?.(next.error ?? t('service.toast.startFailed'), 'fail');
+      }
+    },
+    [t],
+  );
 
   const poll = useCallback(async (): Promise<HostStatus['state'] | 'unknown'> => {
     if (!host) return 'unknown';
@@ -175,7 +173,7 @@ export function useHostControl(options: HostControlOptions = {}): HostControl {
           notify.current?.(okText, 'ok');
           changed.current?.();
         } else if (next.state === 'error') {
-          notify.current?.(next.error ?? '操作失败', 'fail');
+          notify.current?.(next.error ?? t('service.toast.actionFailed'), 'fail');
         } else {
           awaiting.current = { target, okText };
         }
@@ -185,7 +183,7 @@ export function useHostControl(options: HostControlOptions = {}): HostControl {
         setBusy(false);
       }
     },
-    [host],
+    [host, t],
   );
 
   return {
@@ -193,12 +191,18 @@ export function useHostControl(options: HostControlOptions = {}): HostControl {
     status,
     busy,
     error,
-    start: useCallback(() => act((b) => b.start(), 'running', '服务已启动', '正在启动服务…'), [act]),
-    stop: useCallback(
-      () => act((b) => b.stop(), 'stopped', '服务已停止（下游客户端此刻无法连接）', '正在停止服务…'),
-      [act],
+    start: useCallback(
+      () => act((b) => b.start(), 'running', t('service.toast.started'), t('service.toast.starting')),
+      [act, t],
     ),
-    restart: useCallback(() => act((b) => b.restart(), 'running', '服务已重启', '正在重启服务…'), [act]),
+    stop: useCallback(
+      () => act((b) => b.stop(), 'stopped', t('service.toast.stopped'), t('service.toast.stopping')),
+      [act, t],
+    ),
+    restart: useCallback(
+      () => act((b) => b.restart(), 'running', t('service.toast.restarted'), t('service.toast.restarting')),
+      [act, t],
+    ),
     openLogs: useCallback(() => {
       void host?.openLogs().catch((err: unknown) => setError((err as Error).message));
     }, [host]),

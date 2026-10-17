@@ -3,6 +3,7 @@ import { Tooltip, theme } from 'antd';
 import { useEffect, useState } from 'react';
 
 import { getHostBridge } from './hostBridge.ts';
+import { useI18n } from './i18n/index.tsx';
 import { Logo } from './logo.tsx';
 
 /**
@@ -15,6 +16,7 @@ import { Logo } from './logo.tsx';
  */
 export function TitleBar() {
   const { token } = theme.useToken();
+  const { t } = useI18n();
   const bridge = getHostBridge();
   const [maximized, setMaximized] = useState(false);
 
@@ -50,7 +52,7 @@ export function TitleBar() {
   return (
     <div
       role="toolbar"
-      aria-label="窗口标题栏：拖动移动窗口，双击切换最大化"
+      aria-label={t('titlebar.drag')}
       className="cps-titlebar"
       onMouseDown={(e) => {
         // 只接左键、只接空白处（按钮自己会处理点击）
@@ -72,10 +74,10 @@ export function TitleBar() {
       </div>
       <div className="cps-titlebar-gap" />
       <div className="cps-titlebar-actions" style={{ color: token.colorTextSecondary }}>
-        {btn('min', '最小化', <MinusOutlined />, () => void bridge.minimize().catch(() => {}))}
+        {btn('min', t('titlebar.minimize'), <MinusOutlined />, () => void bridge.minimize().catch(() => {}))}
         {btn(
           'max',
-          maximized ? '向下还原' : '最大化',
+          maximized ? t('titlebar.restore') : t('titlebar.maximize'),
           maximized ? <SwitcherOutlined /> : <BorderOutlined />,
           () =>
             void bridge
@@ -83,7 +85,7 @@ export function TitleBar() {
               .then(() => bridge.isMaximized().then(setMaximized))
               .catch(() => {}),
         )}
-        {btn('close', '关闭到托盘', <CloseOutlined />, () => void bridge.close().catch(() => {}), true)}
+        {btn('close', t('titlebar.close'), <CloseOutlined />, () => void bridge.close().catch(() => {}), true)}
       </div>
     </div>
   );

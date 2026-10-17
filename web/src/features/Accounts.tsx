@@ -30,7 +30,9 @@ import {
   useTestAccount,
 } from '../api/hooks.ts';
 import type { AccountClassRecord, AccountsResponse, AccountView, ExpiryState } from '../api/types.ts';
-import { ACCOUNT_CLASS_TAG } from '../api/types.ts';
+
+import { type Lang, useI18n } from '../i18n/index.tsx';
+import { ACCOUNT_CLASS_TAG } from '../labels.ts';
 import { PageHeader } from '../pageHeader.tsx';
 import { Panel, PanelHint } from '../panel.tsx';
 
@@ -64,13 +66,13 @@ interface EditModal {
   expiresAt: string | null;
 }
 
-/** 最近使用时间：当天只显示时刻，跨天带日期。 */
-function fmtUsed(ts: number): string {
+/** 最近使用时间：当天只显示时刻，跨天带日期（跟随界面语言）。 */
+function fmtUsed(ts: number, lang: Lang): string {
   const d = new Date(ts);
   const sameDay = d.toDateString() === new Date().toDateString();
   return sameDay
-    ? d.toLocaleTimeString()
-    : `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+    ? d.toLocaleTimeString(lang)
+    : d.toLocaleString(lang, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 /**
@@ -81,22 +83,24 @@ function fmtUsed(ts: number): string {
  * 默认路由，不代表这个账号「废了」：direct（OpenRouter 类）模型两类账号都能钉。
  */
 function ClassifyTag({ record }: { record: AccountClassRecord | null }) {
+  const { t, lang } = useI18n();
   const kind = record?.class ?? 'unknown';
   const tag = ACCOUNT_CLASS_TAG[kind];
-  const checked = record?.checkedAt ? `判定于 ${fmtUsed(record.checkedAt)}` : '还没有体检过';
+  const checked = record?.checkedAt
+    ? t('accounts.class.checkedAt', { time: fmtUsed(record.checkedAt, lang) })
+    : t('accounts.class.neverChecked');
   const tip = (
     <span>
       {checked}
-      {record?.note ? `；最近一次体检未成功：${record.note}` : ''}
+      {record?.note ? t('accounts.class.note', { note: record.note }) : ''}
       <br />
-      「风控」= 网关默认把这个账号的请求路由到 openai-compatible-private，钉不住 planner 模型； OpenRouter
-      类模型（direct）两类账号都能用。
+      {t('accounts.class.scope')}
     </span>
   );
   return (
     <Tooltip title={tip}>
       <Tag color={tag.color} style={{ margin: 0 }}>
-        {tag.label}
+        {t(tag.labelKey)}
       </Tag>
     </Tooltip>
   );
@@ -107,40 +111,44 @@ function ClassifyTag({ record }: { record: AccountClassRecord | null }) {
  * 日期可能只是没续上，停用是破坏性动作——所以这里只标记，不改变行为。
  */
 function ExpiryTag({ expiry, expiresAt }: { expiry: ExpiryState; expiresAt: string | null }) {
+  const { t } = useI18n();
   if (expiry.kind === 'none' || !expiresAt) {
     return (
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        未设置到期时间
+        {t('accounts.expiry.none')}
       </Typography.Text>
     );
   }
   if (expiry.kind === 'expired') {
     return (
-      <Tooltip title={`到期日 ${expiresAt}。到期不会自动停用账号，需要你手动处理。`}>
+      <Tooltip title={t('accounts.expiry.expiredTip', { date: expiresAt })}>
         <Tag color="red" style={{ margin: 0 }}>
-          已过期{expiry.days !== null ? ` ${Math.abs(expiry.days)} 天` : ''}
+          {expiry.days !== null
+            ? t('accounts.expiry.expired', { days: Math.abs(expiry.days) })
+            : t('accounts.expiry.expiredOnly')}
         </Tag>
       </Tooltip>
     );
   }
   if (expiry.kind === 'soon' && expiry.days !== null) {
     return (
-      <Tooltip title={`到期日 ${expiresAt}，记得续期`}>
+      <Tooltip title={t('accounts.expiry.soonTip', { date: expiresAt })}>
         <Tag color="gold" style={{ margin: 0 }}>
-          {expiry.days === 0 ? '今天到期' : `${expiry.days} 天后到期`}
+          {expiry.days === 0 ? t('accounts.expiry.today') : t('accounts.expiry.inDays', { days: expiry.days })}
         </Tag>
       </Tooltip>
     );
   }
   return (
     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-      到期 {expiresAt}
+      {t('accounts.expiry.on', { date: expiresAt })}
     </Typography.Text>
   );
 }
 
 export default function Accounts() {
   const { message } = App.useApp();
+  const { t, lang } = useI18n();
   const qc = useQueryClient();
   const accounts = useAccounts();
   const meta = useMeta();
@@ -219,7 +227,7 @@ export default function Accounts() {
     const name = modal.name.trim() || `账号${rows.length + 1}`;
     const key = modal.key.trim();
     if (modal.index === null && !key) {
-      message.warning('新账号需要填写 API Key');
+      message.warning(t('accounts.validate.keyRequired'));
       return;
     }
     const draft = draftFromServer();
@@ -229,61 +237,60 @@ export default function Accounts() {
     } else {
       draft[modal.index] = { ...(draft[modal.index] as DraftAccount), name, key, expiresAt: modal.expiresAt };
     }
-    commit({ accounts: draft }, editing ? `已更新账号「${name}」` : `已添加账号「${name}」`);
+    commit({ accounts: draft }, editing ? t('accounts.note.updated', { name }) : t('accounts.note.added', { name }));
     setModal(null);
   };
 
   const removeAccount = (i: number): void => {
-    const name = rows[i]?.name ?? '账号';
+    const name = rows[i]?.name ?? t('common.none');
     const draft = draftFromServer().filter((_, j) => j !== i);
-    commit({ accounts: draft }, `已删除账号「${name}」`);
+    commit({ accounts: draft }, t('accounts.note.deleted', { name }));
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <PageHeader
-        title="账号池"
-        desc="账号与密钥只在这里定义一次；哪些账号参与哪个网关、用什么选择策略，在「网关」页按网关设置。所有修改即时保存。"
+        title={t('accounts.title')}
+        desc={t('accounts.desc')}
         actions={
           <Button
             type="primary"
             icon={<PlusOutlined />}
             onClick={() => setModal({ index: null, name: '', key: '', expiresAt: null })}
           >
-            添加账号
+            {t('accounts.add')}
           </Button>
         }
       />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {/* 体检设置：判定模型是全局的（判定的是账号，不是网关） */}
-        <Panel title="体检设置" extra={<PanelHint>改动即时保存</PanelHint>}>
+        <Panel title={t('accounts.settings.title')} extra={<PanelHint>{t('accounts.settings.hint')}</PanelHint>}>
           <div style={{ display: 'grid', gap: 8 }}>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              判定模型
+              {t('accounts.settings.model')}
             </Typography.Text>
             <Select
               style={{ width: 280, fontFamily: 'var(--cps-font-mono)' }}
               showSearch
               value={classifyModel || undefined}
-              onChange={(v: string) => commit({ classifyModel: v }, `已把体检判定模型改为 ${v}`)}
+              onChange={(v: string) => commit({ classifyModel: v }, t('accounts.note.modelChanged', { model: v }))}
               options={classifyOptions}
             />
             <Typography.Text type="secondary" style={{ fontSize: 12, lineHeight: '18px' }}>
-              「体检」向这个模型发一次最小请求，看网关把它默认路由到哪：落到 openai-compatible-private 即风控号。要用
-              planner 管线的模型（cline-pass/*）才判得出来；每个账号消耗一次最小额度。
+              {t('accounts.settings.modelHint')}
             </Typography.Text>
           </div>
         </Panel>
 
         {/* 账号名单 */}
         <Panel
-          title="账号"
+          title={t('accounts.panel.title')}
           extra={
             <Space size={12} align="center">
-              <PanelHint>{rows.length} 个</PanelHint>
-              {unclassified > 0 && <PanelHint>{unclassified} 个未判定</PanelHint>}
-              {noExpiry > 0 && <PanelHint>{noExpiry} 个未设置到期</PanelHint>}
+              <PanelHint>{t('common.count', { count: rows.length })}</PanelHint>
+              {unclassified > 0 && <PanelHint>{t('accounts.panel.unclassified', { count: unclassified })}</PanelHint>}
+              {noExpiry > 0 && <PanelHint>{t('accounts.panel.noExpiry', { count: noExpiry })}</PanelHint>}
               <Button
                 size="small"
                 icon={<MedicineBoxOutlined />}
@@ -291,7 +298,7 @@ export default function Accounts() {
                 disabled={!rows.some((a) => a.enabled)}
                 onClick={() => classify.mutate({})}
               >
-                全部体检
+                {t('accounts.panel.classifyAll')}
               </Button>
             </Space>
           }
@@ -302,11 +309,11 @@ export default function Accounts() {
               type="error"
               showIcon
               style={{ margin: 16 }}
-              message="账号池加载失败"
-              description="服务可能正在重启；稍候重试，或用状态栏的刷新按钮。"
+              message={t('accounts.loadFailed')}
+              description={t('accounts.loadFailed.desc')}
               action={
                 <Button size="small" onClick={() => void accounts.refetch()}>
-                  重试
+                  {t('common.retry')}
                 </Button>
               }
             />
@@ -316,16 +323,13 @@ export default function Accounts() {
             </div>
           ) : rows.length === 0 ? (
             <div style={{ padding: '32px 16px' }}>
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="还没有账号：添加 Cline Pass 的 API Key 后即可开始代理"
-              >
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('accounts.empty')}>
                 <Button
                   type="primary"
                   icon={<PlusOutlined />}
                   onClick={() => setModal({ index: null, name: '', key: '', expiresAt: null })}
                 >
-                  添加账号
+                  {t('accounts.add')}
                 </Button>
               </Empty>
             </div>
@@ -345,7 +349,7 @@ export default function Accounts() {
                       <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 6 }}>
                         {/* 名称行带两个徽标：扫一眼就知道「这个号能不能用 / 什么时候到期」 */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
-                          <Typography.Text strong>{a.name || '（未命名）'}</Typography.Text>
+                          <Typography.Text strong>{a.name || t('accounts.unnamed')}</Typography.Text>
                           <ClassifyTag record={a.classify} />
                           <ExpiryTag expiry={a.expiry} expiresAt={a.expiresAt} />
                         </div>
@@ -356,32 +360,37 @@ export default function Accounts() {
 
                       <div style={{ display: 'grid', gap: 4, justifyItems: 'end', minWidth: 118 }}>
                         <Typography.Text style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
-                          请求 {st?.requests ?? 0}
+                          {t('common.requests', { count: st?.requests ?? 0 })}
                         </Typography.Text>
                         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                          {st?.lastUsed ? fmtUsed(st.lastUsed) : '未使用'}
+                          {st?.lastUsed ? fmtUsed(st.lastUsed, lang) : t('accounts.usage.neverUsed')}
                         </Typography.Text>
                         {st?.lastError && (
                           <Typography.Text type="danger" style={{ fontSize: 12 }} ellipsis={{ tooltip: st.lastError }}>
-                            最近有错误
+                            {t('accounts.usage.error')}
                           </Typography.Text>
                         )}
                       </div>
 
-                      <Tooltip title={a.enabled ? '已启用：参与账号选择' : '已停用：不参与任何网关的账号选择'}>
+                      <Tooltip title={a.enabled ? t('accounts.switch.on') : t('accounts.switch.off')}>
                         <Switch
                           size="small"
                           checked={a.enabled}
                           onChange={(v) => {
                             const draft = draftFromServer();
                             draft[i] = { ...(draft[i] as DraftAccount), enabled: v };
-                            commit({ accounts: draft }, v ? `已启用「${a.name}」` : `已停用「${a.name}」`);
+                            commit(
+                              { accounts: draft },
+                              v
+                                ? t('accounts.note.enabled', { name: a.name })
+                                : t('accounts.note.disabled', { name: a.name }),
+                            );
                           }}
                         />
                       </Tooltip>
 
                       <Space size={4}>
-                        <Tooltip title="发一次最小请求，确认这个账号的密钥可用">
+                        <Tooltip title={t('accounts.action.test.tip')}>
                           <Button
                             size="small"
                             loading={
@@ -392,37 +401,43 @@ export default function Accounts() {
                             }
                             onClick={() => testAccount(a.name)}
                           >
-                            测试
+                            {t('accounts.action.test')}
                           </Button>
                         </Tooltip>
-                        <Tooltip title="发一次最小请求，判断这个账号是不是风控号（消耗一次最小额度）">
+                        <Tooltip title={t('accounts.action.classify.tip')}>
                           <Button
                             size="small"
                             icon={<MedicineBoxOutlined />}
-                            aria-label="体检"
+                            aria-label={t('accounts.panel.classifyAll')}
                             loading={testingThis}
                             disabled={classify.isPending && !testingThis}
                             onClick={() => classify.mutate({ names: [a.name] })}
                           />
                         </Tooltip>
-                        <Tooltip title="编辑名称、密钥与到期时间">
+                        <Tooltip title={t('accounts.action.edit.tip')}>
                           <Button
                             size="small"
                             type="text"
                             icon={<EditOutlined />}
-                            aria-label="编辑账号"
+                            aria-label={t('common.edit')}
                             onClick={() => setModal({ index: i, name: a.name, key: '', expiresAt: a.expiresAt })}
                           />
                         </Tooltip>
                         <Popconfirm
-                          title={`删除账号「${a.name}」？`}
-                          description="删除后其密钥将从配置中移除，用量统计与体检结论一并清除，无法恢复。"
-                          okText="删除"
+                          title={t('accounts.delete.title', { name: a.name })}
+                          description={t('accounts.delete.desc')}
+                          okText={t('common.delete')}
                           okButtonProps={{ danger: true }}
-                          cancelText="取消"
+                          cancelText={t('common.cancel')}
                           onConfirm={() => removeAccount(i)}
                         >
-                          <Button size="small" type="text" danger icon={<DeleteOutlined />} aria-label="删除账号" />
+                          <Button
+                            size="small"
+                            type="text"
+                            danger
+                            icon={<DeleteOutlined />}
+                            aria-label={t('accounts.action.delete.tip')}
+                          />
                         </Popconfirm>
                       </Space>
                     </div>
@@ -436,9 +451,9 @@ export default function Accounts() {
 
       <Modal
         open={modal !== null}
-        title={modal?.index === null ? '添加账号' : '编辑账号'}
-        okText="保存"
-        cancelText="取消"
+        title={modal?.index === null ? t('accounts.modal.add') : t('accounts.modal.edit')}
+        okText={t('common.save')}
+        cancelText={t('common.cancel')}
         onOk={submitModal}
         onCancel={() => setModal(null)}
         destroyOnHidden
@@ -446,11 +461,11 @@ export default function Accounts() {
         <Space direction="vertical" style={{ width: '100%' }}>
           <div>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              名称
+              {t('accounts.field.name')}
             </Typography.Text>
             <Input
               style={{ marginTop: 4 }}
-              placeholder="如：主力 / 备用"
+              placeholder={t('accounts.field.name.placeholder')}
               value={modal?.name ?? ''}
               onChange={(e) => setModal((m) => (m ? { ...m, name: e.target.value } : m))}
             />
@@ -464,7 +479,7 @@ export default function Accounts() {
               placeholder={
                 modal?.index === null
                   ? 'sk_...'
-                  : `留空保持不变（已存：末 4 位 ${rows[modal?.index ?? 0]?.keyTail ?? ''}）`
+                  : t('accounts.field.key.placeholderKeep', { tail: rows[modal?.index ?? 0]?.keyTail ?? '' })
               }
               value={modal?.key ?? ''}
               onChange={(e) => setModal((m) => (m ? { ...m, key: e.target.value } : m))}
@@ -472,16 +487,16 @@ export default function Accounts() {
           </div>
           <div>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              到期时间
+              {t('accounts.field.expiry')}
             </Typography.Text>
             <DatePicker
               style={{ marginTop: 4, width: '100%' }}
-              placeholder="可选，留空表示未设置"
+              placeholder={t('accounts.field.expiry.placeholder')}
               value={modal?.expiresAt ? dayjs(modal.expiresAt) : null}
               onChange={(d) => setModal((m) => (m ? { ...m, expiresAt: d ? d.format('YYYY-MM-DD') : null } : m))}
             />
             <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
-              只用来提醒，不会自动停用账号。
+              {t('accounts.field.expiry.hint')}
             </Typography.Text>
           </div>
         </Space>

@@ -1,6 +1,8 @@
 import { App } from 'antd';
 import type { MessageInstance } from 'antd/es/message/interface';
 
+import { type MsgKey, useI18n } from './i18n/index.tsx';
+
 /**
  * 统一的动作回执（气泡提醒）。
  *
@@ -16,14 +18,16 @@ import type { MessageInstance } from 'antd/es/message/interface';
  *   里的可读信息提出来。
  */
 
+type TFunction = (key: MsgKey, params?: Record<string, string | number>) => string;
+
 const OK_MS = 2.5;
 const FAIL_MS = 6;
 const INFO_MS = 3;
 
-function reasonOf(err: unknown): string {
+function reasonOf(err: unknown, fallback: string): string {
   if (err instanceof Error && err.message) return err.message;
   if (typeof err === 'string' && err) return err;
-  return '未知错误';
+  return fallback;
 }
 
 export interface Feedback {
@@ -42,11 +46,11 @@ export interface Feedback {
 }
 
 /** 把 antd 的 message 实例包成本项目的反馈口径。 */
-export function makeFeedback(message: MessageInstance): Feedback {
+export function makeFeedback(message: MessageInstance, t: TFunction): Feedback {
   const ok = (text: string): void => void message.success({ content: text, duration: OK_MS });
   const info = (text: string): void => void message.info({ content: text, duration: INFO_MS });
   const fail = (text: string, err?: unknown): void => {
-    const detail = err === undefined ? '' : reasonOf(err);
+    const detail = err === undefined ? '' : reasonOf(err, t('common.unknownError'));
     const content = detail && !text.includes(detail) ? `${text}：${detail}` : text;
     void message.error({ content, duration: FAIL_MS });
   };
@@ -68,12 +72,13 @@ export function makeFeedback(message: MessageInstance): Feedback {
         },
       };
     },
-    copy: (what = '内容') => ok(`${what}已复制到剪贴板`),
+    copy: (what = t('common.content')) => ok(t('common.copiedToClipboard', { what })),
   };
 }
 
 /** 组件内取反馈器。必须在 `<App>`（antd）内部调用，才能拿到主题化的实例。 */
 export function useFeedback(): Feedback {
   const { message } = App.useApp();
-  return makeFeedback(message);
+  const { t } = useI18n();
+  return makeFeedback(message, t);
 }
