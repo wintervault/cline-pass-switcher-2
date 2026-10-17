@@ -1,5 +1,7 @@
 # 3.0.0 路线图（2026-10-17 起草）
 
+> **执行入口：§10 执行手册**；设计决定见 §9（已确认，执行时不要再改）。
+> 进度：P1 未开始 · P2 未开始 · P3 未开始 · P4 未开始 · P5 未开始（完成一个阶段就改这里）
 > 目标：把 6 项能力做成一个可审计的大版本。每项都先写清「事实依据 / 设计 / 风险」，
 > 再给分阶段实施与验收。长期主义的两条底线贯穿全篇：**v2 配置与 `/v1` 契约不破**、
 > **每条结论都有实测或明确来源**。
@@ -78,23 +80,27 @@ UI 显示检测时间与「可能已变化」。
 ```jsonc
 {
   "version": 3,
-  "accounts": [{ "name": "...", "key": "...", "expiresAt": "2026-12-31" }],
+  "upstreamBase": "https://api.cline.bot/api/v1",
+  "accounts": [{ "name": "a@x", "key": "...", "expiresAt": "2026-12-31" }],
   "gateways": [
     {
       "id": "main", "name": "主网关", "port": 3123, "bindHost": "127.0.0.1",
       "proxyKey": "sk-...", "accounts": ["a@x", "b@y"], "accountMode": "sticky",
+      "activeAccount": "a@x",
+      "corsOrigins": [], "exposeCatalog": false, "publicBaseUrl": "",
       "failover": { "attemptTimeoutMs": 60000, "idleTimeoutMs": 60000, "budgetMs": 90000 },
       "knownModels": ["cline-pass/deepseek-v4.1-flash"],
       "perModel": { "cline-pass/deepseek-v4.1-flash": { "upstreams": ["deepseek"], "pinMode": "strict" } }
     },
     {
-      "id": "risk", "name": "风控号专用", "port": 3124, "proxyKey": "sk-...",
-      "accounts": ["c@z"], "accountMode": "single",
+      "id": "risk", "name": "风控号专用", "port": 3124, "bindHost": "127.0.0.1",
+      "proxyKey": "sk-...", "accounts": ["c@z"], "accountMode": "single",
+      "activeAccount": "c@z",
       "knownModels": ["cline-pass/mimo-v2.6-pro"],
       "perModel": { "cline-pass/mimo-v2.6-pro": { "upstreams": ["xiaomi"], "pinMode": "strict" } }
     }
   ],
-  "console": { "gateway": "main" }
+  "console": { "gatewayId": "main" }
 }
 ```
 
@@ -244,12 +250,215 @@ mono : ui-monospace, SFMono-Regular, Menlo, Consolas, "Microsoft YaHei UI",
 
 ---
 
-## 9. 待确认（默认按此实施，若不认可请指出）
+## 9. 设计决定（2026-10-17 已确认，执行时不要再改）
 
-1. **网关 = 端口 + 账号子集 + 策略 + 自己的模型清单与路由配置**（默认）。控制台只挂主网关。
-2. 网关数量上限 **8**；`PORT` 环境变量只覆盖主网关。
-3. 语言先做 **zh-CN + en-US**，结构可扩展。
+前 7 条是上一轮列出的默认项，用户已确认「先落地计划」。后 6 条是本次把计划落到可执行
+形态时确定的结构性决定。
+
+1. **网关 = 端口 + 账号子集 + 账号策略 + 自己的模型清单与路由配置**；控制台只挂在
+   **控制台网关**（`console.gatewayId`，默认 `main`）上，其余网关只提供 `/v1`。
+2. 网关数量上限 **8**；`PORT` 环境变量只覆盖**控制台网关**的端口（桌面壳固定传 3123）。
+3. 语言先做 **zh-CN + en-US**，结构可扩展；中文是基准。
 4. 风控判定模型默认 `cline-pass/deepseek-v4.1-flash`，可在设置改。
 5. 到期提醒只做徽标 + 页头汇总，不发桌面通知。
-6. 「清除本机保存的访问密钥」确认移除（远端恢复路径改写进文案）。
+6. 移除「清除本机保存的访问密钥」，换成语言切换。
 7. 数据目录、便携模式、桌面壳「退出即真退出」三道闸不变。
+8. **`upstreamBase` 保持全局**（所有网关连同一个 Cline 网关）；`proxyKey` / `corsOrigins` /
+   `exposeCatalog` / `publicBaseUrl` / `failover` / `accountMode` / `knownModels` /
+   `perModel` 下沉到**网关级**。
+9. **账号的标识改为 `name`**（全局唯一，加载时强制）；配置里的 `activeAccount` 从下标
+   改成账号名，并按网关分别保存。
+10. **「访问与安全」页并入「网关」页**：接入地址、API Key、CORS、目录暴露本来就是接入面
+    的属性，多网关后按网关编辑。导航变为：订阅模型 / 账号池 / 网关 / 测试台 / 请求历史 /
+    完整目录（六页）。
+11. **账号分类是观测值，不是配置**：`accountClass` + `classCheckedAt` 存 metadata
+    （按账号名）；`expiresAt` 是用户声明，存 config。
+12. 中文词典是 i18n 的**类型源头**（`const zh = {...} as const`，`en` 的类型是
+    `Record<keyof typeof zh, string>`）——漏翻由 typecheck 拦住，不靠单测提醒。
+13. 后端用户可见文案返回 `code + params`；前端按 code 映射，未知 code 回退显示原文。
+
+---
+
+## 10. 执行手册（下一个会话从这里开始）
+
+> 目标：按 P1 → P5 顺序做完 3.0.0。每个阶段结束都必须「可运行、可验证、可停」。
+> 全程遵守「开发 / 自测隔离」：线上实例不暂停、不替换；自测走 `npm run dev:isolated`。
+
+### 10.0 开工前（必做）
+
+1. 读 `CLAUDE.md`、`docs/ROADMAP-3.0.md`（本文）、`docs/timeouts.md`、`docs/pinning.md`。
+2. 确认线上实例在跑（只读 GET `http://127.0.0.1:3123/healthz`），**不要动它**。
+3. `npm run dev:isolated -- --from "<线上 data 目录>"` 起隔离实例（3133）。
+4. 每个阶段前先跑一遍 `npm test / typecheck / lint` 作为基线。
+
+### 10.1 P1：字体 + 模型页纵向平衡（纯前端）
+
+**改动文件**
+
+| 文件 | 改动 |
+|---|---|
+| `web/src/theme.ts` | 设 `token.fontFamily` 与 `token.fontFamilyCode`（见 §5 的字符串） |
+| `web/src/app.css` | 定义 `--cps-font-sans` / `--cps-font-mono`；`.cps-mono`、`.cps-pre`、`pre/code` 引用它们（mono 栈必须带 CJK 回退） |
+| `web/src/App.tsx` | 六个页面包装层由 `flex: 0 0 auto` 改为 `flex: 1 1 auto; minHeight: 0`（只有模型的页面用得上，其余页不受影响） |
+| `web/src/features/Models.tsx` | 两栏行 `height: calc(100vh - 448px)` → `flex: 1 1 auto; minHeight: 0`；页面根 `height: 100%` |
+
+**验收（必须全绿才算完成）**
+
+- 1170×860：两栏行高 ≈ 485、路由策略贴底、最后区块底到内容区底 = 24px（内容区内边距），
+  页面纵向滚动为 0
+- 六页 × {1506×900, 1280×800, 1170×846}：标题顶 56 / 首块顶 126 / 左边缘一致；
+  横向溢出 0；测试台纵向溢出 0
+- 字体：用 canvas 像素比对（同串中文分别以元素栈与 SimSun 渲染）确认**没有元素落到 SimSun**
+- `npm test / typecheck / lint / build` 全绿
+
+**commit**：`fix: 字体栈补 CJK 回退 + 模型页两栏填满（3.0 P1）`
+
+### 10.2 P2：账号分类 + 到期时间
+
+**数据**
+
+- config：`accounts[].expiresAt?: string`（`YYYY-MM-DD`；非法格式 `.catch(undefined)`）
+- metadata：`accountClass: { [accountName]: { class: 'normal'|'private'|'unknown'; checkedAt: number|null } }`
+
+**新增服务** `server/src/accounts/classify.ts`
+
+```
+classifyAccount(deps, account):
+  1 发 POST {upstreamBase}/chat/completions
+  body = { model: cfg.classifyModel ?? 'cline-pass/deepseek-v4.1-flash',
+           messages: [{role:'user',content:'ping'}], max_tokens: 64, stream: false }
+  ——**不带任何钉住字段**（判定的是默认路由，不是参数是否被读）
+  unwrap(json).routing.finalProvider:
+    'openai-compatible-private' → private
+    其它非空（deepseek/alibaba/…） → normal
+    请求失败 / 429 / 空 → unknown（保留上次结论，只更新失败原因）
+```
+
+**API**：`POST /api/accounts/:name/classify`、`POST /api/accounts/classify`（全部启用账号，
+逐个串行，回执两段式「正在体检 N 个账号 → 完成：正常 X / 风控 Y / 未判定 Z」）。
+
+**UI（账号池）**
+
+- 每行徽标：`正常`（绿）/ `风控`（橙）/ `未判定`（灰）；悬停：判定时间 +「只影响 planner
+  模型；OpenRouter 类模型两类账号都能钉」
+- 池级按钮「全部体检」；页头汇总：`N 个未判定`、`N 个未设置到期时间`（各自可点进对应账号）
+- 编辑弹窗加「到期时间」日期选择（可清空）；行内显示 `到期 YYYY-MM-DD` / `未设置到期时间` /
+  `N 天后到期`（≤7 天金色）/ `已过期`（红色，**不停用**）
+
+**验收**
+
+- 隔离实例上对三个账号各体检一次（3 发最小请求）：badge 与已知事实一致
+  （`device0x400`→正常、`iamreneelin`→风控、额度用尽的→未判定）
+- 单测：三态判定（含 Cline 信封、429、网络失败）、保留 `checkedAt` 的规则、到期天数计算
+
+**commit**：`feat: 账号分类体检与到期时间（3.0 P2）`
+
+### 10.3 P3：配置 v3 + 多网关
+
+> 唯一的架构级改动。先写 schema 与迁移（含单测），再动 server，最后 UI。
+
+**3.1 schema / 迁移**
+
+- `CONFIG_VERSION = 3`；`GatewaySchema` 按 §2 的字段；`ConfigSchema` 含 `accounts`（全局）、
+  `gateways`（至少 1 个且 id 唯一）、`console.gatewayId`、`upstreamBase`、`historyLimit`
+- 迁移 v2→v3：生成 `main` 网关，继承旧 `port/bindHost/proxyKey/corsOrigins/exposeCatalog/
+  publicBaseUrl/accountMode/failover/knownModels/perModel`；`accounts` 全量引用；
+  `activeAccount`（下标）→ `main.activeAccount`（账号名）；账号名去重（重复者追加 ` (2)`
+  并写日志）
+- metadata v3：`models[gatewayId][modelId]`；`history[].gateway`；旧数据整体迁到 `main`；
+  形态检测：`Object.values(models).some(v => v && typeof v === 'object' && 'pipeline' in v)`
+  → v2
+- **测试**：v2 fixture（含 roundrobin、perModel、activeAccount）→ v3 断言；重复账号名；
+  损坏 metadata 的备份与重建
+
+**3.2 server**
+
+- `appContext.ts`：构建 `gateways: Map<id, {def, pool, health, chain, probe, listener}>`；
+  全局 `accounts` + `metaStore` + `catalog`；控制台网关 = `console.gatewayId`（端口被 `PORT`
+  覆盖）
+- `http/server.ts`：每个网关一个 `http.Server`；handler 带 gateway 上下文；绑定失败 → 该网关
+  `status: 'error'` + 原因，其它网关照常；关闭时逐个 close
+- `http/routes/chat.ts`：用该 listener 的网关 chain；`/v1/models` 用该网关的 `knownModels`
+- `security/middleware`：按网关的 `proxyKey` / `corsOrigins`
+- `accounts/pool`：每网关一个实例；`activeAccount` 按网关持久化
+- `upstream/probe`：探测/校验结果写 `models[gatewayId][modelId]`
+- `http/routes/api.ts`：网关级资源接受 `?gateway=<id>`（默认控制台网关）；新增
+  `GET /api/gateways`（含运行状态）、`PUT /api/gateways/:id`、`POST /api/gateways`、
+  `DELETE /api/gateways/:id`；`recordHistory` 带 `gateway`
+- 桌面壳：**预期无需改 Rust**——`PORT=3123` 仍指向控制台网关；构建后实测一次冷启动与退出
+
+**3.3 UI**
+
+- 新页 `web/src/features/Gateways.tsx`（Panel 结构）：
+  - 「网关列表」：名称 / 端口 / 账号数 / 模型数 / 状态（运行 / 端口绑定失败 + 原因）；
+    操作：编辑、复制接入地址
+  - 编辑抽屉：名称、端口、绑定地址、API Key、账号勾选（可混搭类型）、账号策略、
+    CORS、目录暴露、公网地址、失败转移参数
+  - 删除网关：需输入名称确认；最后一个网关不可删
+- 「访问与安全」页删除；状态栏的 API Key 入口改为跳到「网关 → 当前控制台网关」
+- 「订阅模型」「测试台」页头加网关切换（Segmented）；路由配置与探测结果按网关隔离
+- 「请求历史」加 `网关` 列与筛选（默认全部）
+- 状态栏接入地址显示控制台网关地址；有多个网关时附「共 N 个」
+- 导航顺序：订阅模型 / 账号池 / 网关 / 测试台 / 请求历史 / 完整目录
+
+**验收**
+
+- 隔离实例：在 3134 加第二个网关（绑定同一组/另一组账号），分别用两个网关的 key 请求
+  `/v1/models` 与 `/v1/chat/completions`，确认模型清单、渠道、账号、历史互不串
+- 端口冲突：手工占用 3134 后启动 → 该网关显示失败原因，控制台与 3123/3133 正常
+- 迁移：用线上 config/metadata 的副本（`--from`）启动隔离实例，确认行为与 2.9.12 一致
+- 单测：v2→v3 配置/元数据迁移、双网关隔离、端口失败局部化、历史分网关
+
+**commit**（建议拆三个）：`feat: 配置 v3 与迁移` / `feat: 多网关服务端` / `feat: 网关页与按网关路由配置`
+
+### 10.4 P4：i18n
+
+**结构**
+
+```
+web/src/i18n/
+  index.tsx      I18nProvider + useT + 语言状态（localStorage: cps_lang）
+  zh-CN.ts       const zh = {...} as const      ← 类型源头
+  en-US.ts       const en: Record<keyof typeof zh, string> = {...}
+```
+
+**要点**
+
+- key 用 `area.element.state`（`models.header.title`、`accounts.class.private`、
+  `common.save`）；`t(key, params?)` 支持 `{name}` 插值
+- 切换语言：context 触发重渲染（不刷新）；同时切 antd `ConfigProvider locale` 与 dayjs locale；
+  设置 `document.documentElement.lang`
+- 状态栏右下角：移除「清除本机保存的访问密钥」，换成语言切换；远端恢复路径写进
+  AccessGate 的文案（清站点数据 / 换密钥）
+- 后端：`pinDisabledReason` 等改为 `{ code, params }`（保留原 message）；前端映射表放
+  `i18n/codes.ts`，未知 code 显示原 message
+- **新 UI（网关页等）在 P3 就先写 `t(...)`**，P4 只补旧文案，避免返工
+- 英文按产品语言写，不逐字直译；两遍自查：① 只说什么/做什么/会发生什么 ② 英文里不出现
+  「中式语序」
+
+**验收**
+
+- 不刷新切到 English：六页正文、Panel 标题、状态栏、气泡、空态、错误提示、表格列头全部切换
+- en 模式下扫描 DOM 文本，不应残留中文（允许白名单：模型 ID、账号名、上游错误原文）
+- `npm run typecheck` 通过即证明 en 词典无漏项
+
+**commit**：`feat: 中英双语与语言切换（3.0 P4）`
+
+### 10.5 P5：审计与 3.0.0
+
+1. 六页 × 三尺寸版式自检 + 「装得下」自检 + 字体像素自检（用 P1 的方法）
+2. 隔离 UAT（`docs/UAT.md` 补 3.0 章节）：多网关隔离、账号体检、到期显示、语言热切换、
+   真实网关一次非流式大请求（确认 v2.9.12 的修复仍有效）
+3. 文档：README（多网关/账号分类/到期/i18n/配置 v3）、CHANGELOG（3.0.0 破坏性变更与迁移）、
+   CLAUDE.md（新不变量：账号分类是观测值、网关级配置、i18n 类型源头、访问与安全已并入网关）
+4. 版本号五处 → `3.0.0`；`npm run desktop:build`；`git status` 检查 Cargo.lock；
+   提交 + tag `v3.0.0` + push
+5. **不替换线上实例**：产出便携包后报告路径，由用户决定切换时间
+
+### 10.6 每个阶段的定义（DoD）
+
+- `npm test`（全绿，新增逻辑都有单测）、`typecheck`、`lint`、`build`
+- 隔离实例上人工点过至少一轮（涉及真实网关的按最小请求数）
+- 文档随代码更新（README / CHANGELOG / CLAUDE.md / docs）
+- 一个 commit 一件事，消息说明「为什么」；阶段结束可随时停
+
