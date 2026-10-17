@@ -118,6 +118,32 @@ describe('loadMetaStore', () => {
     expect(store.value.history[0]?.gateway).toBe('risk');
   });
 
+  it('网关 id 与模型 id 都叫 pipeline 时，v3 不会被误判成 v2（值类型判据）', async () => {
+    await fs.writeFile(
+      file,
+      JSON.stringify({ models: { pipeline: { pipeline: { pipeline: 'direct', upstreams: ['xiaomi'] } } } }),
+    );
+    const { store, notes } = await loadMetaStore(file);
+    expect(store.value.models.pipeline?.['pipeline']?.pipeline).toBe('direct');
+    expect(store.value.models.main).toBeUndefined();
+    expect(notes.join()).not.toContain('迁入');
+  });
+
+  it('v2 里坏掉一条记录，其余照常迁入 main（some 而不是 every）', async () => {
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        models: {
+          'cline-pass/a': { pipeline: 'direct' },
+          'cline-pass/b': { junk: true },
+        },
+      }),
+    );
+    const { store } = await loadMetaStore(file);
+    expect(store.value.models.main?.['cline-pass/a']?.pipeline).toBe('direct');
+    expect(store.value.models.main?.['cline-pass/b']).toBeUndefined();
+  });
+
   it('缺少的字段用默认值补全（不要求全量结构）', async () => {
     await fs.writeFile(file, JSON.stringify({ models: { 'cline-pass/x': { pipeline: 'direct' } } }));
     const { store } = await loadMetaStore(file);

@@ -1,3 +1,5 @@
+import { copyFile } from 'node:fs/promises';
+
 import { ensureUniqueAccountNames } from '../accounts/naming.ts';
 import { moduleLogger } from '../log/logger.ts';
 import { atomicWriteFile, readJsonFile } from '../store/jsonStore.ts';
@@ -30,6 +32,8 @@ export interface LoadResult {
   backupPath: string | null;
   /** 是否是全新安装（配置文件不存在）。 */
   fresh: boolean;
+  /** 发生了版本迁移时为原版本号；调用方应在启动闸门通过后写回（保留原文件备份）。 */
+  migrationFrom: number | null;
 }
 
 function backupPathFor(file: string): string {
@@ -63,7 +67,7 @@ export async function loadConfig(file: string): Promise<LoadResult> {
 
   // raw === null 表示文件不存在（区别于文件内容就是 "null"）
   if (raw === null && !corrupt) {
-    return { config: defaultConfig(), notes, backupPath: null, fresh: true };
+    return { config: defaultConfig(), notes, backupPath: null, fresh: true, migrationFrom: null };
   }
 
   if (corrupt || !isPlainObject(value)) {
@@ -71,9 +75,10 @@ export async function loadConfig(file: string): Promise<LoadResult> {
     const backupPath = await backup(file, raw ?? '');
     notes.push(`config.json ${reason}，已用默认配置启动；原文件已备份到 ${backupPath}`);
     log.error({ file, backupPath }, `配置文件${reason}，已回退默认配置（原文件已备份）`);
-    return { config: defaultConfig(), notes, backupPath, fresh: false };
+    return { config: defaultConfig(), notes, backupPath, fresh: false, migrationFrom: null };
   }
 
+  const fromVersion = typeof value.version === 'number' && Number.isInteger(value.version) ? value.version : 1;
   const { raw: migrated, applied } = migrateConfig(value);
   notes.push(...applied);
 
@@ -83,7 +88,7 @@ export async function loadConfig(file: string): Promise<LoadResult> {
     const backupPath = await backup(file, raw ?? '');
     notes.push(`配置结构无法解析，已用默认配置启动；原文件已备份到 ${backupPath}`);
     log.error({ file, backupPath, issues: parsed.error.issues }, '配置结构无法解析，已回退默认配置');
-    return { config: defaultConfig(), notes, backupPath, fresh: false };
+    return { config: defaultConfig(), notes, backupPath, fresh: false, migrationFrom: null };
   }
 
   const base = parsed.data;
@@ -156,7 +161,27 @@ export async function loadConfig(file: string): Promise<LoadResult> {
     notes,
     backupPath: null,
     fresh: false,
+    // 只有真正的版本迁移才回写（字段级修正不写：那条路可能丢掉了坏条目，
+    // 让用户还有机会在文件里自己修）。写盘不含环境变量覆盖。
+    migrationFrom: applied.length ? fromVersion : null,
   };
+}
+
+/**
+ * 把迁移后的配置写回文件。先复制原文件为 `config.json.v{旧版本}-<时间>`，
+ * 再原子写入——降级或迁移出错时用户可以拿回原文件。
+ */
+export async function persistConfigMigration(file: string, config: Config, from: number): Promise<string | null> {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupPath = `${file}.v${from}-${stamp}`;
+  let backedUp: string | null = backupPath;
+  try {
+    await copyFile(file, backupPath);
+  } catch {
+    backedUp = null;
+  }
+  await writeConfig(file, config);
+  return backedUp;
 }
 
 /**

@@ -25,7 +25,6 @@ export const qk = {
   models: (gatewayId: string) => ['models', gatewayId] as const,
   accounts: ['accounts'] as const,
   gateways: ['gateways'] as const,
-  security: ['security'] as const,
   history: ['history'] as const,
 };
 
@@ -196,7 +195,8 @@ export function useTestAccount() {
     onSuccess: (r, vars) => {
       const detail = noticeText(t, r.notice);
       if (r.ok) fb.ok(t('toast.account.available', { name: vars.label, ms: r.ms, detail }));
-      else fb.fail(t('toast.account.unavailable', { name: vars.label }), r.error ?? t('toast.account.untested'));
+      else
+        fb.fail(t('toast.account.unavailable', { name: vars.label }), detail || r.error || t('toast.account.untested'));
     },
     onError: (err, vars) => fb.fail(t('toast.account.requestFailed', { name: vars.label }), err),
   });
@@ -274,11 +274,16 @@ export function useSetConsoleGateway() {
   const fb = useFeedback();
   const { t } = useI18n();
   return useMutation({
-    mutationFn: (vars: { id: string; name: string }) =>
+    mutationFn: (vars: { id: string; name: string; url?: string }) =>
       api<{ ok: boolean; deferred: boolean }>('/api/gateways/console', { json: { id: vars.id } }),
     onSuccess: (_data, vars) => {
       refresh();
-      fb.ok(t('toast.gateway.consoleSwitched', { name: vars.name }));
+      // 回执必须带上新地址：切完之后旧端口的控制台就没了，用户需要知道去哪
+      fb.ok(
+        vars.url
+          ? t('toast.gateway.consoleSwitchedUrl', { name: vars.name, url: vars.url })
+          : t('toast.gateway.consoleSwitched', { name: vars.name }),
+      );
     },
     onError: (err) => fb.fail(t('toast.gateway.consoleFailed'), err),
   });

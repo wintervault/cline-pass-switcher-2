@@ -19,6 +19,24 @@ export class UnauthorizedError extends Error {
   }
 }
 
+/**
+ * 服务端错误。控制台能看到的错误自带稳定 `code + params`，
+ * 由 `feedback` 统一按当前语言翻译（未知 code 用原 message 兜底）。
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly params?: Record<string, string | number>;
+
+  constructor(message: string, status: number, code?: string, params?: Record<string, string | number>) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+    this.params = params;
+  }
+}
+
 export interface ApiOptions {
   json?: unknown;
   method?: 'GET' | 'POST';
@@ -56,17 +74,21 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
     // 服务端错误体形状不一：{error:{message}} / {error:"..."} / {error:...} / 纯文本——都归一成人话
     const raw = await res.text().catch(() => '');
     let detail = raw.slice(0, 300);
+    let code: string | undefined;
+    let params: Record<string, string | number> | undefined;
     try {
       const parsed = JSON.parse(raw) as { error?: unknown; message?: unknown };
       if (typeof parsed.error === 'string') detail = parsed.error;
       else if (parsed.error && typeof parsed.error === 'object') {
-        const m = (parsed.error as { message?: unknown }).message;
-        if (typeof m === 'string') detail = m;
+        const e = parsed.error as { message?: unknown; code?: unknown; params?: unknown };
+        if (typeof e.message === 'string') detail = e.message;
+        if (typeof e.code === 'string') code = e.code;
+        if (e.params && typeof e.params === 'object') params = e.params as Record<string, string | number>;
       } else if (typeof parsed.message === 'string') detail = parsed.message;
     } catch {
       /* 非 JSON 错误体，用原文 */
     }
-    throw new Error(detail || `${res.status} ${res.statusText}`);
+    throw new ApiError(detail || `${res.status} ${res.statusText}`, res.status, code, params);
   }
   return (await res.json()) as T;
 }

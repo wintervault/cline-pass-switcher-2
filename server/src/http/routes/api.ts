@@ -242,16 +242,27 @@ async function applyGatewayChange(ctx: AppContext, c: Ctx, changedIds: string[])
  * 网关保存请求的字段白名单与归一化（防止前端顺手改掉 id 之类的东西）。
  * proxyKey 三态：缺省/空串 = 保持，null = 清除，非空 = 设置——前端拿不到明文，「留空」是常态。
  */
-export function mergeGatewayPayload(raw: Record<string, unknown>, existing: Gateway | null): Gateway | string {
+export type GatewayMergeResult =
+  | { ok: true; gateway: Gateway }
+  | { ok: false; code: string; message: string; params?: Record<string, string | number> };
+
+/**
+ * 网关保存请求的字段白名单与归一化。
+ *
+ * 失败时同时给 `code`（前端按语言映射）与中文 `message`（日志/老客户端兜底）——
+ * 控制台文案不靠服务端拼中文。
+ */
+export function mergeGatewayPayload(raw: Record<string, unknown>, existing: Gateway | null): GatewayMergeResult {
   const fallback = existing ?? defaultGateway({ id: String(raw['id'] ?? '') });
   const name = typeof raw['name'] === 'string' ? raw['name'].trim() : fallback.name;
-  if (!name || name.length > 50) return '网关名称需要 1-50 个字符';
+  if (!name || name.length > 50) return { ok: false, code: 'gateway.nameInvalid', message: '网关名称需要 1-50 个字符' };
 
   const port = raw['port'] === undefined ? fallback.port : Number(raw['port']);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) return '端口必须是 1-65535 的整数';
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    return { ok: false, code: 'gateway.portInvalid', message: '端口必须是 1-65535 的整数' };
 
   const bindHost = typeof raw['bindHost'] === 'string' ? raw['bindHost'].trim() : fallback.bindHost;
-  if (!bindHost) return '绑定地址不能为空';
+  if (!bindHost) return { ok: false, code: 'gateway.bindHostRequired', message: '绑定地址不能为空' };
 
   const accountMode =
     raw['accountMode'] === 'single' || raw['accountMode'] === 'roundrobin' || raw['accountMode'] === 'sticky'
@@ -285,27 +296,30 @@ export function mergeGatewayPayload(raw: Record<string, unknown>, existing: Gate
           const parsed = GatewaySchema.shape.failover.safeParse(raw['failover']);
           return parsed.success ? parsed.data : null;
         })();
-  if (!failover) return '失败转移参数不合法';
+  if (!failover) return { ok: false, code: 'gateway.failoverInvalid', message: '失败转移参数不合法' };
 
   return {
-    ...fallback,
-    name,
-    port,
-    bindHost,
-    proxyKey,
-    publicBaseUrl:
-      typeof raw['publicBaseUrl'] === 'string'
-        ? raw['publicBaseUrl'].trim().replace(/\/+$/, '')
-        : fallback.publicBaseUrl,
-    corsOrigins,
-    exposeCatalog: typeof raw['exposeCatalog'] === 'boolean' ? raw['exposeCatalog'] : fallback.exposeCatalog,
-    allAccounts,
-    accounts,
-    accountMode,
-    activeAccount,
-    knownModels,
-    perModel: raw['perModel'] === undefined ? fallback.perModel : normalizePerModelMap(raw['perModel']),
-    failover,
+    ok: true,
+    gateway: {
+      ...fallback,
+      name,
+      port,
+      bindHost,
+      proxyKey,
+      publicBaseUrl:
+        typeof raw['publicBaseUrl'] === 'string'
+          ? raw['publicBaseUrl'].trim().replace(/\/+$/, '')
+          : fallback.publicBaseUrl,
+      corsOrigins,
+      exposeCatalog: typeof raw['exposeCatalog'] === 'boolean' ? raw['exposeCatalog'] : fallback.exposeCatalog,
+      allAccounts,
+      accounts,
+      accountMode,
+      activeAccount,
+      knownModels,
+      perModel: raw['perModel'] === undefined ? fallback.perModel : normalizePerModelMap(raw['perModel']),
+      failover,
+    },
   };
 }
 
@@ -333,16 +347,19 @@ export function registerApiRoutes(
   router.get('/api/models', (c: Ctx) => {
     const gateway = requestGateway(ctx, c);
     if (!gateway) return sendError(c.res, 404, 'unknown gateway', 'not_found');
-    void ctx.catalog.catalog().then((catalogIds) => {
-      sendJSON(c.res, 200, {
-        gateway: { id: gateway.id, name: gateway.name },
-        subscription: subscriptionView(ctx, gateway),
-        catalogCount: catalogIds.length,
-        catalog: catalogIds,
-        proxyBase: gatewayProxyBase(gateway),
-        officialFetch: meta().officialModelsFetch,
+    void ctx.catalog
+      .catalog()
+      .catch(() => [] as string[])
+      .then((catalogIds) => {
+        sendJSON(c.res, 200, {
+          gateway: { id: gateway.id, name: gateway.name },
+          subscription: subscriptionView(ctx, gateway),
+          catalogCount: catalogIds.length,
+          catalog: catalogIds,
+          proxyBase: gatewayProxyBase(gateway),
+          officialFetch: meta().officialModelsFetch,
+        });
       });
-    });
   });
 
   router.post('/api/probe', async (c: Ctx) => {
@@ -505,7 +522,8 @@ export function registerApiRoutes(
     if (!body.ok) return sendError(c.res, 400, body.reason === 'bad-json' ? 'invalid JSON body' : 'body too large');
     const payload = (body.value ?? {}) as { accounts?: unknown; classifyModel?: unknown };
     const { accounts, renames } = mergeAccountsDetailed(config().accounts, payload.accounts);
-    if (!accounts.length) return sendError(c.res, 400, '至少需要一个有效账号（key 非空）');
+    if (!accounts.length)
+      return sendError(c.res, 400, '至少需要一个有效账号（key 非空）', 'invalid_request_error', 'accounts.required');
     const names = new Set(accounts.map((a) => a.name));
     const classifyModel = typeof payload.classifyModel === 'string' ? payload.classifyModel.trim().slice(0, 120) : '';
 
@@ -549,9 +567,16 @@ export function registerApiRoutes(
       : null;
     const targets = config().accounts.filter((a) => !!a.key && (wanted ? wanted.has(a.name) : a.enabled !== false));
     if (!targets.length) {
-      return sendError(c.res, 400, wanted ? '没有匹配的账号' : '没有可体检的启用账号');
+      return sendError(
+        c.res,
+        400,
+        wanted ? '没有匹配的账号' : '没有可体检的启用账号',
+        'invalid_request_error',
+        wanted ? 'accounts.classify.noTargets' : 'accounts.classify.noEnabled',
+      );
     }
-    if (ctx.classify.isRunning()) return sendError(c.res, 409, '体检正在进行中，请稍候');
+    if (ctx.classify.isRunning())
+      return sendError(c.res, 409, '体检正在进行中，请稍候', 'invalid_request_error', 'accounts.classify.busy');
     const batch = await ctx.classify.classifyMany(targets, c.abortSignal);
     // 客户端中途离开：不再写响应（socket 已断）
     if (batch.cancelled) return;
@@ -592,7 +617,12 @@ export function registerApiRoutes(
         c.res,
         200,
         authFail
-          ? { ok: false, ms: Date.now() - started, error: `密钥无效或未授权：${message.slice(0, 160)}` }
+          ? {
+              ok: false,
+              ms: Date.now() - started,
+              error: `密钥无效或未授权：${message.slice(0, 160)}`,
+              notice: { code: 'account.keyInvalid', params: { message: message.slice(0, 160) } },
+            }
           : {
               ok: true,
               ms: Date.now() - started,
@@ -624,24 +654,50 @@ export function registerApiRoutes(
 
     const cfg = config();
     const id = typeof payload['id'] === 'string' ? payload['id'].trim() : '';
-    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(id)) return sendError(c.res, 400, '网关 id 需为 1-32 位的字母数字与连字符');
+    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(id))
+      return sendError(
+        c.res,
+        400,
+        '网关 id 需为 1-32 位的字母数字与连字符',
+        'invalid_request_error',
+        'gateway.idInvalid',
+      );
     const existing = gatewayById(cfg, id);
     if (!existing && cfg.gateways.length >= MAX_GATEWAYS) {
-      return sendError(c.res, 400, `最多只能有 ${MAX_GATEWAYS} 个网关`);
+      return sendError(c.res, 400, `最多只能有 ${MAX_GATEWAYS} 个网关`, 'invalid_request_error', 'gateway.limit', {
+        max: MAX_GATEWAYS,
+      });
     }
 
-    const gateway = mergeGatewayPayload({ ...payload, id }, existing);
-    if (typeof gateway === 'string') return sendError(c.res, 400, gateway);
+    const merged = mergeGatewayPayload({ ...payload, id }, existing);
+    if (!merged.ok) {
+      return sendError(c.res, 400, merged.message, 'invalid_request_error', merged.code, merged.params);
+    }
+    const gateway = merged.gateway;
     if (!existing) gateway.id = id;
 
     // 与启动闸门同一条规则：非回环地址 + 空密钥 = 任何人可白嫖，运行期保存也不许绕过
     if (!isLoopbackHost(gateway.bindHost) && !gateway.proxyKey && process.env['ALLOW_INSECURE_BIND'] !== '1') {
-      return sendError(c.res, 400, '绑定非回环地址时必须设置 API Key（或把绑定地址改成 127.0.0.1）');
+      return sendError(
+        c.res,
+        400,
+        '绑定非回环地址时必须设置 API Key（或把绑定地址改成 127.0.0.1）',
+        'invalid_request_error',
+        'gateway.insecureBind',
+      );
     }
 
     // 端口冲突在保存时就拦住：同地址同端口一定绑不上，没必要等到运行时报错
     const clash = cfg.gateways.find((g) => g.id !== id && g.bindHost === gateway.bindHost && g.port === gateway.port);
-    if (clash) return sendError(c.res, 409, `端口 ${gateway.port} 已被网关「${clash.name}」占用`);
+    if (clash)
+      return sendError(
+        c.res,
+        409,
+        `端口 ${gateway.port} 已被网关「${clash.name}」占用`,
+        'invalid_request_error',
+        'gateway.portConflict',
+        { port: gateway.port, name: clash.name },
+      );
 
     // 账号范围只保留存在的账号（空 = 全部）
     const alive = new Set(cfg.accounts.map((a) => a.name));
@@ -664,9 +720,17 @@ export function registerApiRoutes(
     const id = String(((body.value ?? {}) as { id?: unknown }).id ?? '').trim();
     const cfg = config();
     const target = gatewayById(cfg, id);
-    if (!target) return sendError(c.res, 404, '网关不存在');
-    if (cfg.gateways.length <= 1) return sendError(c.res, 400, '至少保留一个网关');
-    if (cfg.console.gatewayId === id) return sendError(c.res, 400, '不能删除控制台网关：先把控制台切到别的网关');
+    if (!target) return sendError(c.res, 404, '网关不存在', 'not_found', 'gateway.notFound');
+    if (cfg.gateways.length <= 1)
+      return sendError(c.res, 400, '至少保留一个网关', 'invalid_request_error', 'gateway.lastOne');
+    if (cfg.console.gatewayId === id)
+      return sendError(
+        c.res,
+        400,
+        '不能删除控制台网关：先把控制台切到别的网关',
+        'invalid_request_error',
+        'gateway.consoleProtected',
+      );
 
     updateConfig(ctx, (draft) => {
       draft.gateways = draft.gateways.filter((g) => g.id !== id);
@@ -680,7 +744,18 @@ export function registerApiRoutes(
     if (!body.ok) return sendError(c.res, 400, body.reason === 'bad-json' ? 'invalid JSON body' : 'body too large');
     const id = String(((body.value ?? {}) as { id?: unknown }).id ?? '').trim();
     const cfg = config();
-    if (!gatewayById(cfg, id)) return sendError(c.res, 404, '网关不存在');
+    if (!gatewayById(cfg, id)) return sendError(c.res, 404, '网关不存在', 'not_found', 'gateway.notFound');
+    // 控制台不能切到一个没起来的网关：旧控制台马上就要停，切过去就再也进不来了
+    const status = ctx.gateways.statuses().find((s) => s.id === id);
+    if (status?.state !== 'running') {
+      return sendError(
+        c.res,
+        409,
+        '该网关当前未运行，无法作为控制台网关',
+        'invalid_request_error',
+        'gateway.notRunning',
+      );
+    }
     const previous = cfg.console.gatewayId;
     updateConfig(ctx, (draft) => {
       draft.console.gatewayId = id;

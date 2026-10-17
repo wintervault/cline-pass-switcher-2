@@ -32,14 +32,21 @@ export function sendJSON(res: http.ServerResponse, status: number, body: unknown
   res.end(payload);
 }
 
-/** 统一的错误响应形状，与 OpenAI 兼容客户端期望的 `{error:{message}}` 一致。 */
+/**
+ * 统一的错误响应形状，与 OpenAI 兼容客户端期望的 `{error:{message}}` 一致。
+ *
+ * 控制台能看到的错误额外带稳定 `code + params`：前端按语言映射文案，
+ * `message` 只作为日志与老客户端的兜底（见 i18n 决定 #13）。
+ */
 export function sendError(
   res: http.ServerResponse,
   status: number,
   message: string,
   type = 'invalid_request_error',
+  code?: string,
+  params?: Record<string, string | number>,
 ): void {
-  sendJSON(res, status, { error: { message, type } });
+  sendJSON(res, status, { error: { message, type, ...(code ? { code, params } : {}) } });
 }
 
 export function sendText(

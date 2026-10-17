@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { loadConfig, writeConfig } from '../src/config/load.ts';
+import { loadConfig, persistConfigMigration, writeConfig } from '../src/config/load.ts';
 import { ConfigTooNewError, migrateConfig } from '../src/config/migrate.ts';
 import { CONFIG_VERSION, defaultConfig, FailoverSchema } from '../src/config/schema.ts';
 
@@ -234,6 +234,40 @@ describe('loadConfig', () => {
     await write(JSON.stringify({ accounts: [{ name: 'A', key: 'sk_a' }], activeAccount: 9 }));
     const r2 = await loadConfig(file);
     expect(r2.config.gateways[0]?.activeAccount).toBe('');
+  });
+
+  it('版本迁移会被标记，写回后文件是 v3 且原文件有备份', async () => {
+    const v2 = {
+      version: 2,
+      port: 3123,
+      proxyKey: 'sk_downstream',
+      accounts: [{ name: 'A', key: 'sk_a' }],
+      knownModels: ['cline-pass/x'],
+    };
+    await write(JSON.stringify(v2));
+    const r = await loadConfig(file);
+    expect(r.migrationFrom).toBe(2);
+
+    const backupPath = await persistConfigMigration(file, r.config, r.migrationFrom ?? 0);
+    const written = await readBack();
+    expect(written['version']).toBe(3);
+    expect((written['gateways'] as Array<Record<string, unknown>>)[0]?.['id']).toBe('main');
+    expect(written['port']).toBeUndefined();
+    expect(backupPath).not.toBeNull();
+    if (backupPath) {
+      const original = JSON.parse(await fs.readFile(backupPath, 'utf8')) as Record<string, unknown>;
+      expect(original['version']).toBe(2);
+    }
+
+    // 已是 v3：再加载不会再次迁移
+    const again = await loadConfig(file);
+    expect(again.migrationFrom).toBeNull();
+  });
+
+  it('字段级修正（未涉及版本）不会被标记为迁移', async () => {
+    await write(JSON.stringify({ version: 3, accounts: [{ name: 'A', key: '' }] }));
+    const r = await loadConfig(file);
+    expect(r.migrationFrom).toBeNull();
   });
 
   it('perModel 中 exclude 优先于 upstreams', async () => {

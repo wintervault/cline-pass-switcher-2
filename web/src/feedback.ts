@@ -1,6 +1,7 @@
 import { App } from 'antd';
 import type { MessageInstance } from 'antd/es/message/interface';
 
+import { errorText } from './i18n/codes.ts';
 import { type MsgKey, useI18n } from './i18n/index.tsx';
 
 /**
@@ -50,8 +51,9 @@ export function makeFeedback(message: MessageInstance, t: TFunction): Feedback {
   const ok = (text: string): void => void message.success({ content: text, duration: OK_MS });
   const info = (text: string): void => void message.info({ content: text, duration: INFO_MS });
   const fail = (text: string, err?: unknown): void => {
-    const detail = err === undefined ? '' : reasonOf(err, t('common.unknownError'));
-    const content = detail && !text.includes(detail) ? `${text}：${detail}` : text;
+    // 服务端错误优先按 code 翻译；未知 code 用原 message 兜底
+    const detail = err === undefined ? '' : (errorText(t, err) ?? reasonOf(err, t('common.unknownError')));
+    const content = detail && !text.includes(detail) ? `${text}${t('common.detailSeparator')}${detail}` : text;
     void message.error({ content, duration: FAIL_MS });
   };
   return {

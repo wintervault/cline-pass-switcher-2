@@ -285,6 +285,23 @@ describe('网关 API', () => {
     expect((await request(apiPort, '/api/gateways/delete', { method: 'POST', body: { id: 'main' } })).status).toBe(200);
   });
 
+  it('不能把控制台切到没起来的网关（否则旧控制台一停就再也进不来）', async () => {
+    const p1 = await freePort();
+    const blocker = http.createServer((_req, res) => res.end('busy'));
+    const taken = await listen(blocker);
+    closers.push(taken.close);
+    const { port: apiPort, configStore } = await harness([
+      defaultGateway({ id: 'main', port: p1 }),
+      defaultGateway({ id: 'dead', port: taken.port }),
+    ]);
+    expect(configStore.value.console.gatewayId).toBe('main');
+
+    const res = await request(apiPort, '/api/gateways/console', { method: 'POST', body: { id: 'dead' } });
+    expect(res.status).toBe(409);
+    expect(res.json<{ error: { code?: string } }>().error.code).toBe('gateway.notRunning');
+    expect(configStore.value.console.gatewayId).toBe('main');
+  });
+
   it('模型清单按网关隔离（/api/models?gateway=）', async () => {
     const p1 = await freePort();
     const p2 = await freePort();

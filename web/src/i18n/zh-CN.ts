@@ -13,22 +13,17 @@ const zhCN = {
   'common.delete': '删除',
   'common.edit': '编辑',
   'common.retry': '重试',
-  'common.copy': '复制',
   'common.copied': '已复制',
-  'common.refresh': '刷新',
-  'common.close': '关闭',
   'common.unknown': '未知',
-  'common.failed': '失败',
-  'common.success': '成功',
   'common.none': '—',
   'common.count': '{count} 个',
   'common.requests': '请求 {count}',
   'common.ms': '{value} ms',
-  'common.seconds': '{value} 秒',
   'common.copyFailed': '复制失败',
   'common.clipboardUnavailable': '剪贴板不可用',
   'common.copiedToClipboard': '{what}已复制到剪贴板',
   'common.content': '内容',
+  'common.detailSeparator': '：',
   'common.unknownError': '未知错误',
 
   // ---------------- 导航 ----------------
@@ -56,7 +51,6 @@ const zhCN = {
 
   // ---------------- 应用外壳 ----------------
   'app.refreshed': '已刷新全部数据',
-  'app.logout': '已清除本机保存的访问密钥',
   'app.notConfigured.title': '尚未配置上游 API Key',
   'app.notConfigured.desc':
     '在「账号池」里添加你的 Cline Pass 账号（sk_ 开头的 key）并保存；也可通过 CLINE_PASS_KEY 环境变量提供。',
@@ -121,8 +115,6 @@ const zhCN = {
   'statusbar.theme.dark': '切换到亮色',
   'statusbar.theme.light': '切换到暗色',
   'statusbar.refresh': '刷新全部数据',
-  'statusbar.language': '语言',
-  'statusbar.logout': '清除本机保存的访问密钥',
 
   // ---------------- 标题栏 ----------------
   'titlebar.drag': '窗口标题栏：拖动移动窗口，双击切换最大化',
@@ -274,6 +266,7 @@ const zhCN = {
   'accounts.field.expiry.placeholder': '可选，留空表示未设置',
   'accounts.field.expiry.hint': '只用来提醒，不会自动停用账号。',
   'accounts.validate.keyRequired': '新账号需要填写 API Key',
+  'accounts.defaultName': '账号{n}',
   'accounts.note.updated': '已更新账号「{name}」',
   'accounts.note.added': '已添加账号「{name}」',
   'accounts.note.deleted': '已删除账号「{name}」',
@@ -354,8 +347,6 @@ const zhCN = {
   'gateways.validate.accounts': '请至少勾选一个账号，或开启「使用全部账号」',
   'gateways.note.created': '已创建网关「{name}」',
   'gateways.note.saved': '网关「{name}」设置已保存',
-  'gateways.note.deleted': '已删除网关「{name}」',
-  'gateways.note.consoleSwitched': '控制台已切换到「{name}」',
   // ---------------- 测试台 ----------------
   'playground.title': '测试台',
   'playground.desc':
@@ -509,6 +500,25 @@ const zhCN = {
   'toast.gateway.consoleFailed': '切换控制台网关失败',
   'toast.gateway.deleted': '已删除网关「{name}」',
   'toast.gateway.consoleSwitched': '控制台已切换到「{name}」',
+  'toast.gateway.consoleSwitchedUrl': '控制台已切换到「{name}」：{url}（本页即将失效）',
+  // ---------------- 接口错误（后端 code → 词条） ----------------
+  'api.accounts.required': '至少需要一个有效账号（key 非空）',
+  'api.accounts.noTargets': '没有匹配的账号',
+  'api.accounts.noEnabled': '没有可体检的启用账号',
+  'api.accounts.busy': '体检正在进行中，请稍候',
+  'api.account.keyInvalid': '密钥无效或未授权：{message}',
+  'api.gateway.idInvalid': '网关 id 需为 1-32 位的小写字母、数字与连字符',
+  'api.gateway.limit': '最多只能有 {max} 个网关',
+  'api.gateway.nameInvalid': '网关名称需要 1-50 个字符',
+  'api.gateway.portInvalid': '端口必须是 1-65535 的整数',
+  'api.gateway.bindHostRequired': '绑定地址不能为空',
+  'api.gateway.failoverInvalid': '失败转移参数不合法',
+  'api.gateway.insecureBind': '绑定非回环地址时必须设置 API Key（或把绑定地址改成 127.0.0.1）',
+  'api.gateway.portConflict': '端口 {port} 已被网关「{name}」占用',
+  'api.gateway.notFound': '网关不存在',
+  'api.gateway.lastOne': '至少保留一个网关',
+  'api.gateway.consoleProtected': '不能删除控制台网关：先把控制台切到别的网关',
+  'api.gateway.notRunning': '该网关当前未运行，无法作为控制台网关',
 } as const;
 
 export default zhCN;

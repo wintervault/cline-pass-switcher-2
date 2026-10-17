@@ -5,7 +5,7 @@ import { AccountPool } from './accounts/pool.ts';
 import type { AppContext } from './appContext.ts';
 import { consoleGateway, gatewayAccounts, gatewayById, gatewayConfigured, gatewayProxyBase } from './config/derive.ts';
 import { applyEnvOverrides } from './config/env.ts';
-import { loadConfig, writeConfig } from './config/load.ts';
+import { loadConfig, persistConfigMigration, writeConfig } from './config/load.ts';
 import { type Config, FailoverSchema } from './config/schema.ts';
 import { GatewayManager, type GatewayRuntime } from './gateways/manager.ts';
 import { sendError, sendJSON } from './http/respond.ts';
@@ -19,6 +19,7 @@ import { CONFIG_PATH, DATA_DIR, META_PATH, PACKAGE_VERSION } from './paths.ts';
 import { ChatChain } from './proxy/chain.ts';
 import { ChannelHealth } from './proxy/health.ts';
 import { assertBindSafe, InsecureBindError } from './security/bind.ts';
+import { gatewayAliveGuard } from './security/gatewayGuard.ts';
 import { authMiddleware, corsResponseHeaders, originCheckMiddleware } from './security/middleware.ts';
 import { JsonStore } from './store/jsonStore.ts';
 import { loadMetaStore } from './store/metaStore.ts';
@@ -77,9 +78,20 @@ async function main(): Promise<void> {
     logger.info({ file: CONFIG_PATH }, '已生成默认配置文件');
   }
 
+  // 版本迁移写回的是「用户文件」（不含环境变量覆盖）：先留一份快照，等启动闸门
+  // 通过后再落盘——启动被拒绝时不动用户的配置文件。
+  const migratedSnapshot = loaded.migrationFrom !== null ? structuredClone(loaded.config) : null;
+
   for (const note of applyEnvOverrides(loaded.config)) logger.info({ note }, '环境变量覆盖');
 
   assertBindSafe(loaded.config);
+
+  // 迁移立刻写回：否则每次启动都要重放迁移，用户看到的 config.json 也会一直停在旧格式。
+  // 原文件先备份。
+  if (migratedSnapshot && loaded.migrationFrom !== null) {
+    const backupPath = await persistConfigMigration(CONFIG_PATH, migratedSnapshot, loaded.migrationFrom);
+    logger.info({ file: CONFIG_PATH, from: loaded.migrationFrom, backupPath }, '配置已按新格式写回');
+  }
 
   const configStore = new JsonStore<Config>(CONFIG_PATH, loaded.config, {
     onError: (err) => logger.error({ err }, '配置写盘失败'),
@@ -202,6 +214,7 @@ async function main(): Promise<void> {
       gatewayId,
       handler,
       middleware: [
+        gatewayAliveGuard(() => configStore.value),
         corsResponseHeaders((c) => gatewayById(configStore.value, c.gatewayId)?.corsOrigins ?? []),
         originCheckMiddleware((c) => gatewayById(configStore.value, c.gatewayId)?.corsOrigins ?? []),
         authMiddleware((c) => gatewayById(configStore.value, c.gatewayId)?.proxyKey ?? '', {

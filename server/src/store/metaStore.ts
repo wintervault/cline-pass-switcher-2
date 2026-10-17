@@ -184,8 +184,18 @@ export async function loadMetaStore(file: string): Promise<LoadMetaResult> {
   const models = source['models'];
   if (isPlainObject(models)) {
     // 形态检测：v2 是「模型 → 观测记录」，v3 是「网关 → 模型 → 观测记录」。
-    // 判据：顶层值里只要有一个带 `pipeline` 字段，就是 v2 的记录对象。
-    const legacy = Object.values(models).some((v) => isPlainObject(v) && 'pipeline' in v);
+    // 判据看**值的类型**而不是「有没有这个键」：v3 的顶层值是网关映射，它的
+    // `pipeline` 键（模型 id 恰好叫 pipeline 时）装的是记录对象，不可能是字符串/null。
+    // 用 some 而不是 every：v2 里坏掉一条不该把整份文件误判成 v3（那会把观测数据全丢掉）。
+    const looksLikeRecord = (v: unknown): boolean => {
+      if (!isPlainObject(v)) return false;
+      const pipeline = v['pipeline'];
+      if (pipeline === null || pipeline === 'planner' || pipeline === 'direct') return true;
+      const probedAt = v['probedAt'];
+      return 'probedAt' in v && (probedAt === null || typeof probedAt === 'number');
+    };
+    const entries = Object.values(models);
+    const legacy = entries.length > 0 && entries.some(looksLikeRecord);
     const byGateway: Record<string, unknown> = legacy ? { main: models } : models;
     if (legacy) notes.push('观测数据升级：模型记录已迁入「main」网关');
 

@@ -224,7 +224,7 @@ export default function Accounts() {
 
   const submitModal = (): void => {
     if (!modal) return;
-    const name = modal.name.trim() || `账号${rows.length + 1}`;
+    const name = modal.name.trim() || t('accounts.defaultName', { n: rows.length + 1 });
     const key = modal.key.trim();
     if (modal.index === null && !key) {
       message.warning(t('accounts.validate.keyRequired'));
@@ -472,13 +472,13 @@ export default function Accounts() {
           </div>
           <div>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              API Key
+              {t('accounts.field.key')}
             </Typography.Text>
             <Input.Password
               style={{ marginTop: 4 }}
               placeholder={
                 modal?.index === null
-                  ? 'sk_...'
+                  ? t('accounts.field.key.placeholderNew')
                   : t('accounts.field.key.placeholderKeep', { tail: rows[modal?.index ?? 0]?.keyTail ?? '' })
               }
               value={modal?.key ?? ''}

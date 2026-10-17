@@ -70,7 +70,7 @@ export function migrateConfig(input: Record<string, unknown>): MigrationResult {
     }
 
     raw.version = 2;
-    applied.push(`配置格式 v${from} → v${CONFIG_VERSION}`);
+    applied.push(`配置格式 v${from} → v2`);
   }
 
   if (from < 3) {

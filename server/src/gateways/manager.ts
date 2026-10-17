@@ -66,6 +66,8 @@ export class GatewayManager {
   readonly #deps: GatewayManagerDeps;
   /** 上一轮生效的控制台网关 id：换了网关就要重挂 handler（/api 只在控制台上）。 */
   #consoleId: string | null = null;
+  /** reconcile 串行队列（见 reconcile 的注释）。 */
+  #queue: Promise<void> = Promise.resolve();
 
   constructor(deps: GatewayManagerDeps) {
     this.#deps = deps;
@@ -86,8 +88,20 @@ export class GatewayManager {
   /**
    * 让运行时与配置对齐：补齐缺失的运行时、关闭已删除的网关、按需绑定/重绑。
    * 幂等：没变就什么都不做。
+   *
+   * **串行执行**：保存/删除网关可能并发触发（连点、两个页面），两个 reconcile 交错
+   * 会重复绑定同一个端口或关掉刚起的 listener。排队后每次看到的都是最新配置。
    */
-  async reconcile(): Promise<void> {
+  reconcile(): Promise<void> {
+    const run = this.#queue.then(
+      () => this.#reconcile(),
+      () => this.#reconcile(),
+    );
+    this.#queue = run.catch(() => {});
+    return run;
+  }
+
+  async #reconcile(): Promise<void> {
     const config = this.#deps.config();
     const wanted = new Map(config.gateways.map((g) => [g.id, g]));
 
@@ -140,28 +154,35 @@ export class GatewayManager {
   }
 
   async #bind(runtime: GatewayRuntime, want: { port: number; bindHost: string }): Promise<void> {
-    const server = this.#deps.createServer(runtime.id);
-    runtime.server = server;
+    let server: http.Server | null = null;
     try {
+      // createServer 也可能抛（handler 装配错误）：同样按「这个网关失败」处理，
+      // 不能让一个网关的装配问题把整个 reconcile（以及其它网关）带崩
+      server = this.#deps.createServer(runtime.id);
+      const created = server;
+      runtime.server = created;
       await new Promise<void>((resolve, reject) => {
         const onError = (err: Error): void => {
-          server.off('listening', onListening);
+          created.off('listening', onListening);
           reject(err);
         };
         const onListening = (): void => {
-          server.off('error', onError);
+          created.off('error', onError);
           resolve();
         };
-        server.once('error', onError);
-        server.once('listening', onListening);
-        server.listen(want.port, want.bindHost);
+        created.once('error', onError);
+        created.once('listening', onListening);
+        created.listen(want.port, want.bindHost);
       });
-      const address = server.address();
+      const address = created.address();
       const boundPort = typeof address === 'object' && address !== null ? address.port : want.port;
       runtime.bound = want;
       runtime.status = { id: runtime.id, state: 'running', boundPort, boundHost: want.bindHost };
       logger.info({ gateway: runtime.id, port: boundPort, host: want.bindHost }, '网关已启动');
     } catch (err) {
+      // listen 失败时 handle 已由 Node 收回，但 Server 对象可能仍留着监听器/句柄，
+      // 显式关一次，避免反复失败时越积越多
+      server?.close(() => {});
       runtime.server = null;
       runtime.bound = null;
       const message = err instanceof Error ? err.message : String(err);

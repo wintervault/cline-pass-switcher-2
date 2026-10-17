@@ -8,6 +8,7 @@ import { mergeAccounts, mergeGatewayPayload } from '../src/http/routes/api.ts';
 import { createHttpServer } from '../src/http/server.ts';
 import { assertBindSafe, InsecureBindError } from '../src/security/bind.ts';
 import { isLoopbackHost, maskSecret, safeEqual } from '../src/security/compare.ts';
+import { gatewayAliveGuard } from '../src/security/gatewayGuard.ts';
 import { hostHeaderName, isTrustedLocal } from '../src/security/local.ts';
 import { authMiddleware } from '../src/security/middleware.ts';
 import { listen, request } from './helpers/http.ts';
@@ -153,9 +154,9 @@ describe('derive', () => {
 describe('mergeGatewayPayload（proxyKey 三态语义 + 显式校验）', () => {
   const existing = () => ({ ...defaultGateway(), proxyKey: 'sk_secret' });
   const ok = (raw: Record<string, unknown>) => {
-    const gateway = mergeGatewayPayload(raw, existing());
-    if (typeof gateway === 'string') throw new Error(`期望成功，实际报错：${gateway}`);
-    return gateway;
+    const merged = mergeGatewayPayload(raw, existing());
+    if (!merged.ok) throw new Error(`期望成功，实际报错：${merged.code}`);
+    return merged.gateway;
   };
 
   it('空串 = 保持不变（留空语义：只改其他字段不会清掉密钥）', () => {
@@ -178,10 +179,19 @@ describe('mergeGatewayPayload（proxyKey 三态语义 + 显式校验）', () => 
     expect(ok({ proxyKey: null }).proxyKey).toBe('');
   });
 
-  it('非法端口/名称为显式报错，而不是被 schema 兜底成默认值', () => {
-    expect(mergeGatewayPayload({ port: 0 }, existing())).toContain('端口');
-    expect(mergeGatewayPayload({ port: 'abc' }, existing())).toContain('端口');
-    expect(mergeGatewayPayload({ name: '' }, existing())).toContain('名称');
+  it('非法端口/名称返回稳定 code，而不是被 schema 兜底成默认值', () => {
+    expect(mergeGatewayPayload({ port: 0 }, existing())).toMatchObject({
+      ok: false,
+      code: 'gateway.portInvalid',
+    });
+    expect(mergeGatewayPayload({ port: 'abc' }, existing())).toMatchObject({
+      ok: false,
+      code: 'gateway.portInvalid',
+    });
+    expect(mergeGatewayPayload({ name: '' }, existing())).toMatchObject({
+      ok: false,
+      code: 'gateway.nameInvalid',
+    });
   });
 });
 
@@ -340,6 +350,40 @@ describe('authMiddleware：控制台免密钥、代理端点仍要密钥', () =>
     try {
       expect((await request(s.port, '/api/models')).status).toBe(200);
       expect((await request(s.port, '/v1/models')).status).toBe(200);
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+describe('gatewayAliveGuard：网关刚被删除、listener 还没关完的短窗口', () => {
+  /** 服务对外的 gatewayId 固定为 gone；配置里放不放它由测试决定。 */
+  async function guardServer(gatewayIds: string[]) {
+    const config = defaultConfig();
+    config.gateways = gatewayIds.map((id) => defaultGateway({ id, port: 0 }));
+    const server = createHttpServer({
+      gatewayId: 'gone',
+      handler: (c: Ctx) => sendJSON(c.res, 200, { ok: true }),
+      middleware: [gatewayAliveGuard(() => config)],
+    });
+    return listen(server);
+  }
+
+  it('仍在配置里：放行', async () => {
+    const s = await guardServer(['gone']);
+    try {
+      expect((await request(s.port, '/v1/models')).status).toBe(200);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('已从配置移除：503 + error.code，不落到「空密钥＝免鉴权」', async () => {
+    const s = await guardServer(['main']);
+    try {
+      const res = await request(s.port, '/v1/models');
+      expect(res.status).toBe(503);
+      expect(res.json<{ error: { code?: string } }>().error.code).toBe('gateway.notFound');
     } finally {
       await s.close();
     }

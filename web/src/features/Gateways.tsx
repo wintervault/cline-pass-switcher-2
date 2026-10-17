@@ -367,7 +367,13 @@ export default function Gateways() {
                 isConsole={gateway.id === consoleId}
                 busy={save.isPending || remove.isPending || setConsole.isPending}
                 onEdit={() => setDraft(draftOf(gateway))}
-                onSetConsole={() => setConsole.mutate({ id: gateway.id, name: gateway.name })}
+                onSetConsole={() =>
+                  setConsole.mutate({
+                    id: gateway.id,
+                    name: gateway.name,
+                    url: gateway.proxyBase.replace(/\/v1\/?$/, ''),
+                  })
+                }
                 onDelete={() => remove.mutate({ id: gateway.id, name: gateway.name })}
               />
             ))}

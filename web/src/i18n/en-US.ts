@@ -13,22 +13,17 @@ const enUS: Record<keyof typeof zhCN, string> = {
   'common.delete': 'Delete',
   'common.edit': 'Edit',
   'common.retry': 'Retry',
-  'common.copy': 'Copy',
   'common.copied': 'Copied',
-  'common.refresh': 'Refresh',
-  'common.close': 'Close',
   'common.unknown': 'Unknown',
-  'common.failed': 'Failed',
-  'common.success': 'Succeeded',
   'common.none': '—',
   'common.count': '{count}',
   'common.requests': 'Requests {count}',
   'common.ms': '{value} ms',
-  'common.seconds': '{value}s',
   'common.copyFailed': 'Copy failed',
   'common.clipboardUnavailable': 'Clipboard unavailable',
   'common.copiedToClipboard': '{what} copied to clipboard',
   'common.content': 'Content',
+  'common.detailSeparator': ': ',
   'common.unknownError': 'Unknown error',
 
   // ---------------- Navigation ----------------
@@ -56,7 +51,6 @@ const enUS: Record<keyof typeof zhCN, string> = {
 
   // ---------------- App shell ----------------
   'app.refreshed': 'All data refreshed',
-  'app.logout': 'Saved key removed from this browser',
   'app.notConfigured.title': 'No upstream API key yet',
   'app.notConfigured.desc':
     'Add a Cline Pass account (key starts with sk_) in Accounts and save. You can also provide it with the CLINE_PASS_KEY environment variable.',
@@ -124,8 +118,6 @@ const enUS: Record<keyof typeof zhCN, string> = {
   'statusbar.theme.dark': 'Switch to light',
   'statusbar.theme.light': 'Switch to dark',
   'statusbar.refresh': 'Refresh all data',
-  'statusbar.language': 'Language',
-  'statusbar.logout': 'Remove the saved key from this browser',
 
   // ---------------- Title bar ----------------
   'titlebar.drag': 'Window title bar: drag to move, double-click to maximize',
@@ -287,6 +279,7 @@ const enUS: Record<keyof typeof zhCN, string> = {
   'accounts.field.expiry.placeholder': 'Optional — leave empty for none',
   'accounts.field.expiry.hint': 'Used for reminders only; it never disables the account.',
   'accounts.validate.keyRequired': 'A new account needs an API key',
+  'accounts.defaultName': 'Account {n}',
   'accounts.note.updated': 'Updated account "{name}"',
   'accounts.note.added': 'Added account "{name}"',
   'accounts.note.deleted': 'Deleted account "{name}"',
@@ -374,8 +367,6 @@ const enUS: Record<keyof typeof zhCN, string> = {
   'gateways.validate.accounts': 'Tick at least one account, or enable "Use all accounts"',
   'gateways.note.created': 'Created gateway "{name}"',
   'gateways.note.saved': 'Saved gateway "{name}"',
-  'gateways.note.deleted': 'Deleted gateway "{name}"',
-  'gateways.note.consoleSwitched': 'Console switched to "{name}"',
   // ---------------- Playground ----------------
   'playground.title': 'Playground',
   'playground.desc':
@@ -538,6 +529,25 @@ const enUS: Record<keyof typeof zhCN, string> = {
   'toast.gateway.consoleFailed': 'Could not switch the console gateway',
   'toast.gateway.deleted': 'Deleted gateway "{name}"',
   'toast.gateway.consoleSwitched': 'Console switched to "{name}"',
+  'toast.gateway.consoleSwitchedUrl': 'Console switched to "{name}": {url} (this page will stop working)',
+  // ---------------- API errors (server code → message) ----------------
+  'api.accounts.required': 'At least one account with a key is required',
+  'api.accounts.noTargets': 'No matching accounts',
+  'api.accounts.noEnabled': 'No enabled accounts to check',
+  'api.accounts.busy': 'A health check is already running — try again shortly',
+  'api.account.keyInvalid': 'Invalid or unauthorized key: {message}',
+  'api.gateway.idInvalid': 'Gateway ID must be 1-32 lowercase letters, digits or hyphens',
+  'api.gateway.limit': 'At most {max} gateways',
+  'api.gateway.nameInvalid': 'Gateway name must be 1-50 characters',
+  'api.gateway.portInvalid': 'Port must be an integer from 1 to 65535',
+  'api.gateway.bindHostRequired': 'Bind address cannot be empty',
+  'api.gateway.failoverInvalid': 'Invalid failover settings',
+  'api.gateway.insecureBind': 'Set an API key before binding to a non-loopback address (or bind 127.0.0.1)',
+  'api.gateway.portConflict': 'Port {port} is already used by gateway "{name}"',
+  'api.gateway.notFound': 'Gateway not found',
+  'api.gateway.lastOne': 'Keep at least one gateway',
+  'api.gateway.consoleProtected': 'The console gateway cannot be deleted — switch the console elsewhere first',
+  'api.gateway.notRunning': 'That gateway is not running — the console cannot move there',
 };
 
 export default enUS;
