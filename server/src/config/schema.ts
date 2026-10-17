@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { isIsoDate } from './date.ts';
 
 /** 当前配置格式版本。加载到更低版本会触发迁移，更高版本拒绝启动（避免新版写的配置被旧版改坏）。 */
-export const CONFIG_VERSION = 2;
+export const CONFIG_VERSION = 3;
 
 /**
  * 账号风控体检用的默认判定模型。
@@ -93,32 +93,50 @@ export const FailoverSchema = z.object({
 });
 export type FailoverConfig = z.infer<typeof FailoverSchema>;
 
-export const ConfigSchema = z.object({
-  version: z.number().int().catch(CONFIG_VERSION).default(CONFIG_VERSION),
+/**
+ * 网关标识：用短 slug 而不是自增数字——它出现在查询参数（`?gateway=`）与日志里，
+ * 可读、可手写、可推断。改名会丢配置关联，所以 id 创建后不可改（UI 只让改显示名）。
+ */
+export const GatewayIdSchema = z
+  .string()
+  .min(1)
+  .max(32)
+  .regex(/^[a-z0-9][a-z0-9-]*$/)
+  .catch('main');
 
-  // ---- 网络 ----
-  port: z.number().int().min(1).max(65535).catch(3123).default(3123),
-  bindHost: z.string().min(1).catch('127.0.0.1').default('127.0.0.1'),
-  upstreamBase: z.string().url().catch(DEFAULT_UPSTREAM_BASE).default(DEFAULT_UPSTREAM_BASE),
+/** 网关数量上限：每个网关一个端口 + 一套运行时，数量失控只会让配置面变复杂。 */
+export const MAX_GATEWAYS = 8;
 
-  // ---- 下游访问 ----
-  /** 下游代理密钥。为空 = 不鉴权；绑定非回环地址时为空会拒绝启动。 */
+/**
+ * 网关 = 一个独立接入面。
+ *
+ * 设计要点（docs/ROADMAP-3.0.md §2、§9 第 1/8 条）：
+ * - **账号池是全局的**，网关只引用账号名（子集），不复制密钥；
+ * - 账号策略、失败转移、模型清单与路由配置都是**网关级**——不同网关可以走完全不同的策略；
+ * - `upstreamBase` 保持全局（所有网关连同一个 Cline 网关）；
+ * - 控制台只挂在 `console.gatewayId` 指向的那个网关上，其余网关只提供 `/v1`。
+ */
+export const GatewaySchema = z.object({
+  id: GatewayIdSchema,
+  /** 显示名（可改）。 */
+  name: z.string().min(1).max(50).catch('网关'),
+  port: z.number().int().min(1).max(65535).catch(3123),
+  bindHost: z.string().min(1).catch('127.0.0.1'),
+  /** 下游代理密钥。为空 = 不鉴权；绑定非回环地址时为空会拒绝启动（启动闸门按网关判定）。 */
   proxyKey: z.string().catch('').default(''),
-  /** 公网代理地址，仅用于控制台展示。 */
+  /** 公网代理地址，仅用于展示。 */
   publicBaseUrl: z.string().catch('').default(''),
   /** CORS 白名单。默认空 = 不发 Access-Control-Allow-Origin（同源访问足够）。 */
   corsOrigins: z.array(z.string()).catch([]).default([]),
   /** true 时 /v1/models 合并完整目录模型。 */
   exposeCatalog: z.boolean().catch(false).default(false),
 
-  // ---- 账号池 ----
-  accounts: z.array(z.unknown()).catch([]).default([]),
+  /** 账号子集（全局账号池里的名字）。空 = 该网关没有可用账号（不是「全部」）。 */
+  accounts: z.array(z.string().min(1)).catch([]).default([]),
   accountMode: AccountModeSchema.catch('sticky').default('sticky'),
-  activeAccount: z.number().int().min(0).catch(0).default(0),
-  /** 账号风控体检的判定模型（见上方 DEFAULT_CLASSIFY_MODEL 的注释）。 */
-  classifyModel: z.string().min(1).catch(DEFAULT_CLASSIFY_MODEL).default(DEFAULT_CLASSIFY_MODEL),
+  /** single 模式使用的账号名（账号标识是 name，不再是下标）。 */
+  activeAccount: z.string().catch('').default(''),
 
-  // ---- 模型 ----
   // 键缺失或值损坏 → 恢复默认清单；显式写 [] → 尊重用户清空，不复活
   knownModels: z
     .array(z.string())
@@ -126,39 +144,78 @@ export const ConfigSchema = z.object({
     .default(() => [...DEFAULT_KNOWN_MODELS]),
   perModel: z.record(z.string(), z.unknown()).catch({}).default({}),
 
-  // ---- 故障转移 ----
   // 注意：zod 4 的 .default({}) 不会 parse 默认值（会原样返回裸 {}，缺字段）；
   // .prefault({}) 会 parse，但遇到「存在且非法」的输入直接抛。两者组合才既能补全又能兜底。
   failover: FailoverSchema.catch(() => FailoverSchema.parse({})).prefault({}),
+});
+
+/** 解析后的网关类型（perModel 收敛为强类型）。 */
+export type Gateway = Omit<z.infer<typeof GatewaySchema>, 'perModel'> & {
+  perModel: Record<string, PerModelConfig>;
+};
+
+/** 只过了 schema、尚未做 perModel 收敛的网关。 */
+export type GatewayInput = z.infer<typeof GatewaySchema>;
+
+export const ConfigSchema = z.object({
+  version: z.number().int().catch(CONFIG_VERSION).default(CONFIG_VERSION),
+
+  /** 上游网关地址（所有网关共用同一个 Cline 网关）。 */
+  upstreamBase: z.string().url().catch(DEFAULT_UPSTREAM_BASE).default(DEFAULT_UPSTREAM_BASE),
+
+  // ---- 账号池（全局） ----
+  accounts: z.array(z.unknown()).catch([]).default([]),
+  /** 账号风控体检的判定模型（见上方 DEFAULT_CLASSIFY_MODEL 的注释）。 */
+  classifyModel: z.string().min(1).catch(DEFAULT_CLASSIFY_MODEL).default(DEFAULT_CLASSIFY_MODEL),
+
+  // ---- 网关（接入面） ----
+  gateways: z.array(z.unknown()).catch([]).default([]),
+  /** 控制台挂在哪个网关上（该网关额外提供 /api 与静态页面）。 */
+  console: z
+    .object({ gatewayId: z.string().catch('main').default('main') })
+    .catch(() => ({ gatewayId: 'main' }))
+    .prefault({}),
 
   // ---- 观测 ----
   historyLimit: z.number().int().min(1).max(10000).catch(500).default(500),
 });
 
-/** 校验并归一化后的配置类型。注意 accounts / perModel 在解析后已收敛为强类型。 */
-export type Config = Omit<z.infer<typeof ConfigSchema>, 'accounts' | 'perModel'> & {
+/** 校验并归一化后的配置类型。accounts / gateways 在加载时已收敛为强类型。 */
+export type Config = Omit<z.infer<typeof ConfigSchema>, 'accounts' | 'gateways'> & {
   accounts: Account[];
-  perModel: Record<string, PerModelConfig>;
+  gateways: Gateway[];
 };
 
-/** 全新安装时的默认配置。 */
-export function defaultConfig(): Config {
+/** 默认网关（新安装 / 迁移目标）。 */
+export function defaultGateway(overrides: Partial<Gateway> = {}): Gateway {
   return {
-    version: CONFIG_VERSION,
+    id: 'main',
+    name: '主网关',
     port: 3123,
     bindHost: '127.0.0.1',
-    upstreamBase: DEFAULT_UPSTREAM_BASE,
     proxyKey: '',
     publicBaseUrl: '',
     corsOrigins: [],
     exposeCatalog: false,
     accounts: [],
     accountMode: 'sticky',
-    activeAccount: 0,
-    classifyModel: DEFAULT_CLASSIFY_MODEL,
+    activeAccount: '',
     knownModels: [...DEFAULT_KNOWN_MODELS],
     perModel: {},
     failover: FailoverSchema.parse({}),
+    ...overrides,
+  };
+}
+
+/** 全新安装时的默认配置。 */
+export function defaultConfig(): Config {
+  return {
+    version: CONFIG_VERSION,
+    upstreamBase: DEFAULT_UPSTREAM_BASE,
+    accounts: [],
+    classifyModel: DEFAULT_CLASSIFY_MODEL,
+    gateways: [defaultGateway()],
+    console: { gatewayId: 'main' },
     historyLimit: 500,
   };
 }

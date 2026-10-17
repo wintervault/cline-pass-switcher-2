@@ -20,6 +20,7 @@ import {
   type SubscriptionRow,
   type UpstreamStatusKind,
 } from '../api/types.ts';
+import { GatewaySwitcher, useGatewayScope } from '../gatewayScope.tsx';
 import { PageHeader } from '../pageHeader.tsx';
 import { Panel, PanelHint } from '../panel.tsx';
 import { RoutingFields } from './routingFields.tsx';
@@ -281,13 +282,14 @@ function UpstreamRow({
 }
 
 export default function Models() {
-  const models = useModels();
+  const { gatewayId } = useGatewayScope();
+  const models = useModels(gatewayId);
   const qc = useQueryClient();
-  const save = useSaveModelConfig();
-  const probe = useProbe();
-  const validate = useValidate();
-  const test = useTest();
-  const fetchOfficial = useFetchOfficial();
+  const save = useSaveModelConfig(gatewayId);
+  const probe = useProbe(gatewayId);
+  const validate = useValidate(gatewayId);
+  const test = useTest(gatewayId);
+  const fetchOfficial = useFetchOfficial(gatewayId);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [modelFilter, setModelFilter] = useState('');
   /** 管线拖拽排序：源行/落点行的 upstreams 索引（null = 未拖拽）。 */
@@ -317,7 +319,7 @@ export default function Models() {
     const currentCfg = rows.find((r) => r.id === modelId)?.config ?? EMPTY_CFG;
     const merged: PerModelConfig = { ...currentCfg, ...patch };
     // 乐观更新：面板立刻反映，onSuccess 的失效会拉回服务端真实状态
-    qc.setQueryData<ModelsResponse>(qk.models, (old) =>
+    qc.setQueryData<ModelsResponse>(qk.models(gatewayId), (old) =>
       old
         ? { ...old, subscription: old.subscription.map((s) => (s.id === modelId ? { ...s, config: merged } : s)) }
         : old,
@@ -328,9 +330,9 @@ export default function Models() {
   // 校验进行中时轮询：服务端每批校验会渐进写入渠道状态，2 秒一拉让进度可见
   useEffect(() => {
     if (!validate.isPending) return;
-    const timer = setInterval(() => void qc.invalidateQueries({ queryKey: qk.models }), 2000);
+    const timer = setInterval(() => void qc.invalidateQueries({ queryKey: qk.models(gatewayId) }), 2000);
     return () => clearInterval(timer);
-  }, [validate.isPending, qc]);
+  }, [validate.isPending, qc, gatewayId]);
 
   const cfg = current?.config ?? EMPTY_CFG;
   const meta = current?.meta ?? null;
@@ -368,17 +370,20 @@ export default function Models() {
           /* 页头只放主操作。上次拉取的时间与来源塞进悬停——
              原来它们是一长串内联文字，会把页头挤成两行，于是本页的区块比别的页
              低 40px（切页时「布局偏移」的一部分）。 */
-          <Tooltip
-            title={
-              official
-                ? `上次拉取：${new Date(official.ts).toLocaleString()}（来源 ${official.sources.join(' + ')}，新增 ${official.added.length}）`
-                : '还没有拉取过官方清单'
-            }
-          >
-            <Button icon={<DownloadOutlined />} loading={fetchOfficial.isPending} onClick={runFetchOfficial}>
-              拉取官方最新模型
-            </Button>
-          </Tooltip>
+          <Space size={8}>
+            <GatewaySwitcher />
+            <Tooltip
+              title={
+                official
+                  ? `上次拉取：${new Date(official.ts).toLocaleString()}（来源 ${official.sources.join(' + ')}，新增 ${official.added.length}）`
+                  : '还没有拉取过官方清单'
+              }
+            >
+              <Button icon={<DownloadOutlined />} loading={fetchOfficial.isPending} onClick={runFetchOfficial}>
+                拉取官方最新模型
+              </Button>
+            </Tooltip>
+          </Space>
         }
       />
 

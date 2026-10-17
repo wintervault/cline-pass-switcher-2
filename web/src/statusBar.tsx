@@ -123,7 +123,7 @@ export function StatusBar({
   proxyBase,
   authRequired,
   version,
-  onOpenSecurity,
+  onOpenGateways,
   mode,
   onToggleTheme,
   onRefresh,
@@ -134,7 +134,7 @@ export function StatusBar({
   proxyBase?: string;
   authRequired?: boolean;
   version?: string;
-  onOpenSecurity: () => void;
+  onOpenGateways: () => void;
   mode: 'light' | 'dark';
   onToggleTheme: () => void;
   onRefresh: () => void;
@@ -178,8 +178,8 @@ export function StatusBar({
           <Tooltip
             title={
               authRequired
-                ? '已设置：下游客户端访问 /v1 需带上它。点击查看或重设'
-                : '未设置：下游客户端无需密钥即可调用代理。点击设置'
+                ? '控制台网关已设置密钥：下游客户端访问 /v1 需带上它。点击去网关页查看或重设'
+                : '控制台网关未设置密钥：本机可用，公网部署请务必设置。点击去网关页'
             }
           >
             <Button
@@ -187,7 +187,7 @@ export function StatusBar({
               type="link"
               icon={authRequired ? <LockOutlined /> : <KeyOutlined />}
               style={{ fontSize: 13, padding: 0, height: 'auto' }}
-              onClick={onOpenSecurity}
+              onClick={onOpenGateways}
             >
               {authRequired ? '已设置 · 查看' : '未设置 · 去设置'}
             </Button>

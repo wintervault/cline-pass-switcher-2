@@ -71,6 +71,7 @@ export interface OfficialFetch {
 }
 
 export interface ModelsResponse {
+  gateway: { id: string; name: string };
   subscription: SubscriptionRow[];
   catalogCount: number;
   catalog: string[];
@@ -117,11 +118,53 @@ export interface AccountStats {
 
 export interface AccountsResponse {
   accounts: AccountView[];
-  mode: AccountMode;
-  active: number;
-  /** 风控体检的判定模型。 */
+  /** 风控体检的判定模型（全局；账号策略与范围是网关级的，在「网关」页编辑）。 */
   classifyModel: string;
   stats: Record<string, AccountStats>;
+}
+
+/** 网关配置 + 运行状态（/api/gateways）。 */
+export interface GatewayView {
+  id: string;
+  name: string;
+  port: number;
+  bindHost: string;
+  hasProxyKey: boolean;
+  publicBaseUrl: string;
+  corsOrigins: string[];
+  exposeCatalog: boolean;
+  /** 账号子集；空 = 全部账号。 */
+  accounts: string[];
+  accountMode: AccountMode;
+  activeAccount: string;
+  knownModels: string[];
+  perModel: Record<string, PerModelConfig>;
+  failover: FailoverConfig;
+  accountCount: number;
+  modelCount: number;
+  proxyBase: string;
+  status: {
+    id: string;
+    state: 'running' | 'error' | 'stopped';
+    error?: string;
+    boundPort: number | null;
+    boundHost: string | null;
+  };
+}
+
+export interface GatewaysResponse {
+  gateways: GatewayView[];
+  consoleGatewayId: string;
+  maxGateways: number;
+}
+
+export interface FailoverConfig {
+  attemptTimeoutMs: number;
+  idleTimeoutMs: number;
+  budgetMs: number;
+  retriesPerChannel: number;
+  cooldownMs: number;
+  retryBackoffMs: number;
 }
 
 export interface ClassifyResult extends AccountClassRecord {
@@ -137,16 +180,10 @@ export interface ClassifyResponse {
   cancelled: boolean;
 }
 
-export interface SecurityResponse {
-  hasProxyKey: boolean;
-  publicBaseUrl: string;
-  authRequired: boolean;
-  exposeCatalog: boolean;
-  corsOrigins: string[];
-}
-
 export interface HistoryEntry {
   ts: number;
+  /** 处理这条请求的网关 id。 */
+  gateway: string;
   model: string;
   provider: string | null;
   canonical: string | null;
@@ -195,6 +232,10 @@ export interface MetaInfo {
   authRequired: boolean;
   configured: boolean;
   proxyBase: string;
+  /** 控制台挂在哪个网关上。 */
+  consoleGatewayId: string;
+  /** 网关清单（只给切换器用的最小信息）。 */
+  gateways: Array<{ id: string; name: string }>;
 }
 
 /** 上游状态 → 展示标签与颜色。 */

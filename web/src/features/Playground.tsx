@@ -25,6 +25,7 @@ import { useModels, useSaveModelConfig, useTest } from '../api/hooks.ts';
 import type { ModelMeta, PerModelConfig, TestResult, TraceEntry } from '../api/types.ts';
 import { STATUS_TAG } from '../api/types.ts';
 import { useFeedback } from '../feedback.ts';
+import { GatewaySwitcher, useGatewayScope } from '../gatewayScope.tsx';
 import { PageHeader } from '../pageHeader.tsx';
 import { Panel, PanelHint } from '../panel.tsx';
 import { RoutingFields } from './routingFields.tsx';
@@ -37,7 +38,8 @@ import { RoutingFields } from './routingFields.tsx';
  * 改动即时保存（与订阅模型页同一套配置，改哪边都生效）。
  */
 function RoutingPanel({ model, cfg, meta }: { model: string; cfg: PerModelConfig; meta: ModelMeta | null }) {
-  const save = useSaveModelConfig();
+  const { gatewayId } = useGatewayScope();
+  const save = useSaveModelConfig(gatewayId);
 
   const patch = (next: Partial<PerModelConfig>, note: string): void => {
     save.mutate({ modelId: model, config: { ...cfg, ...next }, note });
@@ -231,8 +233,9 @@ function TraceTable({ trace, targets }: { trace?: TraceEntry[]; targets: string[
 }
 
 export default function Playground() {
-  const models = useModels();
-  const test = useTest();
+  const { gatewayId } = useGatewayScope();
+  const models = useModels(gatewayId);
+  const test = useTest(gatewayId);
   const fb = useFeedback();
   const [model, setModel] = useState('');
   const [upstream, setUpstream] = useState('');
@@ -267,6 +270,7 @@ export default function Playground() {
       <PageHeader
         title="测试台"
         desc="任选模型与渠道发一次最小请求，看网关实际路由到哪个渠道、每个候选花了多久。不指定渠道时按该模型的路由策略走。"
+        actions={<GatewaySwitcher />}
       />
 
       <Panel title="测试参数" extra={<PanelHint>发一次最小请求，看网关实际怎么走</PanelHint>}>

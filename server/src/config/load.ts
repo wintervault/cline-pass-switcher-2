@@ -8,6 +8,11 @@ import {
   type Config,
   ConfigSchema,
   defaultConfig,
+  defaultGateway,
+  type Gateway,
+  type GatewayInput,
+  GatewaySchema,
+  MAX_GATEWAYS,
   type PerModelConfig,
   PerModelSchema,
 } from './schema.ts';
@@ -99,27 +104,36 @@ export async function loadConfig(file: string): Promise<LoadResult> {
     notes.push(`账号名重复，已自动改名：${unified.renamed.map((r) => `${r.from} → ${r.to}`).join('、')}`);
   const namedAccounts = unified.accounts;
 
-  // perModel 同理；同时保证 exclude 优先于 upstreams
-  const perModel: Record<string, PerModelConfig> = {};
-  let droppedModels = 0;
-  for (const [id, cfg] of Object.entries(base.perModel)) {
-    const r = PerModelSchema.safeParse(cfg);
-    if (!r.success) {
-      droppedModels += 1;
+  // 网关逐个解析：坏的丢弃并计数；id 必须唯一（id 是网关的引用键）
+  const accountNames = new Set(namedAccounts.map((a) => a.name));
+  const gateways: Gateway[] = [];
+  const seenIds = new Set<string>();
+  let droppedGateways = 0;
+  for (const entry of base.gateways) {
+    if (gateways.length >= MAX_GATEWAYS) {
+      droppedGateways += 1;
       continue;
     }
-    const excl = new Set(r.data.exclude);
-    perModel[id] = { ...r.data, upstreams: r.data.upstreams.filter((u) => !excl.has(u)) };
+    const r = GatewaySchema.safeParse(entry);
+    if (!r.success || seenIds.has(r.data.id)) {
+      if (!r.success) log.warn({ issues: r.error.issues }, '网关配置无法解析，已丢弃');
+      droppedGateways += 1;
+      continue;
+    }
+    seenIds.add(r.data.id);
+    gateways.push(normalizeGateway(r.data, accountNames, notes));
   }
-  if (droppedModels) notes.push(`丢弃了 ${droppedModels} 个无效的模型配置`);
+  if (droppedGateways) notes.push(`丢弃了 ${droppedGateways} 个无效或重复的网关（最多 ${MAX_GATEWAYS} 个）`);
+  if (!gateways.length) {
+    gateways.push(defaultGateway());
+    notes.push('没有可用的网关，已创建默认「主网关」');
+  }
 
-  // activeAccount 越界钳制（删账号后下标可能悬空）
-  let activeAccount = base.activeAccount;
-  if (namedAccounts.length === 0) {
-    activeAccount = 0;
-  } else if (activeAccount > namedAccounts.length - 1) {
-    notes.push(`activeAccount=${activeAccount} 越界，已钳制为 ${namedAccounts.length - 1}`);
-    activeAccount = namedAccounts.length - 1;
+  // 控制台必须挂在一个存在的网关上
+  let consoleGatewayId = base.console.gatewayId;
+  if (!gateways.some((g) => g.id === consoleGatewayId)) {
+    notes.push(`控制台网关「${consoleGatewayId}」不存在，已改为「${gateways[0]?.id ?? 'main'}」`);
+    consoleGatewayId = gateways[0]?.id ?? 'main';
   }
 
   const unknownKeys = Object.keys(migrated).filter((k) => !KNOWN_KEYS.has(k));
@@ -128,11 +142,52 @@ export async function loadConfig(file: string): Promise<LoadResult> {
   if (notes.length) log.warn({ notes }, '配置已迁移/修正');
 
   return {
-    config: { ...base, accounts: namedAccounts, perModel, activeAccount },
+    config: {
+      ...base,
+      accounts: namedAccounts,
+      gateways,
+      console: { gatewayId: consoleGatewayId },
+    },
     notes,
     backupPath: null,
     fresh: false,
   };
+}
+
+/**
+ * 网关归一化：
+ * - `perModel` 逐个解析（坏的丢弃，exclude 优先于 upstreams）；
+ * - 账号子集过滤掉已不存在的名字（**空 = 全部账号**，见 GatewaySchema）；
+ * - single 模式的账号必须在该网关范围内，否则清空（pick 会回退到第一个启用账号）。
+ */
+function normalizeGateway(g: GatewayInput, accountNames: Set<string>, notes: string[]): Gateway {
+  const perModel: Record<string, PerModelConfig> = {};
+  let droppedModels = 0;
+  for (const [id, cfg] of Object.entries(g.perModel as Record<string, unknown>)) {
+    const r = PerModelSchema.safeParse(cfg);
+    if (!r.success) {
+      droppedModels += 1;
+      continue;
+    }
+    const excl = new Set(r.data.exclude);
+    perModel[id] = { ...r.data, upstreams: r.data.upstreams.filter((u) => !excl.has(u)) };
+  }
+  if (droppedModels) notes.push(`网关「${g.name}」丢弃了 ${droppedModels} 个无效的模型配置`);
+
+  const missing = g.accounts.filter((n) => !accountNames.has(n));
+  const accounts = [...new Set(g.accounts.filter((n) => accountNames.has(n)))];
+  if (missing.length) notes.push(`网关「${g.name}」引用了不存在的账号：${missing.join('、')}（已忽略）`);
+
+  let activeAccount = g.activeAccount;
+  if (activeAccount) {
+    const inScope = accounts.length === 0 ? accountNames.has(activeAccount) : accounts.includes(activeAccount);
+    if (!inScope) {
+      notes.push(`网关「${g.name}」指定的账号「${activeAccount}」不在其账号范围内，已改为默认`);
+      activeAccount = '';
+    }
+  }
+
+  return { ...g, perModel, accounts, activeAccount };
 }
 
 /** 写回配置文件（原子写）。首次启动生成默认配置时使用。 */

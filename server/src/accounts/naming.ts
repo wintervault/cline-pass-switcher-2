@@ -1,5 +1,3 @@
-import type { Account } from '../config/schema.ts';
-
 /** 账号名长度上限，与 `config/schema.ts` 的 AccountSchema 保持一致。 */
 const MAX_NAME = 50;
 
@@ -16,7 +14,9 @@ export interface AccountRename {
  * 都要收敛：保留先出现的那个，后面的自动改名——改名在 UI 上看得见，
  * 密钥与到期时间都不丢（比丢弃温和）。
  */
-export function ensureUniqueAccountNames(accounts: Account[]): { accounts: Account[]; renamed: AccountRename[] } {
+export function ensureUniqueAccountNames<T extends { name: string }>(
+  accounts: readonly T[],
+): { accounts: T[]; renamed: AccountRename[] } {
   const seen = new Set<string>();
   const renamed: AccountRename[] = [];
   const out = accounts.map((account) => {
@@ -31,4 +31,9 @@ export function ensureUniqueAccountNames(accounts: Account[]): { accounts: Accou
     return name === account.name ? account : { ...account, name };
   });
   return { accounts: out, renamed };
+}
+
+/** 账号名列表的唯一化（迁移时只需要名字，不需要完整账号对象）。 */
+export function uniqueAccountNames(names: readonly string[]): string[] {
+  return ensureUniqueAccountNames(names.map((name) => ({ name }))).accounts.map((a) => a.name);
 }

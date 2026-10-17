@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { AccountClassRecord } from '../accounts/types.ts';
+import { isPlainObject } from '../config/migrate.ts';
 import { moduleLogger } from '../log/logger.ts';
 import {
   type AccountStats,
@@ -23,6 +24,8 @@ const TraceEntrySchema = z.object({
 
 const HistoryEntrySchema = z.object({
   ts: z.number().catch(0).default(0),
+  /** 旧记录没有网关字段：它们都产生于单网关时代，归到 main。 */
+  gateway: z.string().catch('main').default('main'),
   model: z.string().catch(''),
   provider: z.string().nullable().catch(null).default(null),
   canonical: z.string().nullable().catch(null).default(null),
@@ -179,11 +182,25 @@ export async function loadMetaStore(file: string): Promise<LoadMetaResult> {
   // models / stats / history 逐条解析：坏一条丢一条，不拖累其余
   let droppedModels = 0;
   const models = source['models'];
-  if (typeof models === 'object' && models !== null && !Array.isArray(models)) {
-    for (const [id, entry] of Object.entries(models as Record<string, unknown>)) {
-      const parsed = parseModelMeta(entry);
-      if (parsed && isMeaningfulModelMeta(parsed)) meta.models[id] = parsed;
-      else droppedModels += 1;
+  if (isPlainObject(models)) {
+    // 形态检测：v2 是「模型 → 观测记录」，v3 是「网关 → 模型 → 观测记录」。
+    // 判据：顶层值里只要有一个带 `pipeline` 字段，就是 v2 的记录对象。
+    const legacy = Object.values(models).some((v) => isPlainObject(v) && 'pipeline' in v);
+    const byGateway: Record<string, unknown> = legacy ? { main: models } : models;
+    if (legacy) notes.push('观测数据升级：模型记录已迁入「main」网关');
+
+    for (const [gatewayId, entries] of Object.entries(byGateway)) {
+      if (!isPlainObject(entries)) {
+        droppedModels += 1;
+        continue;
+      }
+      const parsedMap: Record<string, ModelMeta> = {};
+      for (const [id, entry] of Object.entries(entries)) {
+        const parsed = parseModelMeta(entry);
+        if (parsed && isMeaningfulModelMeta(parsed)) parsedMap[id] = parsed;
+        else droppedModels += 1;
+      }
+      if (Object.keys(parsedMap).length) meta.models[gatewayId] = parsedMap;
     }
   } else if (models !== undefined) {
     droppedModels = -1; // 结构不是映射

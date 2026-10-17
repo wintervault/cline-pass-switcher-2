@@ -1,3 +1,4 @@
+import { uniqueAccountNames } from '../accounts/naming.ts';
 import { CONFIG_VERSION } from './schema.ts';
 
 /** 配置文件版本高于本程序支持的版本——拒绝启动，否则会把新版配置改坏。 */
@@ -70,6 +71,50 @@ export function migrateConfig(input: Record<string, unknown>): MigrationResult {
 
     raw.version = 2;
     applied.push(`配置格式 v${from} → v${CONFIG_VERSION}`);
+  }
+
+  if (from < 3) {
+    // ---- v2 → v3：单端口 → 网关列表 ----
+    // v2 的接入设置（端口/密钥/CORS/账号策略/模型清单/路由配置）全是顶层字段，
+    // 现在它们属于「网关」。整体搬进第一个网关（id=main），账号池保持全局。
+    const rawAccounts = Array.isArray(raw.accounts) ? raw.accounts.filter(isPlainObject) : [];
+    // 名称归一化与 AccountSchema 的规则保持一致（缺失/超长 → '账号'），
+    // 因为下面要把旧的 activeAccount 下标翻译成账号名。
+    const names = uniqueAccountNames(
+      rawAccounts.map((a) => {
+        const name = typeof a.name === 'string' ? a.name : '';
+        return name.length >= 1 && name.length <= 50 ? name : '账号';
+      }),
+    );
+    const oldActive = typeof raw.activeAccount === 'number' ? raw.activeAccount : 0;
+    const activeName = names[oldActive] ?? '';
+
+    const legacyKeys = [
+      'port',
+      'bindHost',
+      'proxyKey',
+      'publicBaseUrl',
+      'corsOrigins',
+      'exposeCatalog',
+      'accountMode',
+      'activeAccount',
+      'knownModels',
+      'perModel',
+      'failover',
+    ] as const;
+    const gateway: Record<string, unknown> = { id: 'main', name: '主网关' };
+    for (const key of legacyKeys) {
+      if (raw[key] !== undefined) gateway[key] = raw[key];
+    }
+    // 账号子集：空数组 = 全部账号（见 GatewaySchema.accounts 的注释）
+    gateway.accounts = [];
+    gateway.activeAccount = activeName;
+
+    raw.gateways = [gateway];
+    raw.console = { gatewayId: 'main' };
+    for (const key of legacyKeys) delete raw[key];
+    raw.version = 3;
+    applied.push('配置格式 v2 → v3：原有接入设置迁入「主网关」，账号池保持全局');
   }
 
   return { raw, applied };

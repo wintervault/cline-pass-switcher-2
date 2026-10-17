@@ -1,6 +1,6 @@
 import { AccountPool } from '../../src/accounts/pool.ts';
 import type { PerModelConfig } from '../../src/config/schema.ts';
-import { defaultConfig } from '../../src/config/schema.ts';
+import { defaultConfig, FailoverSchema } from '../../src/config/schema.ts';
 import { ChatChain } from '../../src/proxy/chain.ts';
 import { ChannelHealth } from '../../src/proxy/health.ts';
 import type { ModelMeta } from '../../src/upstream/types.ts';
@@ -25,8 +25,12 @@ export async function chainStream(): Promise<StreamFixture> {
   ];
   const chain = new ChatChain({
     upstreamBase: base,
-    failover: config.failover,
-    pool: new AccountPool(config),
+    failover: config.gateways[0]?.failover ?? FailoverSchema.parse({}),
+    pool: new AccountPool(() => ({
+      accounts: config.accounts,
+      accountMode: config.gateways[0]?.accountMode ?? 'sticky',
+      activeAccount: config.gateways[0]?.activeAccount ?? '',
+    })),
     health: new ChannelHealth(),
   });
   const metaOf = (over: Partial<ModelMeta> = {}): ModelMeta => ({

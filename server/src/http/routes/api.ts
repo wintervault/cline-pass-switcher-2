@@ -4,12 +4,26 @@ import { expiryState } from '../../accounts/expiry.ts';
 import { ensureUniqueAccountNames } from '../../accounts/naming.ts';
 import { type AppContext, updateConfig } from '../../appContext.ts';
 import { isIsoDate } from '../../config/date.ts';
-import { isConfigured, publicProxyBase } from '../../config/derive.ts';
-import type { Account, Config, PerModelConfig } from '../../config/schema.ts';
+import {
+  consoleGateway,
+  gatewayById,
+  gatewayConfigured,
+  gatewayEnabledAccounts,
+  gatewayProxyBase,
+} from '../../config/derive.ts';
+import {
+  type Account,
+  defaultGateway,
+  type Gateway,
+  GatewaySchema,
+  MAX_GATEWAYS,
+  type PerModelConfig,
+} from '../../config/schema.ts';
 import type { ChainResult } from '../../proxy/chain.ts';
 import { maskSecret } from '../../security/compare.ts';
 import { fetchJSON } from '../../upstream/client.ts';
 import type { RoutingInfo } from '../../upstream/routing.ts';
+import { gatewayModels } from '../../upstream/types.ts';
 import { sendError, sendJSON } from '../respond.ts';
 import type { Ctx, Handler } from '../router.ts';
 
@@ -60,6 +74,17 @@ export function normalizePerModel(raw: unknown): PerModelConfig {
     pinMode: source['pinMode'] === 'preferred' ? 'preferred' : 'strict',
     sort: source['sort'] === 'cost' || source['sort'] === 'ttft' || source['sort'] === 'tps' ? source['sort'] : null,
   };
+}
+
+/** perModel 映射归一化（每个模型的配置逐个收敛）。 */
+function normalizePerModelMap(raw: unknown): Record<string, PerModelConfig> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, PerModelConfig> = {};
+  for (const [id, cfg] of Object.entries(raw as Record<string, unknown>)) {
+    if (!id.trim()) continue;
+    out[id] = normalizePerModel(cfg);
+  }
+  return out;
 }
 
 /**
@@ -152,41 +177,134 @@ function migrateAccountMeta(ctx: AppContext, renames: Array<{ from: string; to: 
   });
 }
 
-/** 订阅模型 + 配置 + 观测数据（控制台主表数据源）。 */
-function subscriptionView(ctx: AppContext) {
-  const config = ctx.configStore.value;
-  const meta = ctx.metaStore.value;
-  return config.knownModels.map((id) => ({
+/** 订阅模型 + 配置 + 观测数据（控制台主表数据源，按网关）。 */
+function subscriptionView(ctx: AppContext, gateway: Gateway) {
+  const meta = gatewayModels(ctx.metaStore.value, gateway.id);
+  return gateway.knownModels.map((id) => ({
     id,
-    config: config.perModel[id] ?? null,
-    meta: meta.models[id] ?? null,
+    config: gateway.perModel[id] ?? null,
+    meta: meta[id] ?? null,
   }));
 }
 
 /**
- * 把 /api/security 的补丁合并进配置（纯函数）。
- *
- * proxyKey 是三态语义（回归测试锁住）：
- * - `undefined` 或空串 = **保持不变**——前端拿不到明文，「留空」是常态；
- *   旧实现用空串直接覆盖，用户在设置页只改公网地址就会把已设密钥静默清掉；
- * - `null` = 显式清除（关闭鉴权，前端走「清除密钥」按钮）；
- * - 非空串 = 设置新密钥。
+ * 请求指向哪个网关：`?gateway=<id>`，缺省 = 控制台网关。
+ * 返回 null 表示 id 不存在（调用方回 404，不要静默回退到别的网关——那会把请求发到错误的地方）。
  */
-export function applySecurityPatch(cfg: Config, payload: Record<string, unknown>): void {
-  if (payload['proxyKey'] !== undefined) {
-    if (payload['proxyKey'] === null) {
-      cfg.proxyKey = '';
-    } else {
-      const v = String(payload['proxyKey']).trim();
-      if (v) cfg.proxyKey = v;
-    }
+function requestGateway(ctx: AppContext, c: Ctx): Gateway | null {
+  const config = ctx.configStore.value;
+  const id = c.url.searchParams.get('gateway') ?? config.console.gatewayId;
+  return gatewayById(config, id);
+}
+
+/** 网关视图：配置 + 运行状态 + 统计。**不回传明文密钥**。 */
+function gatewayViews(ctx: AppContext) {
+  const config = ctx.configStore.value;
+  const statuses = new Map(ctx.gateways.statuses().map((s) => [s.id, s]));
+  return config.gateways.map((gateway) => {
+    const { proxyKey, ...rest } = gateway;
+    const status = statuses.get(gateway.id) ?? {
+      id: gateway.id,
+      state: 'stopped' as const,
+      boundPort: null,
+      boundHost: null,
+    };
+    return {
+      ...rest,
+      hasProxyKey: !!proxyKey,
+      accountCount: gatewayEnabledAccounts(config, gateway).length,
+      modelCount: gateway.knownModels.length,
+      proxyBase: gatewayProxyBase(gateway),
+      status,
+    };
+  });
+}
+
+/**
+ * 网关配置写回后应用监听变更。
+ *
+ * 若变的是**当前请求所在的 listener**（改控制台网关端口/切换控制台），
+ * 不能在这里等 reconcile——关闭 listener 会等这个请求结束，而请求正在等 reconcile。
+ * 所以先回响应，`finish` 之后再做。前端靠 `/api/gateways` 的轮询看到最终状态。
+ */
+async function applyGatewayChange(ctx: AppContext, c: Ctx, changedIds: string[]): Promise<boolean> {
+  if (changedIds.includes(c.gatewayId)) {
+    c.res.once('finish', () => {
+      setTimeout(() => void ctx.gateways.reconcile(), 50);
+    });
+    return true;
   }
-  if (payload['publicBaseUrl'] !== undefined)
-    cfg.publicBaseUrl = String(payload['publicBaseUrl']).trim().replace(/\/+$/, '');
-  if (payload['exposeCatalog'] !== undefined) cfg.exposeCatalog = !!payload['exposeCatalog'];
-  if (payload['corsOrigins'] !== undefined && Array.isArray(payload['corsOrigins'])) {
-    cfg.corsOrigins = payload['corsOrigins'].map((s) => String(s).trim()).filter(Boolean);
-  }
+  await ctx.gateways.reconcile();
+  return false;
+}
+
+/**
+ * 网关保存请求的字段白名单与归一化（防止前端顺手改掉 id 之类的东西）。
+ * proxyKey 三态：缺省/空串 = 保持，null = 清除，非空 = 设置——前端拿不到明文，「留空」是常态。
+ */
+export function mergeGatewayPayload(raw: Record<string, unknown>, existing: Gateway | null): Gateway | string {
+  const fallback = existing ?? defaultGateway({ id: String(raw['id'] ?? '') });
+  const name = typeof raw['name'] === 'string' ? raw['name'].trim() : fallback.name;
+  if (!name || name.length > 50) return '网关名称需要 1-50 个字符';
+
+  const port = raw['port'] === undefined ? fallback.port : Number(raw['port']);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return '端口必须是 1-65535 的整数';
+
+  const bindHost = typeof raw['bindHost'] === 'string' ? raw['bindHost'].trim() : fallback.bindHost;
+  if (!bindHost) return '绑定地址不能为空';
+
+  const accountMode =
+    raw['accountMode'] === 'single' || raw['accountMode'] === 'roundrobin' || raw['accountMode'] === 'sticky'
+      ? raw['accountMode']
+      : fallback.accountMode;
+
+  const accounts = Array.isArray(raw['accounts'])
+    ? [...new Set(raw['accounts'].map((n) => String(n ?? '').trim()).filter(Boolean))]
+    : fallback.accounts;
+
+  const activeAccount = typeof raw['activeAccount'] === 'string' ? raw['activeAccount'].trim() : fallback.activeAccount;
+
+  const corsOrigins = Array.isArray(raw['corsOrigins'])
+    ? raw['corsOrigins'].map((o) => String(o ?? '').trim()).filter(Boolean)
+    : fallback.corsOrigins;
+
+  const knownModels = Array.isArray(raw['knownModels'])
+    ? [...new Set(raw['knownModels'].map((m) => String(m ?? '').trim()).filter(Boolean))]
+    : fallback.knownModels;
+
+  // proxyKey 三态：缺省或空串 = 保持；null = 清除；非空 = 设置
+  let proxyKey = fallback.proxyKey;
+  if (raw['proxyKey'] === null) proxyKey = '';
+  else if (typeof raw['proxyKey'] === 'string' && raw['proxyKey'].trim()) proxyKey = raw['proxyKey'].trim();
+
+  const failover =
+    raw['failover'] === undefined
+      ? fallback.failover
+      : (() => {
+          const parsed = GatewaySchema.shape.failover.safeParse(raw['failover']);
+          return parsed.success ? parsed.data : null;
+        })();
+  if (!failover) return '失败转移参数不合法';
+
+  return {
+    ...fallback,
+    name,
+    port,
+    bindHost,
+    proxyKey,
+    publicBaseUrl:
+      typeof raw['publicBaseUrl'] === 'string'
+        ? raw['publicBaseUrl'].trim().replace(/\/+$/, '')
+        : fallback.publicBaseUrl,
+    corsOrigins,
+    exposeCatalog: typeof raw['exposeCatalog'] === 'boolean' ? raw['exposeCatalog'] : fallback.exposeCatalog,
+    accounts,
+    accountMode,
+    activeAccount,
+    knownModels,
+    perModel: raw['perModel'] === undefined ? fallback.perModel : normalizePerModelMap(raw['perModel']),
+    failover,
+  };
 }
 
 export function registerApiRoutes(
@@ -197,21 +315,29 @@ export function registerApiRoutes(
   const meta = () => ctx.metaStore.value;
 
   router.get('/api/meta', (c: Ctx) => {
+    const cfg = config();
+    const gateway = consoleGateway(cfg);
     sendJSON(c.res, 200, {
       version: ctx.version,
-      authRequired: !!config().proxyKey,
-      configured: isConfigured(config()),
-      proxyBase: publicProxyBase(config()),
+      authRequired: !!gateway.proxyKey,
+      configured: gatewayConfigured(cfg, gateway),
+      proxyBase: gatewayProxyBase(gateway),
+      consoleGatewayId: gateway.id,
+      /** 只给「切换器」需要的字段；完整信息在 /api/gateways。 */
+      gateways: cfg.gateways.map((g) => ({ id: g.id, name: g.name })),
     });
   });
 
   router.get('/api/models', (c: Ctx) => {
+    const gateway = requestGateway(ctx, c);
+    if (!gateway) return sendError(c.res, 404, 'unknown gateway', 'not_found');
     void ctx.catalog.catalog().then((catalogIds) => {
       sendJSON(c.res, 200, {
-        subscription: subscriptionView(ctx),
+        gateway: { id: gateway.id, name: gateway.name },
+        subscription: subscriptionView(ctx, gateway),
         catalogCount: catalogIds.length,
         catalog: catalogIds,
-        proxyBase: publicProxyBase(config()),
+        proxyBase: gatewayProxyBase(gateway),
         officialFetch: meta().officialModelsFetch,
       });
     });
@@ -222,8 +348,11 @@ export function registerApiRoutes(
     if (!body.ok) return sendError(c.res, 400, body.reason === 'bad-json' ? 'invalid JSON body' : 'body too large');
     const model = (body.value as { model?: unknown })?.model;
     if (typeof model !== 'string' || !model) return sendError(c.res, 400, 'model required');
+    const gateway = requestGateway(ctx, c);
+    const runtime = gateway ? ctx.gateways.get(gateway.id) : null;
+    if (!gateway || !runtime) return sendError(c.res, 404, 'unknown gateway', 'not_found');
     try {
-      const result = await ctx.probe.probeModel(model, c.abortSignal);
+      const result = await runtime.probe.probeModel(model, c.abortSignal);
       sendJSON(c.res, result.ok ? 200 : 502, result);
     } catch (err) {
       sendJSON(c.res, 502, { ok: false, error: err instanceof Error ? err.message : String(err) });
@@ -235,7 +364,10 @@ export function registerApiRoutes(
     if (!body.ok) return sendError(c.res, 400, body.reason === 'bad-json' ? 'invalid JSON body' : 'body too large');
     const model = (body.value as { model?: unknown })?.model;
     if (typeof model !== 'string' || !model) return sendError(c.res, 400, 'model required');
-    const outcome = await ctx.probe.validateUpstreams(model, c.abortSignal);
+    const gateway = requestGateway(ctx, c);
+    const runtime = gateway ? ctx.gateways.get(gateway.id) : null;
+    if (!gateway || !runtime) return sendError(c.res, 404, 'unknown gateway', 'not_found');
+    const outcome = await runtime.probe.validateUpstreams(model, c.abortSignal);
     if (!outcome.ok) {
       // 钉住参数被网关丢弃：校验结果是假绿，明确拒绝而不是输出全绿误导
       sendJSON(c.res, 409, { ok: false, error: outcome.reason, pinState: outcome.pinState });
@@ -253,7 +385,17 @@ export function registerApiRoutes(
   });
 
   router.post('/api/fetch-official-models', async (c: Ctx) => {
-    const result = await ctx.catalog.fetchOfficialModels(c.abortSignal);
+    const gateway = requestGateway(ctx, c);
+    if (!gateway) return sendError(c.res, 404, 'unknown gateway', 'not_found');
+    const result = await ctx.catalog.fetchOfficialModels(c.abortSignal, {
+      knownModels: gateway.knownModels,
+      addKnownModels: (ids) =>
+        updateConfig(ctx, (cfg) => {
+          const target = cfg.gateways.find((g) => g.id === gateway.id);
+          if (!target) return;
+          for (const id of ids) if (!target.knownModels.includes(id)) target.knownModels.push(id);
+        }),
+    });
     sendJSON(c.res, 200, { ok: true, ...result });
   });
 
@@ -269,19 +411,23 @@ export function registerApiRoutes(
     const model = typeof payload.model === 'string' ? payload.model : '';
     if (!model) return sendError(c.res, 400, 'model required');
 
+    const gateway = requestGateway(ctx, c);
+    const runtime = gateway ? ctx.gateways.get(gateway.id) : null;
+    if (!gateway || !runtime) return sendError(c.res, 404, 'unknown gateway', 'not_found');
+
     // 临时配置覆盖：不落盘，仅本次请求生效（与保存的配置叠加）
-    const base = config().perModel[model];
+    const base = gateway.perModel[model];
     const cfg: PerModelConfig = base ? { ...base } : { upstreams: [], exclude: [], pinMode: 'strict', sort: null };
     if (payload.upstreams !== undefined) cfg.upstreams = normalizePerModel({ upstreams: payload.upstreams }).upstreams;
     else if (payload.upstream !== undefined)
       cfg.upstreams = typeof payload.upstream === 'string' && payload.upstream ? [payload.upstream] : [];
     if (payload.exclude !== undefined) cfg.exclude = normalizePerModel({ exclude: payload.exclude }).exclude;
 
-    const result = await ctx.chain.run({
+    const result = await runtime.chain.run({
       modelId: model,
       body: { model, messages: [{ role: 'user', content: 'Reply with the word OK' }], max_tokens: 256 },
       cfg,
-      meta: meta().models[model],
+      meta: gatewayModels(meta(), gateway.id)[model],
       stream: false,
       clientSignal: c.abortSignal,
     });
@@ -295,7 +441,7 @@ export function registerApiRoutes(
     }
     // 客户端在请求结束前断开（取消）：不是上游失败，不记历史、不写响应
     if (result.outcome === 'cancelled') return;
-    recordHistory(ctx, model, result, { stream: false });
+    recordHistory(ctx, gateway.id, model, result, { stream: false });
 
     if (result.outcome !== 'success') {
       const message = result.outcome === 'failure' ? result.message : 'unexpected stream outcome';
@@ -346,8 +492,7 @@ export function registerApiRoutes(
         /** 风控体检结论（观测值，可能为空 = 从未体检过）。 */
         classify: accountClass[a.name] ?? null,
       })),
-      mode: cfg.accountMode,
-      active: cfg.activeAccount,
+      /** 体检判定模型（全局；账号策略与账号范围是网关级的，在「网关」页编辑）。 */
       classifyModel: cfg.classifyModel,
       stats,
     });
@@ -356,36 +501,33 @@ export function registerApiRoutes(
   router.post('/api/accounts', async (c: Ctx) => {
     const body = await readJsonBody(c.req);
     if (!body.ok) return sendError(c.res, 400, body.reason === 'bad-json' ? 'invalid JSON body' : 'body too large');
-    const payload = (body.value ?? {}) as {
-      accounts?: unknown;
-      mode?: unknown;
-      active?: unknown;
-      classifyModel?: unknown;
-    };
+    const payload = (body.value ?? {}) as { accounts?: unknown; classifyModel?: unknown };
     const { accounts, renames } = mergeAccountsDetailed(config().accounts, payload.accounts);
     if (!accounts.length) return sendError(c.res, 400, '至少需要一个有效账号（key 非空）');
-
+    const names = new Set(accounts.map((a) => a.name));
     const classifyModel = typeof payload.classifyModel === 'string' ? payload.classifyModel.trim().slice(0, 120) : '';
 
     updateConfig(ctx, (cfg) => {
       cfg.accounts = accounts;
-      cfg.accountMode = payload.mode === 'roundrobin' ? 'roundrobin' : payload.mode === 'single' ? 'single' : 'sticky';
-      const wanted = Number(payload.active);
-      cfg.activeAccount = Number.isInteger(wanted) ? Math.min(Math.max(0, wanted), accounts.length - 1) : 0;
       if (classifyModel) cfg.classifyModel = classifyModel;
+      const renameMap = new Map(renames.map((r) => [r.from, r.to]));
+      for (const gw of cfg.gateways) {
+        // 改名：账号范围与 single 模式的选择跟着改
+        if (renameMap.size) {
+          gw.accounts = gw.accounts.map((n) => renameMap.get(n) ?? n);
+          gw.activeAccount = renameMap.get(gw.activeAccount) ?? gw.activeAccount;
+        }
+        // 删除：把已不存在的名字从范围里摘掉（空范围表示「全部」，这里不补）
+        gw.accounts = gw.accounts.filter((n) => names.has(n));
+        if (gw.activeAccount && !names.has(gw.activeAccount)) gw.activeAccount = '';
+      }
     });
     // 账号名是观测数据的键：改名要迁走、删除要清掉（历史记录是日志，保留历史账号名）
-    migrateAccountMeta(
-      ctx,
-      renames,
-      accounts.map((a) => a.name),
-    );
+    migrateAccountMeta(ctx, renames, [...names]);
 
     sendJSON(c.res, 200, {
       ok: true,
       accounts: accounts.length,
-      mode: config().accountMode,
-      active: config().activeAccount,
       classifyModel: config().classifyModel,
       renamed: renames,
     });
@@ -417,16 +559,17 @@ export function registerApiRoutes(
   router.post('/api/accounts/test', async (c: Ctx) => {
     const body = await readJsonBody(c.req);
     if (!body.ok) return sendError(c.res, 400, body.reason === 'bad-json' ? 'invalid JSON body' : 'body too large');
-    const payload = (body.value ?? {}) as { key?: unknown; index?: unknown };
-    // 两种用法：传 key（新增账号保存前测试）或传 index（测试已存账号——服务端取，前端拿不到明文）
+    const payload = (body.value ?? {}) as { key?: unknown; name?: unknown };
+    // 两种用法：传 key（新增账号保存前测试）或传 name（测试已存账号——服务端取，前端拿不到明文）
     let key = String(payload.key ?? '').trim();
-    if (!key && typeof payload.index === 'number' && Number.isInteger(payload.index)) {
-      key = config().accounts[payload.index]?.key ?? '';
+    if (!key && typeof payload.name === 'string') {
+      key = config().accounts.find((a) => a.name === payload.name)?.key ?? '';
     }
     if (!key) return sendError(c.res, 400, 'key required');
 
     const started = Date.now();
-    const model = config().knownModels[0] ?? 'cline-pass/glm-5.3-flash';
+    const gateway = consoleGateway(config());
+    const model = gateway.knownModels[0] ?? 'cline-pass/glm-5.3-flash';
     const { json } = await fetchJSON(
       `${config().upstreamBase}/chat/completions`,
       {
@@ -454,34 +597,83 @@ export function registerApiRoutes(
     sendJSON(c.res, 200, { ok: true, ms: Date.now() - started, model });
   });
 
-  router.get('/api/security', (c: Ctx) => {
-    const cfg = config();
+  // ---- 网关管理（3.0 起「访问与安全」并入网关） ----
+
+  router.get('/api/gateways', (c: Ctx) => {
     sendJSON(c.res, 200, {
-      hasProxyKey: !!cfg.proxyKey,
-      publicBaseUrl: cfg.publicBaseUrl,
-      authRequired: !!cfg.proxyKey,
-      exposeCatalog: cfg.exposeCatalog,
-      corsOrigins: cfg.corsOrigins,
+      gateways: gatewayViews(ctx),
+      consoleGatewayId: config().console.gatewayId,
+      maxGateways: MAX_GATEWAYS,
     });
   });
 
-  router.post('/api/security', async (c: Ctx) => {
+  router.post('/api/gateways/save', async (c: Ctx) => {
     const body = await readJsonBody(c.req);
     if (!body.ok) return sendError(c.res, 400, body.reason === 'bad-json' ? 'invalid JSON body' : 'body too large');
-    const payload = (body.value ?? {}) as Record<string, unknown>;
-
-    updateConfig(ctx, (cfg) => applySecurityPatch(cfg, payload));
+    const raw = ((body.value ?? {}) as { gateway?: unknown }).gateway;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return sendError(c.res, 400, 'gateway required');
+    const payload = raw as Record<string, unknown>;
 
     const cfg = config();
-    sendJSON(c.res, 200, {
-      ok: true,
-      hasProxyKey: !!cfg.proxyKey,
-      publicBaseUrl: cfg.publicBaseUrl,
-      authRequired: !!cfg.proxyKey,
-      proxyBase: publicProxyBase(cfg),
-      exposeCatalog: cfg.exposeCatalog,
-      corsOrigins: cfg.corsOrigins,
+    const id = typeof payload['id'] === 'string' ? payload['id'].trim() : '';
+    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(id)) return sendError(c.res, 400, '网关 id 需为 1-32 位的字母数字与连字符');
+    const existing = gatewayById(cfg, id);
+    if (!existing && cfg.gateways.length >= MAX_GATEWAYS) {
+      return sendError(c.res, 400, `最多只能有 ${MAX_GATEWAYS} 个网关`);
+    }
+
+    const gateway = mergeGatewayPayload({ ...payload, id }, existing);
+    if (typeof gateway === 'string') return sendError(c.res, 400, gateway);
+    if (!existing) gateway.id = id;
+
+    // 端口冲突在保存时就拦住：同地址同端口一定绑不上，没必要等到运行时报错
+    const clash = cfg.gateways.find((g) => g.id !== id && g.bindHost === gateway.bindHost && g.port === gateway.port);
+    if (clash) return sendError(c.res, 409, `端口 ${gateway.port} 已被网关「${clash.name}」占用`);
+
+    // 账号范围只保留存在的账号（空 = 全部）
+    const alive = new Set(cfg.accounts.map((a) => a.name));
+    gateway.accounts = gateway.accounts.filter((n) => alive.has(n));
+    if (gateway.activeAccount && !alive.has(gateway.activeAccount)) gateway.activeAccount = '';
+
+    updateConfig(ctx, (draft) => {
+      const index = draft.gateways.findIndex((g) => g.id === id);
+      if (index >= 0) draft.gateways[index] = gateway;
+      else draft.gateways.push(gateway);
     });
+
+    const deferred = await applyGatewayChange(ctx, c, [id]);
+    sendJSON(c.res, 200, { ok: true, deferred, gateways: gatewayViews(ctx) });
+  });
+
+  router.post('/api/gateways/delete', async (c: Ctx) => {
+    const body = await readJsonBody(c.req);
+    if (!body.ok) return sendError(c.res, 400, body.reason === 'bad-json' ? 'invalid JSON body' : 'body too large');
+    const id = String(((body.value ?? {}) as { id?: unknown }).id ?? '').trim();
+    const cfg = config();
+    const target = gatewayById(cfg, id);
+    if (!target) return sendError(c.res, 404, '网关不存在');
+    if (cfg.gateways.length <= 1) return sendError(c.res, 400, '至少保留一个网关');
+    if (cfg.console.gatewayId === id) return sendError(c.res, 400, '不能删除控制台网关：先把控制台切到别的网关');
+
+    updateConfig(ctx, (draft) => {
+      draft.gateways = draft.gateways.filter((g) => g.id !== id);
+    });
+    const deferred = await applyGatewayChange(ctx, c, [id]);
+    sendJSON(c.res, 200, { ok: true, deferred, gateways: gatewayViews(ctx) });
+  });
+
+  router.post('/api/gateways/console', async (c: Ctx) => {
+    const body = await readJsonBody(c.req);
+    if (!body.ok) return sendError(c.res, 400, body.reason === 'bad-json' ? 'invalid JSON body' : 'body too large');
+    const id = String(((body.value ?? {}) as { id?: unknown }).id ?? '').trim();
+    const cfg = config();
+    if (!gatewayById(cfg, id)) return sendError(c.res, 404, '网关不存在');
+    const previous = cfg.console.gatewayId;
+    updateConfig(ctx, (draft) => {
+      draft.console.gatewayId = id;
+    });
+    const deferred = await applyGatewayChange(ctx, c, [previous, id]);
+    sendJSON(c.res, 200, { ok: true, deferred, gateways: gatewayViews(ctx) });
   });
 
   router.get('/api/history', (c: Ctx) => {
@@ -508,18 +700,27 @@ export function registerApiRoutes(
   });
 
   router.get('/api/config', (c: Ctx) => {
-    const cfg: Config = config();
-    sendJSON(c.res, 200, { port: cfg.port, perModel: cfg.perModel, knownModels: cfg.knownModels });
+    const gateway = requestGateway(ctx, c);
+    if (!gateway) return sendError(c.res, 404, 'unknown gateway', 'not_found');
+    sendJSON(c.res, 200, {
+      gateway: { id: gateway.id, name: gateway.name },
+      perModel: gateway.perModel,
+      knownModels: gateway.knownModels,
+    });
   });
 
   router.post('/api/config', async (c: Ctx) => {
     const body = await readJsonBody(c.req);
     if (!body.ok) return sendError(c.res, 400, body.reason === 'bad-json' ? 'invalid JSON body' : 'body too large');
+    const gateway = requestGateway(ctx, c);
+    if (!gateway) return sendError(c.res, 404, 'unknown gateway', 'not_found');
     const perModel = (body.value as { perModel?: unknown })?.perModel;
     if (perModel && typeof perModel === 'object' && !Array.isArray(perModel)) {
       updateConfig(ctx, (cfg) => {
+        const target = cfg.gateways.find((g) => g.id === gateway.id);
+        if (!target) return;
         for (const [model, raw] of Object.entries(perModel as Record<string, unknown>)) {
-          cfg.perModel[model] = normalizePerModel(raw);
+          target.perModel[model] = normalizePerModel(raw);
         }
       });
     }
@@ -530,6 +731,7 @@ export function registerApiRoutes(
 /** 记录请求历史与账号统计（历史条数受 historyLimit 约束）。 */
 export function recordHistory(
   ctx: AppContext,
+  gatewayId: string,
   modelId: string,
   result: {
     account: { name: string } | null;
@@ -545,6 +747,7 @@ export function recordHistory(
   ctx.metaStore.update((meta) => {
     const entry = {
       ts: Date.now(),
+      gateway: gatewayId,
       model: modelId,
       provider: result.routing.finalProvider,
       canonical: result.routing.canonicalSlug,

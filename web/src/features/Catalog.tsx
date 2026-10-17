@@ -4,6 +4,7 @@ import { useState } from 'react';
 
 import { useModels, useProbe } from '../api/hooks.ts';
 import type { PinState, Pipeline } from '../api/types.ts';
+import { GatewaySwitcher, useGatewayScope } from '../gatewayScope.tsx';
 import { PageHeader } from '../pageHeader.tsx';
 import { Panel } from '../panel.tsx';
 
@@ -59,8 +60,10 @@ function ProbeTags({ p }: { p: ProbeOutcome }) {
 
 export default function Catalog() {
   const { message } = App.useApp();
-  const models = useModels();
-  const probe = useProbe();
+  // 目录是全局的；探测结果按网关存（同一个模型在不同网关可钉性不同）
+  const { gatewayId } = useGatewayScope();
+  const models = useModels(gatewayId);
+  const probe = useProbe(gatewayId);
   const [filter, setFilter] = useState('');
   const [probes, setProbes] = useState<Record<string, ProbeOutcome>>({});
 
@@ -73,7 +76,13 @@ export default function Catalog() {
       onSuccess: (r) => {
         setProbes((prev) => ({
           ...prev,
-          [id]: { ok: r.ok, error: r.error, pipeline: r.pipeline, upstreams: r.upstreams, pinState: r.pinState },
+          [`${gatewayId}|${id}`]: {
+            ok: r.ok,
+            error: r.error,
+            pipeline: r.pipeline,
+            upstreams: r.upstreams,
+            pinState: r.pinState,
+          },
         }));
         if (!r.ok) message.error(`${id} 探测失败：${r.error ?? '未知错误'}`);
       },
@@ -87,7 +96,11 @@ export default function Catalog() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <PageHeader title="完整目录" desc="Cline 公开目录的全部模型；:free 变体可精确钉住上游。探测结果就地显示。" />
+      <PageHeader
+        title="完整目录"
+        desc="Cline 公开目录的全部模型；:free 变体可精确钉住上游。探测结果就地显示（按网关分开）。"
+        actions={<GatewaySwitcher />}
+      />
       {/* 区域：目录（搜索与计数属于这块区域的头，表格是它的体） */}
       <Panel
         flush
@@ -150,7 +163,7 @@ export default function Catalog() {
                 width: 320,
                 render: (_, r) => {
                   const id = String(r.id);
-                  const p = probes[id];
+                  const p = probes[`${gatewayId}|${id}`];
                   if (!p) {
                     return id.includes(':free') ? <Tag color="green">:free 可精确钉住</Tag> : <Tag>规划器管理</Tag>;
                   }

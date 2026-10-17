@@ -71,6 +71,8 @@ export interface ModelMeta {
 
 export interface HistoryEntry {
   ts: number;
+  /** 处理这条请求的网关（多网关下历史必须能分开看）。 */
+  gateway: string;
   model: string;
   provider: string | null;
   canonical: string | null;
@@ -100,7 +102,14 @@ export interface OfficialModelsFetch {
 }
 
 export interface MetaFile {
-  models: Record<string, ModelMeta>;
+  /**
+   * 网关 → 模型 → 观测记录。
+   *
+   * 3.0 起按网关隔离：探针结论（pinState）与渠道状态都依赖**该网关的账号**——
+   * 同一个模型在主网关（正常号）与风控网关（风控号）上的可钉性完全不同，
+   * 混在一张表里会让两边互相覆盖。
+   */
+  models: Record<string, Record<string, ModelMeta>>;
   history: HistoryEntry[];
   catalog: string[] | null;
   catalogFetchedAt: number;
@@ -126,8 +135,21 @@ export function defaultMeta(): MetaFile {
   };
 }
 
-/** 没有任何观测记录时的空白模型元数据。 */
-export function blankModelMeta(): ModelMeta {
+/** 某网关的模型观测表（没有则返回空表，调用方只读时用）。 */
+export function gatewayModels(meta: MetaFile, gatewayId: string): Record<string, ModelMeta> {
+  return meta.models[gatewayId] ?? {};
+}
+
+/** 某网关的模型观测表（没有则创建，写入前用）。 */
+export function ensureGatewayModels(meta: MetaFile, gatewayId: string): Record<string, ModelMeta> {
+  const existing = meta.models[gatewayId];
+  if (existing) return existing;
+  const created: Record<string, ModelMeta> = {};
+  meta.models[gatewayId] = created;
+  return created;
+}
+
+/** 没有任何观测记录时的空白模型元数据。 */ export function blankModelMeta(): ModelMeta {
   return {
     pipeline: null,
     pinnable: false,

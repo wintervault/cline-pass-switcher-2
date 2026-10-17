@@ -6,32 +6,43 @@ import { api } from './client.ts';
 import type {
   AccountsResponse,
   ClassifyResponse,
+  GatewaysResponse,
   HistoryEntry,
   MetaInfo,
   ModelsResponse,
   PerModelConfig,
   ProbeResult,
-  SecurityResponse,
   TestResult,
   ValidationResult,
 } from './types.ts';
 
 export const qk = {
   meta: ['meta'] as const,
-  models: ['models'] as const,
+  /** 模型观测与路由配置是**按网关**的：不同网关可以有完全不同的结论。 */
+  models: (gatewayId: string) => ['models', gatewayId] as const,
   accounts: ['accounts'] as const,
+  gateways: ['gateways'] as const,
   security: ['security'] as const,
   history: ['history'] as const,
 };
 
-export function useModels(): ReturnType<typeof useQuery<ModelsResponse>> {
-  return useQuery({ queryKey: qk.models, queryFn: () => api<ModelsResponse>('/api/models') });
+export function useModels(gatewayId: string): ReturnType<typeof useQuery<ModelsResponse>> {
+  return useQuery({
+    queryKey: qk.models(gatewayId),
+    queryFn: () => api<ModelsResponse>('/api/models', { query: { gateway: gatewayId } }),
+    enabled: !!gatewayId,
+  });
 }
 export function useAccounts(): ReturnType<typeof useQuery<AccountsResponse>> {
   return useQuery({ queryKey: qk.accounts, queryFn: () => api<AccountsResponse>('/api/accounts') });
 }
-export function useSecurity(): ReturnType<typeof useQuery<SecurityResponse>> {
-  return useQuery({ queryKey: qk.security, queryFn: () => api<SecurityResponse>('/api/security') });
+/** 网关列表 + 运行状态。轮询是刻意的：端口绑定失败/恢复要能被看见。 */
+export function useGateways(options: { poll?: boolean } = {}): ReturnType<typeof useQuery<GatewaysResponse>> {
+  return useQuery({
+    queryKey: qk.gateways,
+    queryFn: () => api<GatewaysResponse>('/api/gateways'),
+    refetchInterval: options.poll === false ? false : 2000,
+  });
 }
 export function useHistory(): ReturnType<typeof useQuery<{ history: HistoryEntry[] }>> {
   return useQuery({ queryKey: qk.history, queryFn: () => api<{ history: HistoryEntry[] }>('/api/history') });
@@ -44,9 +55,9 @@ export function useRefresh(): () => void {
     // meta 也要失效：它承载「是否已配置账号」——漏掉会让「尚未配置」提示
     // 在保存账号后继续显示（读的是旧缓存）
     void qc.invalidateQueries({ queryKey: qk.meta });
-    void qc.invalidateQueries({ queryKey: qk.models });
+    void qc.invalidateQueries({ queryKey: ['models'] });
     void qc.invalidateQueries({ queryKey: qk.accounts });
-    void qc.invalidateQueries({ queryKey: qk.security });
+    void qc.invalidateQueries({ queryKey: qk.gateways });
     void qc.invalidateQueries({ queryKey: qk.history });
   };
 }
@@ -60,12 +71,15 @@ export function useRefresh(): () => void {
  *
  * 失败的文案统一带上「哪件事失败了 + 服务端给的原因」，不允许只显示「失败」。
  */
-export function useSaveModelConfig() {
+export function useSaveModelConfig(gatewayId: string) {
   const refresh = useRefresh();
   const fb = useFeedback();
   return useMutation({
     mutationFn: (vars: { modelId: string; config: PerModelConfig; note?: string }) =>
-      api<{ ok: boolean }>('/api/config', { json: { perModel: { [vars.modelId]: vars.config } } }),
+      api<{ ok: boolean }>('/api/config', {
+        query: { gateway: gatewayId },
+        json: { perModel: { [vars.modelId]: vars.config } },
+      }),
     onSuccess: (_data, vars) => {
       refresh();
       fb.ok(vars.note ?? '路由配置已保存');
@@ -74,11 +88,12 @@ export function useSaveModelConfig() {
   });
 }
 
-export function useProbe() {
+export function useProbe(gatewayId: string) {
   const refresh = useRefresh();
   const fb = useFeedback();
   return useMutation({
-    mutationFn: (modelId: string) => api<ProbeResult>('/api/probe', { json: { model: modelId } }),
+    mutationFn: (modelId: string) =>
+      api<ProbeResult>('/api/probe', { query: { gateway: gatewayId }, json: { model: modelId } }),
     onSuccess: (r) => {
       refresh();
       if (r.ok) fb.ok(`探测完成：${r.upstreams.length} 个可用渠道`);
@@ -88,11 +103,12 @@ export function useProbe() {
   });
 }
 
-export function useValidate() {
+export function useValidate(gatewayId: string) {
   const refresh = useRefresh();
   const fb = useFeedback();
   return useMutation({
-    mutationFn: (modelId: string) => api<ValidationResult>('/api/validate-upstreams', { json: { model: modelId } }),
+    mutationFn: (modelId: string) =>
+      api<ValidationResult>('/api/validate-upstreams', { query: { gateway: gatewayId }, json: { model: modelId } }),
     onSuccess: (r) => {
       refresh();
       const s = r.summary;
@@ -102,12 +118,12 @@ export function useValidate() {
   });
 }
 
-export function useTest() {
+export function useTest(gatewayId: string) {
   const refresh = useRefresh();
   const fb = useFeedback();
   return useMutation({
     mutationFn: (vars: { model: string; upstreams: string[]; exclude: string[] }) =>
-      api<TestResult>('/api/test', { json: vars }),
+      api<TestResult>('/api/test', { query: { gateway: gatewayId }, json: vars }),
     onSuccess: (r) => {
       refresh();
       if (r.ok) fb.ok(`测试通过：命中 ${r.actual ?? r.actualName ?? '未知'}${r.ms ? `（${r.ms}ms）` : ''}`);
@@ -117,21 +133,21 @@ export function useTest() {
   });
 }
 
-export function useFetchOfficial() {
+export function useFetchOfficial(gatewayId: string) {
   const refresh = useRefresh();
   const fb = useFeedback();
   return useMutation({
     mutationFn: () =>
       api<{ ok: boolean; sources: string[]; found: number; added: string[]; knownModels: string[] }>(
         '/api/fetch-official-models',
-        { json: {} },
+        { query: { gateway: gatewayId }, json: {} },
       ),
     onSuccess: (r) => {
       refresh();
       if (r.added.length) fb.ok(`已拉取官方清单：新增 ${r.added.length} 个模型`);
       else fb.info(`清单已是最新（官方 ${r.found} 个）`);
     },
-    onError: (err) => fb.fail('拉取官方模型清单失败', err),
+    onError: (err) => fb.fail(`拉取官方模型清单失败`, err),
   });
 }
 
@@ -152,7 +168,7 @@ export function useSaveAccounts() {
 export function useTestAccount() {
   const fb = useFeedback();
   return useMutation({
-    mutationFn: (vars: { payload: { key: string } | { index: number }; label: string }) =>
+    mutationFn: (vars: { payload: { key: string } | { name: string }; label: string }) =>
       api<{ ok: boolean; ms: number; error?: string; note?: string }>('/api/accounts/test', { json: vars.payload }),
     onSuccess: (r, vars) => {
       if (r.ok) fb.ok(`${vars.label} 可用（${r.ms}ms）${r.note ?? ''}`);
@@ -188,30 +204,46 @@ export function useClassifyAccounts() {
   });
 }
 
-export function useSaveSecurity() {
+/** 保存网关（新建或更新；id 创建后不可改）。 */
+export function useSaveGateway() {
   const refresh = useRefresh();
   const fb = useFeedback();
   return useMutation({
-    mutationFn: (vars: { payload: Record<string, unknown>; note?: string }) =>
-      api<{ ok: boolean }>('/api/security', { json: vars.payload }),
+    mutationFn: (vars: { gateway: Record<string, unknown>; note?: string; created?: boolean }) =>
+      api<{ ok: boolean; deferred: boolean }>('/api/gateways/save', { json: { gateway: vars.gateway } }),
     onSuccess: (_data, vars) => {
       refresh();
-      fb.ok(vars.note ?? '安全设置已保存');
+      fb.ok(vars.note ?? (vars.created ? '网关已创建' : '网关设置已保存'));
     },
-    onError: (err) => fb.fail('保存安全设置失败', err),
+    onError: (err) => fb.fail('保存网关失败', err),
   });
 }
 
-export function useSaveExposeCatalog() {
+export function useDeleteGateway() {
   const refresh = useRefresh();
   const fb = useFeedback();
   return useMutation({
-    mutationFn: (exposeCatalog: boolean) => api<{ ok: boolean }>('/api/security', { json: { exposeCatalog } }),
-    onSuccess: (_data, exposeCatalog) => {
+    mutationFn: (vars: { id: string; name: string }) =>
+      api<{ ok: boolean }>('/api/gateways/delete', { json: { id: vars.id } }),
+    onSuccess: (_data, vars) => {
       refresh();
-      fb.ok(exposeCatalog ? '已开启：/v1/models 返回完整目录' : '已关闭：/v1/models 只返回订阅模型');
+      fb.ok(`已删除网关「${vars.name}」`);
     },
-    onError: (err) => fb.fail('切换目录暴露失败', err),
+    onError: (err) => fb.fail('删除网关失败', err),
+  });
+}
+
+export function useSetConsoleGateway() {
+  const refresh = useRefresh();
+  const fb = useFeedback();
+  return useMutation({
+    mutationFn: (vars: { id: string; name: string }) =>
+      api<{ ok: boolean; deferred: boolean }>('/api/gateways/console', { json: { id: vars.id } }),
+    onSuccess: (_data, vars) => {
+      refresh();
+      fb.ok(`控制台已切换到「${vars.name}」`);
+    },
+    onError: (err) => fb.fail('切换控制台网关失败', err),
   });
 }
 

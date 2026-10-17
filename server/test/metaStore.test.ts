@@ -79,8 +79,10 @@ describe('loadMetaStore', () => {
       }),
     );
     const { store, notes } = await loadMetaStore(file);
-    expect(Object.keys(store.value.models)).toEqual(['cline-pass/good']);
-    expect(store.value.models['cline-pass/good']?.upstreams).toEqual(['a', 'b']);
+    // v2 形态（模型 → 记录）自动迁到 main 网关下
+    expect(Object.keys(store.value.models)).toEqual(['main']);
+    expect(Object.keys(store.value.models.main ?? {})).toEqual(['cline-pass/good']);
+    expect(store.value.models.main?.['cline-pass/good']?.upstreams).toEqual(['a', 'b']);
     // 字段级 catch 会把垃圾输入「修复」成默认值，修复后仍无信息量 → 丢弃
     expect(notes.join()).toContain('丢弃了 1 个损坏或无信息量的模型观测记录');
   });
@@ -102,10 +104,24 @@ describe('loadMetaStore', () => {
     expect(notes.join()).toContain('丢弃了 2 条损坏的历史记录');
   });
 
+  it('v3 形态（网关 → 模型）直接按网关读入，历史记录保留自己的网关', async () => {
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        models: { risk: { 'cline-pass/mimo': { pipeline: 'direct', upstreams: ['xiaomi'] } } },
+        history: [{ ts: 1, gateway: 'risk', model: 'cline-pass/mimo' }],
+      }),
+    );
+    const { store } = await loadMetaStore(file);
+    expect(store.value.models.risk?.['cline-pass/mimo']?.pipeline).toBe('direct');
+    expect(store.value.models.main).toBeUndefined();
+    expect(store.value.history[0]?.gateway).toBe('risk');
+  });
+
   it('缺少的字段用默认值补全（不要求全量结构）', async () => {
     await fs.writeFile(file, JSON.stringify({ models: { 'cline-pass/x': { pipeline: 'direct' } } }));
     const { store } = await loadMetaStore(file);
-    const m = store.value.models['cline-pass/x'];
+    const m = store.value.models.main?.['cline-pass/x'];
     expect(m?.pipeline).toBe('direct');
     expect(m?.pinnable).toBe(false);
     expect(m?.upstreams).toEqual([]);
@@ -143,6 +159,7 @@ describe('MetaStore 写回', () => {
     store.update((meta) => {
       meta.history.unshift({
         ts: 1234,
+        gateway: 'main',
         model: 'cline-pass/glm-5.2',
         provider: 'alibaba',
         canonical: 'zai/glm-5.2',
@@ -154,23 +171,25 @@ describe('MetaStore 写回', () => {
         trace: [{ upstream: 'alibaba', status: 200, ms: 2400, note: 'stream' }],
         pinMismatch: false,
       });
-      meta.models['cline-pass/glm-5.2'] = {
-        pipeline: 'planner',
-        pinnable: true,
-        pinState: 'enforced',
-        pinProbeAt: null,
-        pinDisabledReason: null,
-        availableProviders: ['alibaba', 'baseten'],
-        upstreams: ['alibaba', 'baseten'],
-        upstreamDetail: {},
-        upstreamStatus: {},
-        tier0: [],
-        canonicalSlug: 'zai/glm-5.2',
-        openrouterSlug: null,
-        lastProvider: 'alibaba',
-        lastMs: 2500,
-        probedAt: 1234,
-        validatedAt: null,
+      meta.models.main = {
+        'cline-pass/glm-5.2': {
+          pipeline: 'planner',
+          pinnable: true,
+          pinState: 'enforced',
+          pinProbeAt: null,
+          pinDisabledReason: null,
+          availableProviders: ['alibaba', 'baseten'],
+          upstreams: ['alibaba', 'baseten'],
+          upstreamDetail: {},
+          upstreamStatus: {},
+          tier0: [],
+          canonicalSlug: 'zai/glm-5.2',
+          openrouterSlug: null,
+          lastProvider: 'alibaba',
+          lastMs: 2500,
+          probedAt: 1234,
+          validatedAt: null,
+        },
       };
     });
     await store.flush();
@@ -179,7 +198,7 @@ describe('MetaStore 写回', () => {
     const second = await loadMetaStore(file);
     expect(second.store.value.history).toHaveLength(1);
     expect(second.store.value.history[0]?.trace[0]?.note).toBe('stream');
-    expect(second.store.value.models['cline-pass/glm-5.2']?.availableProviders).toEqual(['alibaba', 'baseten']);
+    expect(second.store.value.models.main?.['cline-pass/glm-5.2']?.availableProviders).toEqual(['alibaba', 'baseten']);
   });
 
   it('JsonStore 与 MetaStore 共用同一套原子写', async () => {

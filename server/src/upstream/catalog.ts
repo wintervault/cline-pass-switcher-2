@@ -24,7 +24,11 @@ export interface CatalogDeps {
   pool: AccountPool;
   meta: MetaFile;
   markDirty: () => void;
-  knownModels: () => string[];
+}
+
+/** 「拉取官方清单」的落点：模型清单是网关级的，拉取结果要写进调用方指定的网关。 */
+export interface KnownModelsTarget {
+  knownModels: readonly string[];
   addKnownModels: (ids: string[]) => void;
 }
 
@@ -107,7 +111,7 @@ export class CatalogService {
    * 从官方接口、社区注册表与官方文档拉取最新订阅模型清单（只增不删）。
    * 多来源互相兜底：官方推荐接口权威且最快，models.dev 是社区注册表，文档表格最后兜底。
    */
-  async fetchOfficialModels(signal?: AbortSignal): Promise<OfficialFetchResult> {
+  async fetchOfficialModels(signal?: AbortSignal, target?: KnownModelsTarget): Promise<OfficialFetchResult> {
     const found = new Set<string>();
     const sources: string[] = [];
     const add = (value: unknown): void => {
@@ -168,19 +172,21 @@ export class CatalogService {
     }
 
     const valid = [...found].filter((id) => /^cline-pass\/[a-z0-9._-]+$/.test(id));
-    const known = new Set(this.#deps.knownModels());
+    const knownModels = target?.knownModels ?? [];
+    const known = new Set(knownModels);
     const added = valid.filter((id) => !known.has(id));
-    if (added.length) this.#deps.addKnownModels(added);
+    if (added.length && target) target.addKnownModels(added);
 
+    const total = target ? knownModels.length + added.length : knownModels.length;
     this.#deps.meta.officialModelsFetch = {
       ts: Date.now(),
       sources,
       found: valid.length,
       added,
-      total: this.#deps.knownModels().length,
+      total,
     };
     this.#deps.markDirty();
 
-    return { sources, found: valid.length, added, knownModels: this.#deps.knownModels() };
+    return { sources, found: valid.length, added, knownModels: [...knownModels, ...added] };
   }
 }

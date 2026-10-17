@@ -14,6 +14,7 @@
   全局预算封顶不让 agent 卡死；失败渠道冷却沉底；**一切以保住 prompt cache 为先**
 - 🚫 **上游排除** —— 排除的渠道永不被使用（换算成白名单注入）；清单过期时显式告警而非静默失效
 - 👥 **账号池** —— 粘性（默认，保缓存）/ 单账号 / 轮询；账号级错误自动轮转
+- 🌐 **多网关** —— 一个进程多个独立接入面：各自的端口、密钥、账号范围、账号策略与模型路由；控制台只挂在其中一个上
 - 🩺 **账号体检与到期** —— 一键判定「正常号 / 风控号」（看网关默认路由，只影响 planner 模型）；
   到期时间可手填，≤7 天金色提醒、过期红色标记（**不会自动停用**）
 - 📊 **观测** —— 每条请求记录实际渠道、耗时、逐次尝试序列；渠道失败自动学习
@@ -42,7 +43,7 @@ npm start         # http://127.0.0.1:3123/
 
 ```
 Base URL: http://127.0.0.1:3123/v1
-API Key:  （控制台「访问与安全」里设置代理密钥；本地留空 = 不鉴权）
+API Key:  （控制台「网关」里设置代理密钥；本地留空 = 不鉴权）
 Model:    cline-pass/glm-5.2 等
 ```
 
@@ -73,7 +74,7 @@ npm run desktop:build   # 产物在 desktop/target/{release,nsis}/
   「界面关了进程还在」的幽灵
 - **常驻状态栏**（54px，三个分区）：① 服务——状态点 + 状态词 + 启动/停止/重启 +
   打开日志（每个动作都有气泡回执，重启会说「正在重启…」→「服务已重启」）；
-  ② 接入——接入地址（可复制）与 **API Key** 入口（点进「访问与安全」设置）；
+  ② 接入——接入地址（可复制）与 **API Key** 入口（点进「网关」设置）；
   ③ 应用——版本 / 主题 / 刷新全部数据。服务启动失败时页面顶部会给出原因与重试
 - 控制台与壳之间走**本机回环 HTTP 控制通道**（默认 `127.0.0.1:3122`），
   只放行控制台自身来源；任意网页都无法越权启停你的服务
@@ -120,38 +121,48 @@ location / {
 }
 ```
 
-> 若反代域名与 Origin 不一致，把域名加进控制台「访问与安全」的 CORS 白名单。
+> 若反代域名与 Origin 不一致，把域名加进控制台「网关」里该网关的 CORS 白名单。
 
 ### 环境变量
 
 | 变量 | 说明 |
 |---|---|
 | `CLINE_PASS_KEY` | 上游 Cline Pass API Key（无 config 时自动创建账号） |
-| `PROXY_KEY` | 下游代理密钥；**绑定非回环地址时必填，否则拒绝启动** |
-| `PUBLIC_BASE_URL` | 门户展示的公网代理地址，如 `https://pass.example.com` |
-| `PORT` / `BIND_HOST` / `DATA_DIR` | 端口 / 绑定地址（容器内 0.0.0.0）/ 配置目录 |
+| `PROXY_KEY` | 覆盖**控制台网关**的下游代理密钥；该网关绑定非回环地址时必填，否则拒绝启动 |
+| `PUBLIC_BASE_URL` | 覆盖控制台网关的公网代理地址，如 `https://pass.example.com` |
+| `PORT` / `BIND_HOST` / `DATA_DIR` | 控制台网关的端口 / 绑定地址（容器内 0.0.0.0）/ 配置目录 |
 | `LOG_LEVEL` | 日志级别（默认 info；`debug` 更啰嗦） |
-| `ALLOW_INSECURE_BIND` | `1` 时允许非回环绑定且无密钥（仅限隔离内网） |
+| `ALLOW_INSECURE_BIND` | `1` 时允许任何网关非回环绑定且无密钥（仅限隔离内网） |
 
 ---
 
-## 配置参考（config.json，版本 2）
+## 配置参考（config.json，版本 3）
+
+> 3.0 把「接入设置」下沉到网关：端口、密钥、CORS、账号策略、模型清单与路由配置都是**网关级**的。
+> 旧版（v2）配置会在启动时自动迁移：原有设置整体搬进「主网关」，账号池保持全局。
 
 | 字段 | 说明 |
 |---|---|
-| `version` | 配置格式版本，当前 2；低版本自动迁移，损坏自动备份重建 |
-| `accounts` | 账号池：`[{ name, key, enabled, expiresAt? }]`。`name` 唯一且是账号的标识；`expiresAt` 为本地日期 `YYYY-MM-DD`（只提醒、不停用） |
-| `accountMode` | `sticky`（默认，保 prompt cache）/ `single` / `roundrobin` |
-| `activeAccount` | single 模式使用的账号下标 |
+| `version` | 配置格式版本，当前 3；低版本自动迁移，损坏自动备份重建 |
+| `upstreamBase` | 上游 Cline 网关地址（所有网关共用） |
+| `accounts` | **全局**账号池：`[{ name, key, enabled, expiresAt? }]`。`name` 唯一且是账号标识；`expiresAt` 为本地日期 `YYYY-MM-DD`（只提醒、不停用） |
 | `classifyModel` | 「体检」判定模型，默认 `cline-pass/deepseek-v4.1-flash`（要用 planner 管线的模型才判得出风控） |
-| `proxyKey` | 下游代理密钥；空 = 不鉴权（仅限回环绑定） |
-| `publicBaseUrl` | 公网代理地址（展示用） |
-| `corsOrigins` | CORS 白名单（默认空 = 不发跨域头） |
-| `exposeCatalog` | `true` 时 `/v1/models` 合并完整目录模型 |
-| `knownModels` | 订阅模型清单（可「拉取官方最新」合并，成功调用自动收录） |
-| `perModel` | 每模型钉住配置：`{ upstreams, exclude, pinMode, sort }` |
-| `failover` | `{ attemptTimeoutMs:60000, idleTimeoutMs:60000, budgetMs:90000, retriesPerChannel:1, cooldownMs:300000, retryBackoffMs:500 }` |
+| `gateways` | 网关列表，最多 8 个（字段见下） |
+| `console.gatewayId` | 控制台挂在哪个网关上（该网关额外提供 `/api` 与页面） |
 | `historyLimit` | 请求历史上限（默认 500） |
+
+网关字段：
+
+| 字段 | 说明 |
+|---|---|
+| `id` / `name` | 标识（小写字母数字连字符，创建后不可改）/ 显示名 |
+| `port` / `bindHost` | 监听端口与地址；**每个网关一个 listener**，绑定失败只影响该网关 |
+| `proxyKey` | 下游代理密钥；空 = 不鉴权（该网关绑定非回环地址时必须设置） |
+| `publicBaseUrl` / `corsOrigins` / `exposeCatalog` | 公网地址展示 / CORS 白名单 / `/v1/models` 是否合并完整目录 |
+| `accounts` | 账号子集（全局账号的名字）；**空 = 全部账号** |
+| `accountMode` / `activeAccount` | 粘性（默认）/ 单账号（用账号名指定）/ 轮转 |
+| `knownModels` / `perModel` | 该网关的模型清单与每模型钉住配置 `{ upstreams, exclude, pinMode, sort }` |
+| `failover` | `{ attemptTimeoutMs:60000, idleTimeoutMs:60000, budgetMs:90000, retriesPerChannel:1, cooldownMs:300000, retryBackoffMs:500 }` |
 
 数据文件损坏不会丢：`config.json` / `metadata.json` 原子写 + 损坏自动备份为 `*.broken-<时间>`。
 
@@ -254,7 +265,7 @@ prompt cache 是一等约束：agent 多轮对话每轮带完整上下文，切�
 |---|---|
 | 订阅模型 | 主从布局：左侧模型列表（渠道数/最近路由一屏扫完），右侧勾选「使用」的渠道按序尝试、排除与路由策略、探测渠道 / 试发一次 / 校验 N 个渠道 |
 | 账号池 | 就地测试 / 体检 / 启停 / 切换策略，弹窗编辑名称、密钥与到期时间（删除有确认）、密钥掩码显示、粘性/单账号/轮询、用量统计；行内徽标显示「正常 / 风控 / 未判定」与到期状态，面板头汇总未判定与未设置到期的数量 |
-| 访问与安全 | API Key（下游客户端用，掩码回显）、公网地址、CORS 白名单、目录暴露开关 |
+| 网关 | 每个网关一个接入面：端口、API Key（掩码回显）、账号范围、账号策略、公网地址、CORS 白名单、目录暴露、失败转移参数；运行状态与绑定失败原因可见 |
 | 主题 | 亮/暗色跟随系统 + 手动切换 + 持久化（右上角切换按钮） |
 | 测试台 | 任选模型+渠道发小请求，看网关是否采纳 + 尝试序列 |
 | 请求历史 | 自动记录账号、实际渠道、耗时、尝试序列（默认 500 条，含流式）；成败摘要 + 失败行标红 + 按成败筛选 |
@@ -274,7 +285,7 @@ prompt cache 是一等约束：agent 多轮对话每轮带完整上下文，切�
 ## 安全提醒
 
 - `config.json` / `data/` 含明文密钥，已在 `.gitignore` / `.dockerignore` 排除，**不要提交或分享**；
-- 对外部署**必须**设置 `proxyKey`（代码强制：非回环绑定 + 空密钥拒绝启动）；
+- 对外部署**必须**给那个网关设置 `proxyKey`（代码强制：非回环绑定 + 空密钥拒绝启动）；
 - 故障转移的重试会放大请求量，注意额度消耗（预算封顶可限制最坏情况）。
 
 ### 密钥管什么、不管什么
@@ -296,7 +307,7 @@ prompt cache 是一等约束：agent 多轮对话每轮带完整上下文，切�
 
 **忘了密钥怎么办**（两种情况都不会锁死）：
 1. 到这台机器上直接打开 <http://127.0.0.1:3123> —— 免密钥进入，
-   在「访问与安全」里看状态或重设；
+   在「网关」里看状态或重设；
 2. 编辑 `data/config.json` 的 `proxyKey` 后重启服务，或用 `PROXY_KEY` 环境变量注入。
 
 ## License

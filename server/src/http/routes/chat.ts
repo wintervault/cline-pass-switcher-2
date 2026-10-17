@@ -1,9 +1,11 @@
 import { Readable } from 'node:stream';
 
 import type { AppContext } from '../../appContext.ts';
+import { gatewayById } from '../../config/derive.ts';
 import { type ChainStream, sameSlug } from '../../proxy/chain.ts';
 import { RoutingTap } from '../../proxy/stream.ts';
 import { emptyRouting } from '../../upstream/routing.ts';
+import { gatewayModels } from '../../upstream/types.ts';
 import { canRespond, sendError } from '../respond.ts';
 import type { Ctx, Handler } from '../router.ts';
 import { readJsonBody, recordHistory } from './api.ts';
@@ -25,12 +27,13 @@ function headerSafe(s: string | undefined): string {
 }
 
 /** `/v1/models`：默认只暴露订阅模型（避免目录模型淹没客户端选择器），exposeCatalog 时合并完整目录。 */
-export function modelsHandler(ctx: AppContext): Handler {
+export function modelsHandler(ctx: AppContext, gatewayId: string): Handler {
   return async (c: Ctx) => {
-    const config = ctx.configStore.value;
-    const ids = config.exposeCatalog
-      ? [...new Set([...config.knownModels, ...(await ctx.catalog.catalog(c.abortSignal))])]
-      : [...new Set([...config.knownModels, ...Object.keys(config.perModel)])];
+    const gateway = gatewayById(ctx.configStore.value, gatewayId);
+    if (!gateway) return sendError(c.res, 404, 'gateway not found', 'not_found');
+    const ids = gateway.exposeCatalog
+      ? [...new Set([...gateway.knownModels, ...(await ctx.catalog.catalog(c.abortSignal))])]
+      : [...new Set([...gateway.knownModels, ...Object.keys(gateway.perModel)])];
     sendList(c, ids);
   };
 }
@@ -45,7 +48,7 @@ function sendList(c: Ctx, ids: string[]): void {
 }
 
 /** `/chat/completions`：OpenAI 兼容代理主入口，全部故障转移逻辑在 ChatChain。 */
-export function chatHandler(ctx: AppContext): Handler {
+export function chatHandler(ctx: AppContext, gatewayId: string): Handler {
   return async (c: Ctx) => {
     const body = await readJsonBody(c.req);
     if (!body.ok) {
@@ -59,39 +62,42 @@ export function chatHandler(ctx: AppContext): Handler {
     const modelId = typeof payload.model === 'string' ? payload.model : '';
     if (!modelId) return sendError(c.res, 400, 'model is required');
 
-    const config = ctx.configStore.value;
-    const meta = ctx.metaStore.value.models[modelId];
+    const gateway = gatewayById(ctx.configStore.value, gatewayId);
+    const runtime = ctx.gateways.get(gatewayId);
+    if (!gateway || !runtime) return sendError(c.res, 503, 'gateway not available', 'gateway_error');
+    const meta = gatewayModels(ctx.metaStore.value, gatewayId)[modelId];
     const isStream = payload.stream === true;
 
-    const result = await ctx.chain.run({
+    const result = await runtime.chain.run({
       modelId,
       body: payload as Record<string, unknown>,
-      cfg: config.perModel[modelId],
+      cfg: gateway.perModel[modelId],
       meta,
       stream: isStream,
       clientSignal: c.abortSignal,
     });
 
-    const targets = (config.perModel[modelId]?.upstreams ?? []).filter(Boolean);
+    const targets = (gateway.perModel[modelId]?.upstreams ?? []).filter(Boolean);
 
     // 客户端在发出请求前就断开（取消）：不是上游失败，不记历史、不写响应
     if (result.outcome === 'cancelled') return;
 
-    // 客户端实际使用成功的新订阅模型自动收录进清单（只增不删）
-    if (result.outcome === 'success' && /^cline-pass\//.test(modelId) && !config.knownModels.includes(modelId)) {
+    // 客户端实际使用成功的新订阅模型自动收录进**该网关**的清单（只增不删）
+    if (result.outcome === 'success' && /^cline-pass\//.test(modelId) && !gateway.knownModels.includes(modelId)) {
       ctx.configStore.update((cfg) => {
-        cfg.knownModels.push(modelId);
+        const target = cfg.gateways.find((g) => g.id === gatewayId);
+        if (target && !target.knownModels.includes(modelId)) target.knownModels.push(modelId);
       });
     }
 
     if (isStream && result.outcome === 'stream') {
-      return respondStream(ctx, c, modelId, result, targets);
+      return respondStream(ctx, c, gatewayId, modelId, result, targets);
     }
     if (result.outcome === 'stream') {
       return sendError(c.res, 502, 'unexpected stream outcome');
     }
 
-    recordHistory(ctx, modelId, result, { stream: false });
+    recordHistory(ctx, gatewayId, modelId, result, { stream: false });
     if (!canRespond(c.res)) return;
 
     if (result.degraded) c.res.setHeader('X-Cline-Degraded', '1');
@@ -114,7 +120,14 @@ export function chatHandler(ctx: AppContext): Handler {
  * 所以流式响应没有 X-Cline-Actual-Upstream——它只会记录在请求历史里（流结束时从尾部
  * 元数据解析出来）。不用 HTTP Trailer：浏览器 fetch 读不到。
  */
-function respondStream(ctx: AppContext, c: Ctx, modelId: string, result: ChainStream, targets: string[]): void {
+function respondStream(
+  ctx: AppContext,
+  c: Ctx,
+  gatewayId: string,
+  modelId: string,
+  result: ChainStream,
+  targets: string[],
+): void {
   const upstream = result.response;
   const ctype = upstream.headers.get('content-type') ?? 'text/event-stream';
 
@@ -143,7 +156,13 @@ function respondStream(ctx: AppContext, c: Ctx, modelId: string, result: ChainSt
     // 流式钉住审计：只能标记不能撤回（内容已流出）——写入历史供 UI 红标（D3）
     const { enforced, strict, target } = result.pinAudit;
     const pinMismatch = enforced && strict && target !== null && provider !== null && !sameSlug(provider, target);
-    recordHistory(ctx, modelId, { ...result, routing, outcome: result.outcome }, { stream: true, pinMismatch });
+    recordHistory(
+      ctx,
+      gatewayId,
+      modelId,
+      { ...result, routing, outcome: result.outcome },
+      { stream: true, pinMismatch },
+    );
   });
 
   if (result.head.length) c.res.write(result.head);

@@ -1,13 +1,13 @@
 import {
   AppstoreOutlined,
   ExperimentOutlined,
+  GatewayOutlined,
   HistoryOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   NodeIndexOutlined,
   PushpinFilled,
   PushpinOutlined,
-  SafetyOutlined,
   TeamOutlined,
 } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
@@ -20,11 +20,12 @@ import { useMeta, useRefresh } from './api/hooks.ts';
 import './app.css';
 import Accounts from './features/Accounts.tsx';
 import Catalog from './features/Catalog.tsx';
+import Gateways from './features/Gateways.tsx';
 import History from './features/History.tsx';
 import Models from './features/Models.tsx';
 import Playground from './features/Playground.tsx';
-import Security from './features/Security.tsx';
 import { useFeedback } from './feedback.ts';
+import { GatewayScopeProvider } from './gatewayScope.tsx';
 import { useHostControl } from './hostBridge.ts';
 import { PAGE_GUTTER, PAGE_WIDTH } from './layout.ts';
 import { ServiceBanner } from './serviceBanner.tsx';
@@ -40,10 +41,10 @@ const SIDEBAR_KEY = 'cps_sidebar';
 const PAGES: { key: string; label: string; icon: ComponentType; element: ComponentType }[] = [
   { key: 'models', label: '订阅模型', icon: NodeIndexOutlined, element: Models },
   { key: 'accounts', label: '账号池', icon: TeamOutlined, element: Accounts },
+  { key: 'gateways', label: '网关', icon: GatewayOutlined, element: Gateways },
   { key: 'playground', label: '测试台', icon: ExperimentOutlined, element: Playground },
   { key: 'history', label: '请求历史', icon: HistoryOutlined, element: History },
   { key: 'catalog', label: '完整目录', icon: AppstoreOutlined, element: Catalog },
-  { key: 'security', label: '访问与安全', icon: SafetyOutlined, element: Security },
 ];
 
 /** 左侧导航：可折叠（64px 图标 ⇄ 200px 图标+文字）；悬停可钉住页面（打开时默认落到此页）。 */
@@ -260,6 +261,7 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
   const proxyBase = meta.data?.proxyBase;
 
   return (
+    // 网关选择是所有页面共享的状态（六个页面同时挂载，各自持有会不同步）
     <>
       {/* 桌面应用形态：自绘标题栏 + 固定侧栏 + 内容区内滚 + 常驻状态栏（窗口高度恒定，不整页滚） */}
       <TitleBar />
@@ -281,8 +283,9 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
           />
         </Layout.Sider>
 
-        <Layout style={{ background: 'transparent', minWidth: 0 }}>
-          {/*
+        <GatewayScopeProvider>
+          <Layout style={{ background: 'transparent', minWidth: 0 }}>
+            {/*
             内容列由外壳统一给定（唯一来源）：所有页面共用同一个宽度与左边距。
             两处关键：
             1. `scrollbarGutter: 'stable'` —— 常驻预留滚动条槽位。不预留的话，
@@ -291,87 +294,88 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
             2. 页面**不许**再自己写 maxWidth —— 一写就与别的页面对不齐，
                标题的横坐标会在切页时跳。
           */}
-          <Layout.Content
-            style={{
-              overflow: 'auto',
-              scrollbarGutter: 'stable',
-              padding: `20px ${PAGE_GUTTER}px 24px`,
-            }}
-          >
-            <div
+            <Layout.Content
               style={{
-                width: '100%',
-                maxWidth: PAGE_WIDTH,
-                margin: '0 auto',
-                /* 必须给**确定**高度（不是 minHeight）：需要填满内容列的页面
-                   （订阅模型）以它为高度来源；内容更高的页面照常溢出、由内容区滚动。 */
-                height: '100%',
-                display: 'flex',
-                flexDirection: 'column',
+                overflow: 'auto',
+                scrollbarGutter: 'stable',
+                padding: `20px ${PAGE_GUTTER}px 24px`,
               }}
             >
-              {needKey ? (
-                <AccessGate
-                  value={keyDraft}
-                  onChange={setKeyDraft}
-                  onSubmit={() => void tryKey()}
-                  checking={keyChecking}
-                  error={keyError}
-                />
-              ) : (
-                <>
-                  <ServiceBanner control={host} />
-                  {meta.data && !meta.data.configured && (
-                    <Alert
-                      type="error"
-                      showIcon
-                      style={{ marginBottom: 16 }}
-                      message="尚未配置上游 API Key"
-                      description="在「账号池」里添加你的 Cline Pass 账号（sk_ 开头的 key）并保存；也可通过 CLINE_PASS_KEY 环境变量提供。"
-                      action={
-                        <Button size="small" danger onClick={() => setNav('accounts')}>
-                          去配置
-                        </Button>
-                      }
-                    />
-                  )}
-                  {PAGES.map((p) => (
-                    /* 页面包装层可拉伸、不可压缩：需要「填满内容列」的页面（订阅模型）
+              <div
+                style={{
+                  width: '100%',
+                  maxWidth: PAGE_WIDTH,
+                  margin: '0 auto',
+                  /* 必须给**确定**高度（不是 minHeight）：需要填满内容列的页面
+                   （订阅模型）以它为高度来源；内容更高的页面照常溢出、由内容区滚动。 */
+                  height: '100%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                }}
+              >
+                {needKey ? (
+                  <AccessGate
+                    value={keyDraft}
+                    onChange={setKeyDraft}
+                    onSubmit={() => void tryKey()}
+                    checking={keyChecking}
+                    error={keyError}
+                  />
+                ) : (
+                  <>
+                    <ServiceBanner control={host} />
+                    {meta.data && !meta.data.configured && (
+                      <Alert
+                        type="error"
+                        showIcon
+                        style={{ marginBottom: 16 }}
+                        message="尚未配置上游 API Key"
+                        description="在「账号池」里添加你的 Cline Pass 账号（sk_ 开头的 key）并保存；也可通过 CLINE_PASS_KEY 环境变量提供。"
+                        action={
+                          <Button size="small" danger onClick={() => setNav('accounts')}>
+                            去配置
+                          </Button>
+                        }
+                      />
+                    )}
+                    {PAGES.map((p) => (
+                      /* 页面包装层可拉伸、不可压缩：需要「填满内容列」的页面（订阅模型）
                        把这一层当高度来源；内容更高的页面保持自然高度、由内容区滚动。
                        shrink 必须是 0——缩了会把高页面的内容压进视口。 */
-                    <div
-                      key={p.key}
-                      style={{ display: nav === p.key ? 'block' : 'none', flex: '1 0 auto', minHeight: 0 }}
-                    >
-                      <p.element />
-                    </div>
-                  ))}
-                </>
-              )}
-            </div>
-          </Layout.Content>
+                      <div
+                        key={p.key}
+                        style={{ display: nav === p.key ? 'block' : 'none', flex: '1 0 auto', minHeight: 0 }}
+                      >
+                        <p.element />
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            </Layout.Content>
 
-          <StatusBar
-            control={host}
-            proxyBase={proxyBase}
-            authRequired={meta.data?.authRequired}
-            version={meta.data?.version}
-            onOpenSecurity={() => setNav('security')}
-            mode={mode}
-            onToggleTheme={onToggleTheme}
-            onRefresh={() => {
-              refresh();
-              fb.ok('已刷新全部数据');
-            }}
-            loggedIn={Boolean(authKey)}
-            onLogout={() => {
-              setAuthKey('');
-              setKey('');
-              void qc.invalidateQueries();
-              fb.info('已清除本机保存的访问密钥');
-            }}
-          />
-        </Layout>
+            <StatusBar
+              control={host}
+              proxyBase={proxyBase}
+              authRequired={meta.data?.authRequired}
+              version={meta.data?.version}
+              onOpenGateways={() => setNav('gateways')}
+              mode={mode}
+              onToggleTheme={onToggleTheme}
+              onRefresh={() => {
+                refresh();
+                fb.ok('已刷新全部数据');
+              }}
+              loggedIn={Boolean(authKey)}
+              onLogout={() => {
+                setAuthKey('');
+                setKey('');
+                void qc.invalidateQueries();
+                fb.info('已清除本机保存的访问密钥');
+              }}
+            />
+          </Layout>
+        </GatewayScopeProvider>
       </Layout>
     </>
   );

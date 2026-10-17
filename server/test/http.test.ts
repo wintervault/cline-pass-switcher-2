@@ -8,7 +8,10 @@ import { deferred, delay, listen, request } from './helpers/http.ts';
 function makeServer(routes: (router: Router) => void) {
   const router = new Router();
   routes(router);
-  return createHttpServer({ handler: handlerFor(router) });
+  return createHttpServer({
+    gatewayId: 'main',
+    handler: handlerFor(router),
+  });
 }
 
 function handlerFor(router: Router) {
@@ -133,7 +136,11 @@ describe('HTTP 服务', () => {
       }
       await next();
     };
-    const server = createHttpServer({ handler: handlerFor(router), middleware: [auth] });
+    const server = createHttpServer({
+      gatewayId: 'main',
+      handler: handlerFor(router),
+      middleware: [auth],
+    });
     const { port, close } = await listen(server);
 
     expect((await request(port, '/secret')).status).toBe(401);
@@ -165,7 +172,10 @@ describe('shutdownServer 优雅退出', () => {
       await gate.promise;
       sendJSON(ctx.res, 200, { ok: true });
     });
-    const server = createHttpServer({ handler: handlerFor(router) });
+    const server = createHttpServer({
+      gatewayId: 'main',
+      handler: handlerFor(router),
+    });
     const { port } = await listen(server);
 
     const pending = request(port, '/slow');
@@ -199,7 +209,10 @@ describe('shutdownServer 优雅退出', () => {
     router.get('/hang', async () => {
       await new Promise(() => {});
     });
-    const server = createHttpServer({ handler: handlerFor(router) });
+    const server = createHttpServer({
+      gatewayId: 'main',
+      handler: handlerFor(router),
+    });
     const { port } = await listen(server);
 
     const pending = request(port, '/hang').catch(() => null); // 会被强制断开

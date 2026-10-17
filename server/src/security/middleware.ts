@@ -30,14 +30,14 @@ export interface AuthOptions {
  *
  * 比较用恒定时间函数：直接 `===` 会在首个不同字符短路，可被逐字节计时猜出。
  */
-export function authMiddleware(getProxyKey: () => string, options: AuthOptions): Middleware {
+export function authMiddleware(getProxyKey: (ctx: Ctx) => string, options: AuthOptions): Middleware {
   const isLocal = options.isLocal ?? isTrustedLocal;
   return async (ctx, next) => {
     if (!options.needsAuth(ctx.path)) return next();
     // 本机访问控制台 = 最高权限，不看密钥
     if (options.consolePath(ctx.path) && isLocal(ctx.req)) return next();
 
-    const key = getProxyKey();
+    const key = getProxyKey(ctx);
     if (!key) return next();
 
     const bearer = String(ctx.req.headers['authorization'] ?? '')
@@ -59,12 +59,12 @@ export function authMiddleware(getProxyKey: () => string, options: AuthOptions):
  * - 带 Origin 的状态变更请求必须是同源（Origin.host === Host）或在白名单里；
  * - 不带 Origin 的是非浏览器客户端（curl / Cline 扩展），放行。
  */
-export function originCheckMiddleware(getAllowed: () => string[]): Middleware {
+export function originCheckMiddleware(getAllowed: (ctx: Ctx) => string[]): Middleware {
   return async (ctx, next) => {
     const origin = ctx.req.headers.origin;
     if (!origin) return next();
 
-    const allowed = getAllowed();
+    const allowed = getAllowed(ctx);
     if (allowed.includes(origin)) return next();
 
     // 同源请求：Origin 的 host:port 与 Host 头一致
@@ -89,10 +89,10 @@ export function originCheckMiddleware(getAllowed: () => string[]): Middleware {
  * CORS 响应头：仅在白名单命中时回显 Origin。
  * 命中白名单意味着站点是我们明确放行的，可以回显以支持浏览器调用。
  */
-export function corsResponseHeaders(getAllowed: () => string[]): Middleware {
+export function corsResponseHeaders(getAllowed: (ctx: Ctx) => string[]): Middleware {
   return async (ctx, next) => {
     const origin = ctx.req.headers.origin;
-    const allowed = getAllowed();
+    const allowed = getAllowed(ctx);
     if (origin && allowed.includes(origin)) {
       ctx.res.setHeader('Access-Control-Allow-Origin', origin);
       ctx.res.setHeader('Vary', 'Origin');

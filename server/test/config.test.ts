@@ -28,9 +28,9 @@ describe('zod 4 默认值语义（回归护栏）', () => {
   // zod 4 的 .default({}) 不 parse 默认值，会原样返回裸 {}；必须用 .catch(fn).prefault({})
   it('failover 缺省时被完整填充，而不是留下裸对象', () => {
     const cfg = defaultConfig();
-    expect(cfg.failover).toEqual(FailoverSchema.parse({}));
-    expect(cfg.failover.attemptTimeoutMs).toBe(60000);
-    expect(cfg.failover.budgetMs).toBe(90000);
+    expect(cfg.gateways[0]?.failover).toEqual(FailoverSchema.parse({}));
+    expect(cfg.gateways[0]?.failover.attemptTimeoutMs).toBe(60000);
+    expect(cfg.gateways[0]?.failover.budgetMs).toBe(90000);
   });
 
   it('failover 为垃圾值时整体回退默认，不抛异常', () => {
@@ -56,7 +56,10 @@ describe('migrateConfig', () => {
     const r = migrateConfig({
       perModel: { 'cline-pass/x': { upstream: 'alibaba', maxRetries: 3, pinMode: 'preferred' } },
     });
-    const cfg = (r.raw.perModel as Record<string, Record<string, unknown>>)['cline-pass/x'];
+    // 3.0 起 perModel 是网关级的：v2 的顶层 perModel 会被搬进「主网关」
+    const gateway = (r.raw.gateways as Array<Record<string, unknown>>)[0];
+    if (!gateway) throw new Error('缺少主网关');
+    const cfg = (gateway.perModel as Record<string, Record<string, unknown>>)['cline-pass/x'];
     expect(cfg?.upstreams).toEqual(['alibaba']);
     expect(cfg?.upstream).toBeUndefined();
     expect(cfg?.maxRetries).toBeUndefined();
@@ -65,7 +68,8 @@ describe('migrateConfig', () => {
 
   it('roundrobin → sticky（轮询式切换会让 prompt cache 全失效）', () => {
     const r = migrateConfig({ accountMode: 'roundrobin' });
-    expect(r.raw.accountMode).toBe('sticky');
+    const gateway = (r.raw.gateways as Array<Record<string, unknown>>)[0];
+    expect(gateway?.accountMode).toBe('sticky');
     expect(r.applied.join()).toContain('prompt cache');
   });
 
@@ -73,14 +77,68 @@ describe('migrateConfig', () => {
     expect(migrateConfig({}).raw.version).toBe(CONFIG_VERSION);
   });
 
+  it('v2 → v3：旧顶层接入设置整体迁入 main 网关，账号池保持全局', () => {
+    const r = migrateConfig({
+      version: 2,
+      port: 4000,
+      bindHost: '0.0.0.0',
+      proxyKey: 'sk_down',
+      corsOrigins: ['https://a.example.com'],
+      exposeCatalog: true,
+      accountMode: 'single',
+      activeAccount: 1,
+      accounts: [
+        { name: 'A', key: 'sk_a' },
+        { name: 'B', key: 'sk_b' },
+      ],
+      knownModels: ['cline-pass/x'],
+      perModel: { 'cline-pass/x': { upstreams: ['deepseek'] } },
+      failover: { budgetMs: 120000 },
+    });
+    expect(r.raw.version).toBe(3);
+    const gateway = (r.raw.gateways as Array<Record<string, unknown>>)[0];
+    expect(gateway?.id).toBe('main');
+    expect(gateway?.port).toBe(4000);
+    expect(gateway?.bindHost).toBe('0.0.0.0');
+    expect(gateway?.proxyKey).toBe('sk_down');
+    expect(gateway?.exposeCatalog).toBe(true);
+    expect(gateway?.accountMode).toBe('single');
+    // 旧的 activeAccount 是下标，迁移后要变成账号名
+    expect(gateway?.activeAccount).toBe('B');
+    // 空数组 = 全部账号（v2 的账号池本来就是全量的）
+    expect(gateway?.accounts).toEqual([]);
+    expect(gateway?.knownModels).toEqual(['cline-pass/x']);
+    expect(r.raw.console).toEqual({ gatewayId: 'main' });
+    for (const key of [
+      'port',
+      'bindHost',
+      'proxyKey',
+      'corsOrigins',
+      'exposeCatalog',
+      'accountMode',
+      'activeAccount',
+      'knownModels',
+      'perModel',
+      'failover',
+    ]) {
+      expect(r.raw[key]).toBeUndefined();
+    }
+  });
+
+  it('v3 配置原样保留（不重复迁移）', () => {
+    const r = migrateConfig({ version: 3, gateways: [{ id: 'main', port: 3000 }], console: { gatewayId: 'main' } });
+    expect(r.applied).toEqual([]);
+    expect((r.raw.gateways as Array<Record<string, unknown>>)[0]?.port).toBe(3000);
+  });
+
   it('版本高于程序支持时抛 ConfigTooNewError', () => {
     expect(() => migrateConfig({ version: CONFIG_VERSION + 1 })).toThrow(ConfigTooNewError);
   });
 
   it('已是当前版本时不重复迁移', () => {
-    const r = migrateConfig({ version: CONFIG_VERSION, accountMode: 'roundrobin' });
+    const r = migrateConfig({ version: CONFIG_VERSION, gateways: [{ id: 'main', port: 3123 }] });
     expect(r.applied).toEqual([]);
-    expect(r.raw.accountMode).toBe('roundrobin');
+    expect((r.raw.gateways as Array<Record<string, unknown>>)[0]?.port).toBe(3123);
   });
 });
 
@@ -89,35 +147,38 @@ describe('loadConfig', () => {
     const r = await loadConfig(file);
     expect(r.fresh).toBe(true);
     expect(r.config.accounts).toEqual([]);
-    expect(r.config.port).toBe(3123);
+    expect(r.config.gateways[0]?.port).toBe(3123);
+    expect(r.config.console.gatewayId).toBe('main');
     expect(await listBackups()).toEqual([]);
   });
 
   it('空对象 {} → 默认配置，不崩溃（旧版此处会 TypeError）', async () => {
     await write('{}');
     const r = await loadConfig(file);
-    expect(r.config.failover.attemptTimeoutMs).toBe(60000);
-    expect(r.config.knownModels.length).toBeGreaterThan(0);
+    expect(r.config.gateways[0]?.failover.attemptTimeoutMs).toBe(60000);
+    expect(r.config.gateways[0]?.knownModels.length).toBeGreaterThan(0);
     expect(await listBackups()).toEqual([]);
   });
 
   it('knownModels 缺失 → 恢复默认清单', async () => {
     await write('{"port":4000}');
     const r = await loadConfig(file);
-    expect(r.config.knownModels).toContain('cline-pass/glm-5.2');
+    expect(r.config.gateways[0]?.knownModels).toContain('cline-pass/glm-5.2');
+    // v2 的顶层 port 也会迁进主网关
+    expect(r.config.gateways[0]?.port).toBe(4000);
   });
 
   it('knownModels 为 null（损坏）→ 恢复默认清单，不崩溃（旧版此处会崩溃）', async () => {
     await write('{"knownModels":null}');
     const r = await loadConfig(file);
-    expect(Array.isArray(r.config.knownModels)).toBe(true);
-    expect(r.config.knownModels.length).toBeGreaterThan(0);
+    expect(Array.isArray(r.config.gateways[0]?.knownModels)).toBe(true);
+    expect(r.config.gateways[0]?.knownModels.length).toBeGreaterThan(0);
   });
 
   it('knownModels 为显式空数组 → 尊重用户清空，不复活', async () => {
     await write('{"knownModels":[]}');
     const r = await loadConfig(file);
-    expect(r.config.knownModels).toEqual([]);
+    expect(r.config.gateways[0]?.knownModels).toEqual([]);
   });
 
   it('文件内容为 "null" 被当作损坏而非全新安装', async () => {
@@ -145,7 +206,7 @@ describe('loadConfig', () => {
     await write('[1,2,3]');
     const r = await loadConfig(file);
     expect(r.backupPath).not.toBeNull();
-    expect(r.config.port).toBe(3123);
+    expect(r.config.gateways[0]?.port).toBe(3123);
   });
 
   it('无效账号被丢弃，有效账号保留', async () => {
@@ -164,11 +225,14 @@ describe('loadConfig', () => {
     expect(r.notes.join()).toContain('丢弃了 2 个无效账号');
   });
 
-  it('activeAccount 越界被钳制', async () => {
-    await write(JSON.stringify({ accounts: [{ name: 'A', key: 'sk_a' }], activeAccount: 9 }));
+  it('v2 的 activeAccount 下标在迁移时翻译成账号名；指向不存在的账号则清空', async () => {
+    await write(JSON.stringify({ accounts: [{ name: 'A', key: 'sk_a' }], activeAccount: 0 }));
     const r = await loadConfig(file);
-    expect(r.config.activeAccount).toBe(0);
-    expect(r.notes.join()).toContain('越界');
+    expect(r.config.gateways[0]?.activeAccount).toBe('A');
+
+    await write(JSON.stringify({ accounts: [{ name: 'A', key: 'sk_a' }], activeAccount: 9 }));
+    const r2 = await loadConfig(file);
+    expect(r2.config.gateways[0]?.activeAccount).toBe('');
   });
 
   it('perModel 中 exclude 优先于 upstreams', async () => {
@@ -178,14 +242,13 @@ describe('loadConfig', () => {
       }),
     );
     const r = await loadConfig(file);
-    expect(r.config.perModel['cline-pass/x']?.upstreams).toEqual(['a']);
-    expect(r.config.perModel['cline-pass/x']?.exclude).toEqual(['b']);
+    expect(r.config.gateways[0]?.perModel['cline-pass/x']?.upstreams).toEqual(['a']);
+    expect(r.config.gateways[0]?.perModel['cline-pass/x']?.exclude).toEqual(['b']);
   });
 
   it('未知顶层字段被记录但不影响加载', async () => {
-    await write(JSON.stringify({ port: 4000, maxRetries: 3, 拼写错误的字段: true }));
+    await write(JSON.stringify({ version: 3, maxRetries: 3, 拼写错误的字段: true }));
     const r = await loadConfig(file);
-    expect(r.config.port).toBe(4000);
     expect(r.notes.join()).toContain('未知配置字段');
   });
 
@@ -208,16 +271,18 @@ describe('loadConfig', () => {
     const r = await loadConfig(file);
     expect(r.config.version).toBe(CONFIG_VERSION);
     expect(r.config.accounts).toEqual([{ name: '默认账号', key: 'sk_v1_key', enabled: true }]);
-    expect(r.config.accountMode).toBe('sticky');
-    expect(r.config.proxyKey).toBe('downstream-key');
-    expect(r.config.publicBaseUrl).toBe('https://pass.example.com');
-    expect(r.config.perModel['cline-pass/glm-5.2']).toEqual({
+    const gateway = r.config.gateways[0];
+    expect(gateway?.accountMode).toBe('sticky');
+    expect(gateway?.proxyKey).toBe('downstream-key');
+    expect(gateway?.publicBaseUrl).toBe('https://pass.example.com');
+    expect(gateway?.accounts).toEqual([]); // 空 = 全部账号
+    expect(gateway?.perModel['cline-pass/glm-5.2']).toEqual({
       upstreams: ['alibaba'],
       exclude: [],
       pinMode: 'strict',
       sort: 'cost',
     });
-    expect(r.config.failover.budgetMs).toBe(90000);
+    expect(gateway?.failover.budgetMs).toBe(90000);
     expect(r.backupPath).toBeNull();
   });
 });

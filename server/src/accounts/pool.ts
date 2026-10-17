@@ -1,9 +1,23 @@
-import type { Account, AccountMode, Config } from '../config/schema.ts';
+import type { Account, AccountMode } from '../config/schema.ts';
 
 export interface AccountRotateInfo {
   from: string;
   to: string | null;
   reason: string;
+}
+
+/**
+ * 账号池看到的那一部分配置。
+ *
+ * 3.0 起账号池是**按网关**的：每个网关一个实例（各自的粘性位置与轮转计数），
+ * 但账号本身是全局的——这里拿到的是「该网关可见的账号子集」。
+ * 用取值函数注入（而不是传一份快照），配置在控制台里就地改动后立即生效。
+ */
+export interface AccountPoolView {
+  accounts: readonly Account[];
+  accountMode: AccountMode;
+  /** single 模式使用的账号名（账号标识是 name）；空 = 第一个启用账号。 */
+  activeAccount: string;
 }
 
 /**
@@ -15,24 +29,21 @@ export interface AccountRotateInfo {
  *   cache-miss 计价（可能贵一个数量级）。
  * - `single`：始终用 activeAccount 指定的账号。
  * - `roundrobin`：每次 pick 轮换（旧版行为，明确标注会牺牲 prompt cache）。
- *
- * 注意：传入的 Config 应是**运行时同一份对象引用**（JsonStore.value 就地更新），
- * 账号池才能感知控制台的账号变更，无需重建。
  */
 export class AccountPool {
-  #config: Config;
+  readonly #view: () => AccountPoolView;
   /** sticky 模式的当前下标（指向启用账号列表）。 */
   #stickyIdx = 0;
   #rrCounter = 0;
   #rotateListeners: Array<(info: AccountRotateInfo) => void> = [];
 
-  constructor(config: Config) {
-    this.#config = config;
+  constructor(view: () => AccountPoolView) {
+    this.#view = view;
   }
 
   /** 启用中的账号（key 非空且未禁用）。 */
   enabled(): Account[] {
-    return this.#config.accounts.filter((a) => a.key && a.enabled !== false);
+    return this.#view().accounts.filter((a) => a.key && a.enabled !== false);
   }
 
   /** 取一个账号；一次请求内应只调用一次并复用结果（保缓存）。 */
@@ -40,19 +51,16 @@ export class AccountPool {
     const list = this.enabled();
     if (!list.length) return null;
 
-    const mode = this.#config.accountMode as AccountMode;
-    if (mode === 'roundrobin' && list.length > 1) {
+    const view = this.#view();
+    if (view.accountMode === 'roundrobin' && list.length > 1) {
       const account = list[this.#rrCounter % list.length];
       this.#rrCounter = (this.#rrCounter + 1) % list.length;
       return account ?? null;
     }
 
-    if (mode === 'single') {
-      // activeAccount 是 config.accounts 全量列表的下标（与控制台 UI 的行号一致）；
-      // 指向的账号被禁用时回退到第一个启用账号
-      const byIdx = this.#config.accounts[this.#config.activeAccount];
-      if (byIdx?.key && byIdx.enabled !== false) return byIdx;
-      return list[0] ?? null;
+    if (view.accountMode === 'single') {
+      const named = view.activeAccount ? list.find((a) => a.name === view.activeAccount) : undefined;
+      return named ?? list[0] ?? null;
     }
 
     // sticky

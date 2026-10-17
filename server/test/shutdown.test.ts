@@ -4,14 +4,12 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AccountPool } from '../src/accounts/pool.ts';
 import type { AppContext } from '../src/appContext.ts';
 import { defaultConfig } from '../src/config/schema.ts';
 import { sendError, sendJSON } from '../src/http/respond.ts';
 import { type Ctx, Router } from '../src/http/router.ts';
 import { registerApiRoutes } from '../src/http/routes/api.ts';
 import { createHttpServer } from '../src/http/server.ts';
-import { ChannelHealth } from '../src/proxy/health.ts';
 import { JsonStore } from '../src/store/jsonStore.ts';
 import { defaultMeta, type MetaFile } from '../src/upstream/types.ts';
 import { listen, request } from './helpers/http.ts';
@@ -34,10 +32,14 @@ function makeCtx(onShutdown?: (reason: string) => void): AppContext {
     startedAt: Date.now(),
     configStore: new JsonStore(path.join(dir, 'config.json'), config, { debounceMs: 1 }),
     metaStore: new JsonStore<MetaFile>(path.join(dir, 'metadata.json'), meta, { debounceMs: 1 }),
-    pool: new AccountPool(config),
-    health: new ChannelHealth(),
-    chain: {} as AppContext['chain'],
-    probe: {} as AppContext['probe'],
+    // 关停测试只关心 /api/shutdown：网关运行时用最小桩（它不参与该路径）
+    gateways: {
+      get: () => null,
+      list: () => [],
+      statuses: () => [],
+      reconcile: async () => {},
+      closeAll: async () => {},
+    } as unknown as AppContext['gateways'],
     classify: {} as AppContext['classify'],
     catalog: {} as AppContext['catalog'],
     onShutdown,
@@ -49,6 +51,7 @@ function makeServer(ctx: AppContext) {
   router.get('/healthz', (c: Ctx) => sendJSON(c.res, 200, { ok: true }));
   registerApiRoutes(ctx, router);
   return createHttpServer({
+    gatewayId: 'main',
     handler: (c: Ctx) => {
       const route = router.resolve(c.method, c.path);
       if (!route) {
@@ -107,7 +110,8 @@ describe('POST /api/shutdown（桌面壳启停通道）', () => {
   it('无需 proxyKey 鉴权（壳不依赖下游密钥配置）', async () => {
     const ctx = makeCtx(vi.fn());
     ctx.configStore.update((c) => {
-      c.proxyKey = 'sk_downstream';
+      const gateway = c.gateways[0];
+      if (gateway) gateway.proxyKey = 'sk_downstream';
     });
     const server = makeServer(ctx);
     const { port, close } = await listen(server);

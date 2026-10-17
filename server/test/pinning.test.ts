@@ -35,7 +35,7 @@ function makeService() {
   config.accounts = [{ name: 'A', key: 'sk_a', enabled: true }];
   const probe = new ProbeService({
     upstreamBase: base,
-    pool: new AccountPool(config),
+    pool: new AccountPool(() => ({ accounts: config.accounts, accountMode: 'sticky', activeAccount: '' })),
     getMeta: (id) => store.get(id),
     setMeta: (id, m) => void store.set(id, m),
   });

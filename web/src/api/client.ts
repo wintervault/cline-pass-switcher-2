@@ -22,6 +22,19 @@ export class UnauthorizedError extends Error {
 export interface ApiOptions {
   json?: unknown;
   method?: 'GET' | 'POST';
+  /** 查询参数（多网关的 `?gateway=` 都走这里，别各自拼字符串）。 */
+  query?: Record<string, string | number | boolean | undefined>;
+}
+
+function withQuery(path: string, query: ApiOptions['query']): string {
+  if (!query) return path;
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined) params.set(key, String(value));
+  }
+  const qs = params.toString();
+  if (!qs) return path;
+  return `${path}${path.includes('?') ? '&' : '?'}${qs}`;
 }
 
 /** 控制台 API 客户端：自动附带 X-Admin-Key；401 抛 UnauthorizedError 由全局登录框处理。 */
@@ -33,7 +46,11 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
     headers['Content-Type'] = 'application/json';
     body = JSON.stringify(options.json);
   }
-  const res = await fetch(path, { method: options.method ?? (body !== undefined ? 'POST' : 'GET'), headers, body });
+  const res = await fetch(withQuery(path, options.query), {
+    method: options.method ?? (body !== undefined ? 'POST' : 'GET'),
+    headers,
+    body,
+  });
   if (res.status === 401) throw new UnauthorizedError();
   if (!res.ok) {
     // 服务端错误体形状不一：{error:{message}} / {error:"..."} / {error:...} / 纯文本——都归一成人话

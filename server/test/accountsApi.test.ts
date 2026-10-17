@@ -5,14 +5,12 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { ClassifyService } from '../src/accounts/classify.ts';
-import { AccountPool } from '../src/accounts/pool.ts';
 import type { AppContext } from '../src/appContext.ts';
 import { type Account, defaultConfig } from '../src/config/schema.ts';
 import { sendError } from '../src/http/respond.ts';
 import { type Ctx, Router } from '../src/http/router.ts';
 import { registerApiRoutes } from '../src/http/routes/api.ts';
 import { createHttpServer } from '../src/http/server.ts';
-import { ChannelHealth } from '../src/proxy/health.ts';
 import { JsonStore } from '../src/store/jsonStore.ts';
 import { defaultMeta, type MetaFile } from '../src/upstream/types.ts';
 import { listen, request } from './helpers/http.ts';
@@ -77,10 +75,14 @@ async function harness(
     startedAt: Date.now(),
     configStore,
     metaStore,
-    pool: new AccountPool(configStore.value),
-    health: new ChannelHealth(),
-    chain: {} as AppContext['chain'],
-    probe: {} as AppContext['probe'],
+    // 账号 API 不需要网关运行时：用最小桩（网关行为在 gatewayApi 测试里覆盖）
+    gateways: {
+      get: () => null,
+      list: () => [],
+      statuses: () => [],
+      reconcile: async () => {},
+      closeAll: async () => {},
+    } as unknown as AppContext['gateways'],
     classify,
     catalog: {} as AppContext['catalog'],
   };
@@ -88,6 +90,7 @@ async function harness(
   const router = new Router();
   registerApiRoutes(ctx, router);
   const server = createHttpServer({
+    gatewayId: 'main',
     handler: (c: Ctx) => {
       const route = router.resolve(c.method, c.path);
       if (!route) {
@@ -152,7 +155,7 @@ describe('POST /api/accounts', () => {
     // 缺省 → 保持
     await request(port, '/api/accounts', {
       method: 'POST',
-      body: { accounts: [{ name: 'a', enabled: true, existingIndex: 0 }], mode: 'sticky', active: 0 },
+      body: { accounts: [{ name: 'a', enabled: true, existingIndex: 0 }] },
     });
     expect(configStore.value.accounts[0]?.expiresAt).toBe('2026-12-01');
 
@@ -186,8 +189,6 @@ describe('POST /api/accounts', () => {
           { name: '新名', enabled: true, existingIndex: 0 },
           { name: '另一个', enabled: true, existingIndex: 1 },
         ],
-        mode: 'sticky',
-        active: 0,
       },
     });
     expect(res.status).toBe(200);
@@ -232,6 +233,7 @@ describe('POST /api/accounts', () => {
         m.stats['b'] = { requests: 4, lastUsed: 1, lastError: null };
         m.history.push({
           ts: 1,
+          gateway: 'main',
           model: 'cline-pass/x',
           provider: null,
           canonical: null,

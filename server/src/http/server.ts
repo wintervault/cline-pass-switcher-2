@@ -9,6 +9,8 @@ const log = logger.child({ module: 'http' });
 export interface CreateHttpServerOptions {
   handler: Handler;
   middleware?: readonly Middleware[];
+  /** 这个 listener 属于哪个网关（注入到每个请求的 Ctx）。 */
+  gatewayId: string;
 }
 
 export function createHttpServer(options: CreateHttpServerOptions): http.Server {
@@ -30,6 +32,7 @@ export function createHttpServer(options: CreateHttpServerOptions): http.Server 
       url,
       method: req.method ?? 'GET',
       path: url.pathname,
+      gatewayId: options.gatewayId,
       abortSignal: abortController.signal,
     };
 

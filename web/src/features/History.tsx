@@ -19,6 +19,7 @@ import { useEffect, useState } from 'react';
 import { useHistory } from '../api/hooks.ts';
 import type { HistoryEntry, TraceEntry } from '../api/types.ts';
 import { useFeedback } from '../feedback.ts';
+import { useGatewayScope } from '../gatewayScope.tsx';
 import { PageHeader } from '../pageHeader.tsx';
 import { Panel } from '../panel.tsx';
 
@@ -127,6 +128,10 @@ export default function History() {
   const rows = history.data?.history ?? [];
   /** 排查场景的快捷筛选：全部 / 成功 / 失败。 */
   const [view, setView] = useState<'all' | 'ok' | 'fail'>('all');
+  /** 网关筛选：所有网关 / 某一个（多网关下排查必须能分开看）。 */
+  const { gateways } = useGatewayScope();
+  const [gatewayFilter, setGatewayFilter] = useState<string>('all');
+  const gatewayName = (id: string): string => gateways.find((g) => g.id === id)?.name ?? id;
   /**
    * 自动刷新默认开（5 秒）：这一页是排查用的，边改配置边看请求效果时，
    * 手动刷新纯属浪费动作。想安静看历史就切「关」。
@@ -146,7 +151,8 @@ export default function History() {
   const msList = okRows.map((r) => r.ms).filter((m): m is number => typeof m === 'number');
   const avgMs = msList.length ? Math.round(msList.reduce((a, b) => a + b, 0) / msList.length) : 0;
   const streamPct = rows.length ? Math.round((rows.filter((r) => r.stream).length / rows.length) * 100) : 0;
-  const visible = view === 'all' ? rows : view === 'ok' ? okRows : rows.filter((r) => r.error);
+  const byView = view === 'all' ? rows : view === 'ok' ? okRows : rows.filter((r) => r.error);
+  const visible = gatewayFilter === 'all' ? byView : byView.filter((r) => r.gateway === gatewayFilter);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -198,6 +204,18 @@ export default function History() {
                 onChange={setIntervalMs}
                 options={REFRESH_OPTIONS}
               />
+              {gateways.length > 1 && (
+                <Select
+                  size="small"
+                  style={{ width: 140 }}
+                  value={gatewayFilter}
+                  onChange={setGatewayFilter}
+                  options={[
+                    { value: 'all', label: '全部网关' },
+                    ...gateways.map((g) => ({ value: g.id, label: g.name })),
+                  ]}
+                />
+              )}
               <Segmented
                 size="small"
                 value={view}
@@ -219,12 +237,12 @@ export default function History() {
             loading={history.isLoading}
             dataSource={visible}
             /* 表的最小宽度 = 定宽列之和 + 尝试序列的下限：
-               84+232+132+128+76+58 = 710（前六列）+ 56（复制列）+ 124（尝试序列）= 890。
+               72+76+190+110+116+72+54 = 690（前七列）+ 56（复制列）+ 124（尝试序列）= 870。
                这个数不是随手填的——定得比「窄窗口下的内容列宽」大一点，就会为
                一两个像素溢出一条横向滚动条（1165 宽的窗口下内容列 899，原来定 900
                正好溢出）；定得比下限小，尝试序列就会被压到看不清。再窄就横向滚动，
                而不是继续压缩每一列。 */
-            scroll={{ x: 890 }}
+            scroll={{ x: 870 }}
             locale={{
               emptyText: (
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无请求记录：agent 发出请求后会出现在这里" />
@@ -235,7 +253,7 @@ export default function History() {
             columns={[
               {
                 title: '时间',
-                width: 84,
+                width: 72,
                 render: (_, r) => (
                   <Tooltip title={new Date(r.ts).toLocaleString()}>
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -245,9 +263,20 @@ export default function History() {
                 ),
               },
               {
+                title: '网关',
+                width: 76,
+                render: (_, r) => (
+                  <Tooltip title={gatewayName(r.gateway)}>
+                    <span className="cps-cell-ellipsis" style={{ fontSize: 12 }}>
+                      {gatewayName(r.gateway)}
+                    </span>
+                  </Tooltip>
+                ),
+              },
+              {
                 title: '模型',
                 dataIndex: 'model',
-                width: 232,
+                width: 190,
                 /* 纯等宽文字，不用内联 code 芯片：芯片自带内边距与描边，一行里
                    和标签/数字混在一起很碎；复制走行尾那个按钮（复制整条记录）。 */
                 render: (v: string) => (
@@ -256,10 +285,10 @@ export default function History() {
                   </Tooltip>
                 ),
               },
-              { title: '账号', width: 132, render: (_, r) => <AccountCell account={r.account} /> },
+              { title: '账号', width: 110, render: (_, r) => <AccountCell account={r.account} /> },
               {
                 title: '实际渠道',
-                width: 128,
+                width: 116,
                 render: (_, r) => (
                   <Space size={4}>
                     {r.provider ? <Tag color="geekblue">{r.provider}</Tag> : '—'}
@@ -273,7 +302,7 @@ export default function History() {
               },
               {
                 title: '耗时',
-                width: 76,
+                width: 72,
                 render: (_, r) =>
                   r.ms != null ? (
                     <Typography.Text className="cps-num">{r.ms} ms</Typography.Text>
@@ -283,7 +312,7 @@ export default function History() {
               },
               {
                 title: '方式',
-                width: 58,
+                width: 54,
                 render: (_, r) => (
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                     {r.stream ? '流式' : '非流式'}

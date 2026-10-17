@@ -23,6 +23,19 @@ let health: ChannelHealth;
 let pool: AccountPool;
 let config = defaultConfig();
 
+/** 主网关（3.0 起 failover / 账号策略都是网关级的）。 */
+const gw = () => {
+  const gateway = config.gateways[0];
+  if (!gateway) throw new Error('缺少主网关');
+  return gateway;
+};
+const makePool = (): AccountPool =>
+  new AccountPool(() => ({
+    accounts: config.accounts,
+    accountMode: gw().accountMode,
+    activeAccount: gw().activeAccount,
+  }));
+
 beforeEach(async () => {
   upstream = new FakeUpstream();
   base = await upstream.listen();
@@ -32,7 +45,7 @@ beforeEach(async () => {
     { name: 'A', key: 'sk_a', enabled: true },
     { name: 'B', key: 'sk_b', enabled: true },
   ];
-  pool = new AccountPool(config);
+  pool = makePool();
 });
 
 afterEach(async () => {
@@ -42,7 +55,7 @@ afterEach(async () => {
 const makeChain = (): ChatChain =>
   new ChatChain({
     upstreamBase: base,
-    failover: config.failover,
+    failover: gw().failover,
     pool,
     health,
   });
@@ -151,7 +164,7 @@ describe('ChatChain 故障转移', () => {
 
   it('账号级失败但只有一个账号：直接把错误给客户端，不打后续候选', async () => {
     config.accounts = [{ name: 'A', key: 'sk_a', enabled: true }];
-    pool = new AccountPool(config);
+    pool = makePool();
     upstream.script([{ status: 401, body: err('Unauthorized') }]);
     const chain = makeChain();
     const r = asFailure(
@@ -233,10 +246,10 @@ describe('ChatChain 故障转移', () => {
   });
 
   it('全局预算耗尽：立即返回最后错误，不再切换', async () => {
-    config.failover.budgetMs = 120;
-    config.failover.attemptTimeoutMs = 500;
-    config.failover.retriesPerChannel = 0;
-    pool = new AccountPool(config);
+    gw().failover.budgetMs = 120;
+    gw().failover.attemptTimeoutMs = 500;
+    gw().failover.retriesPerChannel = 0;
+    pool = makePool();
     upstream.script([
       { status: 429, body: err('rate limited'), delayMs: 100 },
       { status: 429, body: err('rate limited'), delayMs: 100 },
@@ -259,8 +272,8 @@ describe('ChatChain 故障转移', () => {
   });
 
   it('全部候选失败：返回最后的错误与完整 trace', async () => {
-    config.failover.retriesPerChannel = 0;
-    pool = new AccountPool(config);
+    gw().failover.retriesPerChannel = 0;
+    pool = makePool();
     upstream.script([
       { status: 429, body: err('rate limited ch1') },
       { status: 500, body: err('boom ch2') },
@@ -278,8 +291,8 @@ describe('ChatChain 故障转移', () => {
 
 describe('ChatChain 钉住语义（本地说了算）', () => {
   it('strict 模式：每个候选只钉自己', async () => {
-    config.failover.retriesPerChannel = 0;
-    pool = new AccountPool(config);
+    gw().failover.retriesPerChannel = 0;
+    pool = makePool();
     upstream.script([
       { status: 429, body: err('rate limited') },
       { status: 200, body: okBody('ch2') },
@@ -291,8 +304,8 @@ describe('ChatChain 钉住语义（本地说了算）', () => {
   });
 
   it('preferred 模式：前面的候选 strict，只给最后一个放开网关回退', async () => {
-    config.failover.retriesPerChannel = 0;
-    pool = new AccountPool(config);
+    gw().failover.retriesPerChannel = 0;
+    pool = makePool();
     upstream.script([
       { status: 429, body: err('rate limited') },
       { status: 200, body: okBody('ch2') },
@@ -436,8 +449,8 @@ describe('buildCandidates 候选生成', () => {
 
 describe('ChatChain 钉住结果审计（docs/pinning.md D3）', () => {
   it('strict + enforced + finalProvider 不符 → 该候选按失败处理，切下一个', async () => {
-    config.failover.retriesPerChannel = 0;
-    pool = new AccountPool(config);
+    gw().failover.retriesPerChannel = 0;
+    pool = makePool();
     upstream.script([
       { status: 200, body: okBody('chX') }, // 网关不听话：目标 ch1，实际 chX
       { status: 200, body: okBody('ch2') },
@@ -454,8 +467,8 @@ describe('ChatChain 钉住结果审计（docs/pinning.md D3）', () => {
   });
 
   it('全部候选都不听话 → 失败，错误信息说明钉住未生效', async () => {
-    config.failover.retriesPerChannel = 0;
-    pool = new AccountPool(config);
+    gw().failover.retriesPerChannel = 0;
+    pool = makePool();
     upstream.script([
       { status: 200, body: okBody('chX') },
       { status: 200, body: okBody('chY') },
@@ -550,9 +563,9 @@ describe('ChatChain 非流式的超时与断连（回归：signal 未接线）',
   });
 
   it('非流式单次尝试超时生效（不再退化为 fetchJSON 内部默认 60s）', async () => {
-    config.failover.attemptTimeoutMs = 300;
-    config.failover.retriesPerChannel = 0; // 超时后的重试会吃掉假上游的默认成功响应，干扰断言
-    pool = new AccountPool(config);
+    gw().failover.attemptTimeoutMs = 300;
+    gw().failover.retriesPerChannel = 0; // 超时后的重试会吃掉假上游的默认成功响应，干扰断言
+    pool = makePool();
     upstream.script([{ status: 200, body: okBody('ch1'), delayMs: 5000 }]);
     const chain = makeChain();
     const started = Date.now();
@@ -648,8 +661,8 @@ describe('非流式请求内部走流式（docs/timeouts.md）', () => {
   });
 
   it('429 不触发回落（与是否流式无关，回落只是白打一发）', async () => {
-    config.failover.retriesPerChannel = 0;
-    pool = new AccountPool(config);
+    gw().failover.retriesPerChannel = 0;
+    pool = makePool();
     upstream.script([
       { status: 429, body: err('rate limited') },
       { status: 200, body: okBody('ch1') },

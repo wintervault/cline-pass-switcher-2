@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { enabledAccounts, isConfigured, publicProxyBase } from '../src/config/derive.ts';
+import { enabledAccounts, gatewayProxyBase, isConfigured } from '../src/config/derive.ts';
 import { applyEnvOverrides } from '../src/config/env.ts';
-import { defaultConfig } from '../src/config/schema.ts';
+import { defaultConfig, defaultGateway } from '../src/config/schema.ts';
 import { sendError, sendJSON } from '../src/http/respond.ts';
 import { type Ctx, Router } from '../src/http/router.ts';
-import { applySecurityPatch, mergeAccounts } from '../src/http/routes/api.ts';
+import { mergeAccounts, mergeGatewayPayload } from '../src/http/routes/api.ts';
 import { createHttpServer } from '../src/http/server.ts';
 import { assertBindSafe, InsecureBindError } from '../src/security/bind.ts';
 import { isLoopbackHost, maskSecret, safeEqual } from '../src/security/compare.ts';
@@ -56,37 +56,39 @@ describe('maskSecret', () => {
   });
 });
 
-describe('assertBindSafe', () => {
-  const base = { bindHost: '127.0.0.1', proxyKey: '' };
+describe('assertBindSafe（逐网关）', () => {
+  const cfgWith = (bindHost: string, proxyKey: string) => ({
+    gateways: [{ ...defaultGateway(), bindHost, proxyKey }],
+  });
 
   it('回环绑定无密钥 → 放行（本地自用）', () => {
-    expect(() => assertBindSafe(base, {})).not.toThrow();
+    expect(() => assertBindSafe(cfgWith('127.0.0.1', ''), {})).not.toThrow();
   });
 
   it('非回环 + 有密钥 → 放行', () => {
-    expect(() => assertBindSafe({ bindHost: '0.0.0.0', proxyKey: 'sk_down' }, {})).not.toThrow();
+    expect(() => assertBindSafe(cfgWith('0.0.0.0', 'sk_down'), {})).not.toThrow();
   });
 
   it('非回环 + 无密钥 → 拒绝启动', () => {
-    expect(() => assertBindSafe({ bindHost: '0.0.0.0', proxyKey: '' }, {})).toThrow(InsecureBindError);
-    expect(() => assertBindSafe({ bindHost: 'pass.example.com', proxyKey: '' }, {})).toThrow(InsecureBindError);
+    expect(() => assertBindSafe(cfgWith('0.0.0.0', ''), {})).toThrow(InsecureBindError);
+    expect(() => assertBindSafe(cfgWith('pass.example.com', ''), {})).toThrow(InsecureBindError);
   });
 
   it('报错信息给出可执行的修复方式', () => {
     try {
-      assertBindSafe({ bindHost: '0.0.0.0', proxyKey: '' }, {});
+      assertBindSafe(cfgWith('0.0.0.0', ''), {});
       expect.unreachable('应当抛错');
     } catch (err) {
       const message = (err as Error).message;
-      expect(message).toContain('PROXY_KEY=');
+      expect(message).toContain('网关');
       expect(message).toContain('BIND_HOST=127.0.0.1');
       expect(message).toContain('ALLOW_INSECURE_BIND=1');
     }
   });
 
   it('逃生舱 ALLOW_INSECURE_BIND=1 可放行', () => {
-    expect(() => assertBindSafe({ bindHost: '0.0.0.0', proxyKey: '' }, { ALLOW_INSECURE_BIND: '1' })).not.toThrow();
-    expect(() => assertBindSafe({ bindHost: '0.0.0.0', proxyKey: '' }, { ALLOW_INSECURE_BIND: '0' })).toThrow();
+    expect(() => assertBindSafe(cfgWith('0.0.0.0', ''), { ALLOW_INSECURE_BIND: '1' })).not.toThrow();
+    expect(() => assertBindSafe(cfgWith('0.0.0.0', ''), { ALLOW_INSECURE_BIND: '0' })).toThrow();
   });
 });
 
@@ -108,18 +110,19 @@ describe('applyEnvOverrides', () => {
       PORT: '8080',
       BIND_HOST: '0.0.0.0',
     });
-    expect(cfg.proxyKey).toBe('sk_down');
-    expect(cfg.publicBaseUrl).toBe('https://pass.example.com'); // 去掉尾斜杠
-    expect(cfg.port).toBe(8080);
-    expect(cfg.bindHost).toBe('0.0.0.0');
+    const gateway = cfg.gateways[0];
+    expect(gateway?.proxyKey).toBe('sk_down');
+    expect(gateway?.publicBaseUrl).toBe('https://pass.example.com'); // 去掉尾斜杠
+    expect(gateway?.port).toBe(8080);
+    expect(gateway?.bindHost).toBe('0.0.0.0');
   });
 
   it('非法 PORT 被忽略', () => {
     const cfg = defaultConfig();
     applyEnvOverrides(cfg, { PORT: 'abc' });
-    expect(cfg.port).toBe(3123);
+    expect(cfg.gateways[0]?.port).toBe(3123);
     applyEnvOverrides(cfg, { PORT: '99999' });
-    expect(cfg.port).toBe(3123);
+    expect(cfg.gateways[0]?.port).toBe(3123);
   });
 });
 
@@ -134,49 +137,51 @@ describe('derive', () => {
     expect(enabledAccounts(cfg)).toHaveLength(1);
   });
 
-  it('publicProxyBase 优先用 publicBaseUrl，否则按绑定地址推导', () => {
-    const cfg = defaultConfig();
-    expect(publicProxyBase(cfg)).toBe('http://127.0.0.1:3123/v1');
-    cfg.publicBaseUrl = 'https://pass.example.com/';
-    expect(publicProxyBase(cfg)).toBe('https://pass.example.com/v1');
+  it('gatewayProxyBase 优先用 publicBaseUrl，否则按绑定地址推导', () => {
+    const gateway = defaultGateway();
+    expect(gatewayProxyBase(gateway)).toBe('http://127.0.0.1:3123/v1');
+    expect(gatewayProxyBase({ ...gateway, publicBaseUrl: 'https://pass.example.com/' })).toBe(
+      'https://pass.example.com/v1',
+    );
   });
 
   it('绑定 0.0.0.0 时展示用 0.0.0.0 而非 127.0.0.1', () => {
-    const cfg = defaultConfig();
-    cfg.bindHost = '0.0.0.0';
-    cfg.port = 9000;
-    expect(publicProxyBase(cfg)).toBe('http://0.0.0.0:9000/v1');
+    expect(gatewayProxyBase({ ...defaultGateway(), bindHost: '0.0.0.0', port: 9000 })).toBe('http://0.0.0.0:9000/v1');
   });
 });
 
-describe('applySecurityPatch（proxyKey 三态语义）', () => {
+describe('mergeGatewayPayload（proxyKey 三态语义 + 显式校验）', () => {
+  const existing = () => ({ ...defaultGateway(), proxyKey: 'sk_secret' });
+  const ok = (raw: Record<string, unknown>) => {
+    const gateway = mergeGatewayPayload(raw, existing());
+    if (typeof gateway === 'string') throw new Error(`期望成功，实际报错：${gateway}`);
+    return gateway;
+  };
+
   it('空串 = 保持不变（留空语义：只改其他字段不会清掉密钥）', () => {
-    const cfg = defaultConfig();
-    cfg.proxyKey = 'sk_secret';
-    applySecurityPatch(cfg, { proxyKey: '', publicBaseUrl: 'https://x.example.com' });
-    expect(cfg.proxyKey).toBe('sk_secret');
-    expect(cfg.publicBaseUrl).toBe('https://x.example.com');
+    const gateway = ok({ proxyKey: '', publicBaseUrl: 'https://x.example.com' });
+    expect(gateway.proxyKey).toBe('sk_secret');
+    expect(gateway.publicBaseUrl).toBe('https://x.example.com');
   });
 
   it('undefined = 保持不变', () => {
-    const cfg = defaultConfig();
-    cfg.proxyKey = 'sk_secret';
-    applySecurityPatch(cfg, { exposeCatalog: true });
-    expect(cfg.proxyKey).toBe('sk_secret');
-    expect(cfg.exposeCatalog).toBe(true);
+    const gateway = ok({ exposeCatalog: true });
+    expect(gateway.proxyKey).toBe('sk_secret');
+    expect(gateway.exposeCatalog).toBe(true);
   });
 
   it('非空串 = 设置新密钥（去除首尾空白）', () => {
-    const cfg = defaultConfig();
-    applySecurityPatch(cfg, { proxyKey: '  sk_new  ' });
-    expect(cfg.proxyKey).toBe('sk_new');
+    expect(ok({ proxyKey: '  sk_new  ' }).proxyKey).toBe('sk_new');
   });
 
   it('null = 显式清除', () => {
-    const cfg = defaultConfig();
-    cfg.proxyKey = 'sk_secret';
-    applySecurityPatch(cfg, { proxyKey: null });
-    expect(cfg.proxyKey).toBe('');
+    expect(ok({ proxyKey: null }).proxyKey).toBe('');
+  });
+
+  it('非法端口/名称为显式报错，而不是被 schema 兜底成默认值', () => {
+    expect(mergeGatewayPayload({ port: 0 }, existing())).toContain('端口');
+    expect(mergeGatewayPayload({ port: 'abc' }, existing())).toContain('端口');
+    expect(mergeGatewayPayload({ name: '' }, existing())).toContain('名称');
   });
 });
 
@@ -280,6 +285,7 @@ describe('authMiddleware：控制台免密钥、代理端点仍要密钥', () =>
     router.get('/api/models', (c: Ctx) => sendJSON(c.res, 200, { ok: 'console' }));
     router.get('/v1/models', (c: Ctx) => sendJSON(c.res, 200, { ok: 'proxy' }));
     const server = createHttpServer({
+      gatewayId: 'main',
       handler: (c: Ctx) => {
         const route = router.resolve(c.method, c.path);
         if (route) return route(c);

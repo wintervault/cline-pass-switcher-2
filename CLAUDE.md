@@ -65,12 +65,14 @@ server/src/
   store/      jsonStore(原子写:tmp→fsync→rename) / metaStore(metadata.json 校验兜底)
   upstream/   routing(纯函数:管道判定+偏好注入) / errors(三分类) / client / response(unwrap)
               probe(探测+校验) / catalog(目录+官方清单)
-  accounts/   pool(sticky默认/单账号/轮询,账号级错误才轮转) / classify(风控体检)
+  accounts/   pool(按网关:sticky默认/单账号/轮询,账号级错误才轮转) / classify(风控体检)
               naming(账号名唯一) / expiry(到期状态) / types(观测值类型)
+  gateways/   manager(每网关一个 listener + 运行时;reconcile 是唯一入口,失败局部化)
   proxy/      candidates(候选生成纯函数) / chain(故障转移执行器) / health(冷却) / stream(增量解析)
   http/       server(生命周期) / router / respond / routes/{api,chat,static}
   security/   compare(timingSafeEqual/掩码) / bind(启动闸门) / middleware(鉴权/Origin/CORS)
 web/src/      api/{client,types,hooks} / features/* / panel.tsx(区块容器) / theme.ts
+              gatewayScope.tsx(当前查看的网关:context + 页头切换器)
 ```
 
 **界面结构只有一种拼法**：页面 = 页头 + 若干个 `Panel` 区块（`panel.tsx`）。
@@ -117,7 +119,7 @@ web/src/      api/{client,types,hooks} / features/* / panel.tsx(区块容器) / 
   实际用 56（留呼吸），并 `fixed: 'right'`，横向滚动时钉在右侧
 - 测试台的参数行在 899 宽的内容列下必须排成一行（折行 = 凭空长高 48px）
 
-自检命令：六页 × {1506×900, 1280×800, 1165×846} 下，`.ant-layout-content` 的
+自检命令：六页 × {1506×900, 1280×800, 1170×860} 下，`.ant-layout-content` 的
 `scrollWidth - clientWidth` 必须全为 0；测试台的 `scrollHeight - clientHeight` 为 0。
 
 **界面文案的准则**：只说「这是什么 / 我该做什么 / 会发生什么」。
@@ -145,6 +147,17 @@ web/src/      api/{client,types,hooks} / features/* / panel.tsx(区块容器) / 
   - 只解释 planner 管线；direct（OpenRouter 类）模型两类账号都能钉
 - **到期时间只提醒、不停用**：`expiresAt` 是用户声明（本地日期 `YYYY-MM-DD`），
   状态由服务端按服务端时钟计算。停用是破坏性动作，日期可能只是没续上。
+- **多网关：一个进程多个接入面**（3.0 起）：账号池是全局的，网关只引用账号名；
+  端口、密钥、CORS、账号策略、模型清单、路由配置、失败转移参数都是**网关级**的。
+  每个网关一个 listener + 一套 pool/health/chain/probe——粘性位置与渠道冷却**不许**
+  跨网关共享（同一个账号在两个网关可能是完全不同的路由结果）。
+  - 控制台（`/api` + 静态页）只挂在 `console.gatewayId` 上；其余网关只提供 `/v1` 与 `/healthz`
+  - **失败必须局部化**：某个网关绑不上只把它标成 error 并写原因，其它网关照常服务
+  - 监听状态的唯一入口是 `GatewayManager.reconcile()`；配置是唯一真值，不要旁路改运行时
+  - 若变更命中**当前请求所在的 listener**（改控制台网关端口/切换控制台），先回响应、
+    `finish` 之后再 reconcile——否则关 listener 要等这个正在等 reconcile 的请求，死锁到宽限期
+  - API 约定：网关级查询一律走 `?gateway=`；路由器没有路径参数，网关管理用 body 传 id
+
 - **错误三分类**（`upstream/errors.ts`）：账号级→立即换账号；渠道级→重试后切换；
   请求级→重试一次即切。判定顺序有讲究（文本先于状态码、限流先于配额），注释里有原因。
 - **failover 全局预算**：`failover.budgetMs` 封顶，agent 场景绝不久挂。
@@ -167,6 +180,8 @@ web/src/      api/{client,types,hooks} / features/* / panel.tsx(区块容器) / 
   （`security/local.ts`：只看对端挡不住 DNS rebinding；只看 Host 挡不住伪造；
   本机网页的跨源 fetch 由 Origin 校验兜住）。**不要再把控制台和密钥绑在一起**：
   那会让主人忘了密钥就再也进不去控制台。
+  3.0 起 `proxyKey` 是**网关级**的：本机免密钥只针对「控制台网关上的 `/api`」，
+  各网关的 `/v1/*` 仍然各用各的密钥。
 - **写操作的回执在 mutation 里，不在调用点**（`web/src/api/hooks.ts` +
   `feedback.ts`）：调用点不可能「忘了弹」。失败必带原因，长耗时给「进行中 →
   结果」两段。新加 mutation 时照这个模式写，别只 return mutate。
