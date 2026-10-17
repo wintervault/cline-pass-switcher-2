@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.0.0（未发布）
+
+> 6 项能力按 `docs/ROADMAP-3.0.md` §10 分阶段落地，本片区随阶段推进增补。
+
+### 修复（P1：字体不再是宋体 + 订阅模型页底部留白过大）
+
+反馈两条：「字体不要用宋体」「默认大小下模型页路由策略下方留白太大」。两个根因都
+不是调数值能解决的：
+
+- **字体**：Windows 上 `monospace` 的 CJK 回退是 SimSun（宋体），而 antd 6 **不把**
+  `token.fontFamily/fontFamilyCode` 注入成 `--ant-font-*` 变量（实测为空），所以
+  `var(--ant-font-family-code)` 一直是无效值、直接落到默认栈。现在字体只有一个来源
+  （`theme.ts` 的 `FONT_SANS`/`FONT_MONO`），由 `main.tsx` 写成 `--cps-font-sans` /
+  `--cps-font-mono`，`.cps-mono` / `pre` / `code` / 内联 mono 全部引用它；mono 栈显式
+  带 `"Microsoft YaHei UI"` CJK 回退。canvas 像素比对：**无元素落到 SimSun**
+- **版式**：两栏用的是 `calc(100vh - 448px)` 魔法数字（固件尺寸一变就失准），且两栏
+  外面还包了一层不带 `flex` 的 div——剩余高度被截断在那里，两栏只涨到 `minHeight`。
+  现在高度沿「内容列 → 页面包装层 → 两栏行」一路 flex 传播：默认窗口下两栏 485、
+  路由策略贴底、底部只剩内容区 24px 内边距、页面纵向不滚。不再有魔法数字
+
+六页 × 三尺寸复检：标题顶 / 首块顶 / 左边缘一致，横向溢出 0，测试台纵向 0。
+
 ## 2.9.12（2026-10-17）
 
 ### 修复（大上下文的非流式请求必然超时 —— 「勾选渠道后实际用不了」的根因）

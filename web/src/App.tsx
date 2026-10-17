@@ -303,7 +303,9 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
                 width: '100%',
                 maxWidth: PAGE_WIDTH,
                 margin: '0 auto',
-                minHeight: '100%',
+                /* 必须给**确定**高度（不是 minHeight）：需要填满内容列的页面
+                   （订阅模型）以它为高度来源；内容更高的页面照常溢出、由内容区滚动。 */
+                height: '100%',
                 display: 'flex',
                 flexDirection: 'column',
               }}
@@ -334,7 +336,13 @@ function Console({ mode, onToggleTheme }: { mode: ThemeMode; onToggleTheme: () =
                     />
                   )}
                   {PAGES.map((p) => (
-                    <div key={p.key} style={{ display: nav === p.key ? 'block' : 'none', flex: '0 0 auto' }}>
+                    /* 页面包装层可拉伸、不可压缩：需要「填满内容列」的页面（订阅模型）
+                       把这一层当高度来源；内容更高的页面保持自然高度、由内容区滚动。
+                       shrink 必须是 0——缩了会把高页面的内容压进视口。 */
+                    <div
+                      key={p.key}
+                      style={{ display: nav === p.key ? 'block' : 'none', flex: '1 0 auto', minHeight: 0 }}
+                    >
                       <p.element />
                     </div>
                   ))}

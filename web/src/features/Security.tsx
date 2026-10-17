@@ -118,7 +118,7 @@ export default function Security() {
                 }
                 style={{
                   maxWidth: CONTROL_WIDTH,
-                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                  fontFamily: 'var(--cps-font-mono)',
                   fontSize: 13,
                 }}
               />

@@ -358,7 +358,9 @@ export default function Models() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    /* 填满内容列：两栏吃满剩余高度，路由策略贴底，底部只留内容区内边距。
+       之前用 calc(100vh - 448px) 的魔法数字，默认窗口下会空出 97px（实测）。 */
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, height: '100%' }}>
       <PageHeader
         title="订阅模型"
         desc="先「探测渠道」列出可用渠道，勾选「使用」并排好顺序；「校验」逐渠道体检可用性。"
@@ -424,14 +426,17 @@ export default function Models() {
           </div>
         </Card>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        /* 用 Fragment 而不是再包一层 div：页面根已经是 flex 列容器，
+           多一层不带 flex 的 div 会把「剩余高度」截断在那里，两栏就只涨到
+           minHeight（实测 300，底部空 185px）。区块直接作为页面根的子元素。 */
+        <>
           {/*
-            两列主体：**固定高度、各自内部滚动**。
-            这样页面本身不滚（右侧那条多余的滚动条随之消失），路由策略挪到下方整行。
-            扣掉的是窗口固定件 + 页头 + 路由策略区块 + 间隔的实测总高（多留一点余量，
-            宁可两列矮一点，也不要再冒出页面级滚动条）。
+            两列主体：**吃满剩余高度、各自内部滚动**。
+            页面本身不滚（右侧那条多余的滚动条随之消失），路由策略贴底整行。
+            高度不再用「扣掉固定件」的魔法数字——页头/路由策略的尺寸一变它就失准；
+            现在由父级 flex 分配，底部只剩内容区的内边距。
           */}
-          <div style={{ display: 'flex', gap: 16, height: 'calc(100vh - 448px)', minHeight: 300 }}>
+          <div style={{ display: 'flex', gap: 16, flex: '1 1 0', minHeight: 300 }}>
             {/* 左：模型列表（区域一） */}
             <Panel
               title="模型列表"
@@ -673,7 +678,7 @@ export default function Models() {
               <RoutingFields cfg={cfg} onChange={(patch, note) => saveConfig(current.id, patch, note)} />
             </Panel>
           )}
-        </div>
+        </>
       )}
     </div>
   );

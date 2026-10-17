@@ -18,6 +18,15 @@ body {
   overflow: hidden;
 }
 
+/* 浏览器对 <code>/<pre> 的 UA 默认是 monospace——中文会落到宋体（SimSun）。
+   --cps-font-mono 由 main.tsx 从 theme.ts 写入，带 CJK 回退。 */
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--cps-font-mono);
+}
+
 :root {
   /* 滚动条：一条低对比度的细线，不抢视线（苹果那种「安静存在」的做法）。
      比原值更淡，悬停才提亮。 */
@@ -145,7 +154,9 @@ body {
    表格一行里只该有「等宽标识 / 纯文本 / 标签」三类，且各自样式固定。
    以前同一列混用 code 芯片、内联标签、普通文本，扫读时互相抢。 */
 .cps-mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* 等宽字体来自 theme.ts 的 FONT_MONO（带 CJK 回退），别再在这里写死 mono 栈：
+     Windows 上 monospace 的中文回退是宋体。 */
+  font-family: var(--cps-font-mono);
   font-size: 12px;
   line-height: 20px;
 }

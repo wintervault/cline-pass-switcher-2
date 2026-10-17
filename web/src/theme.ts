@@ -16,6 +16,19 @@ export function persistTheme(mode: ThemeMode): void {
 }
 
 /**
+ * 字体栈——**唯一来源**（`app.css` 通过 antd 注入的 `--ant-font-family` /
+ * `--ant-font-family-code` 引用，不再各写一份）。
+ *
+ * - sans 用系统 UI 优先，并显式列出 CJK 字体；
+ * - mono 只用于标识符，**必须带 CJK 回退**——Windows 上 `monospace` 的中文回退是宋体，
+ *   这是「界面里出现宋体」的唯一来源（2026-10-17 实测）。
+ */
+export const FONT_SANS =
+  '-apple-system, "Segoe UI", "Microsoft YaHei UI", "PingFang SC", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif';
+export const FONT_MONO =
+  'ui-monospace, SFMono-Regular, Menlo, Consolas, "Microsoft YaHei UI", "Noto Sans Mono CJK SC", monospace';
+
+/**
  * 品牌与体系 token（亮暗共用语义）。排版角色固定四层：
  * 20 页标题 / 14 正文与控件 / 13 说明文字 / 12 小注与数据。
  * 主色只用于主操作、选中与状态，其余交给 antd 算法。
@@ -25,6 +38,8 @@ const sharedToken = {
   colorInfo: '#4f8cff',
   borderRadius: 6,
   fontSizeHeading3: 20,
+  fontFamily: FONT_SANS,
+  fontFamilyCode: FONT_MONO,
 };
 
 /**

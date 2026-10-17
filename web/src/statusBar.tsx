@@ -164,7 +164,7 @@ export function StatusBar({
           {proxyBase ? (
             <Typography.Text
               copyable={{ text: proxyBase, tooltips: ['复制地址', '已复制'] }}
-              style={{ fontSize: 13, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+              style={{ fontSize: 13, fontFamily: 'var(--cps-font-mono)' }}
             >
               {proxyBase}
             </Typography.Text>

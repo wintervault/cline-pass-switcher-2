@@ -280,7 +280,7 @@ export default function Playground() {
               /* 280 而不是 320：这一行的控件在 890 宽的内容列里必须排成一行。
                  放不下就会折成两行，整页凭空长高 48px——正好把「不出现纵向滚动条」
                  的余量吃掉。 */
-              style={{ width: 280, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+              style={{ width: 280, fontFamily: 'var(--cps-font-mono)' }}
               placeholder="选择模型"
               value={active || undefined}
               onChange={(v) => {

@@ -87,6 +87,23 @@ web/src/      api/{client,types,hooks} / features/* / panel.tsx(区块容器) / 
 自检：六页的「标题顶 / 首个区块顶 / 左边缘」三组数字必须完全一致。
 ```
 
+**高度传播只有一条路**（3.0 P1 立）：内容列给定 `height:100%`（确定高度），
+页面包装层 `flex: 1 0 auto; minHeight: 0`（可拉伸、**不可压缩**——缩了会把高页面
+的内容压进视口），需要「填满剩余高度」的页面（订阅模型）再把这个高度继续往下传。
+**中间不许再包一层不带 flex 的 div**：它就是高度传播的断点（实测两栏只涨到
+`minHeight: 300`、底部空 185px）。两栏行 `flex: 1 1 0`，面板靠 `align-items:stretch`
+拉伸，面板体内的列表自己滚（`.cps-panel-body { flex:1 1 auto; min-height:0 }`）。
+别的页面不需要填满，自然高度即可——包装层可拉伸但内容短，不会有副作用。
+
+**字体只有一个来源**（3.0 P1 立）：`web/src/theme.ts` 的 `FONT_SANS` / `FONT_MONO`，
+经 `main.tsx` 写成 `--cps-font-sans` / `--cps-font-mono` 供 CSS 引用。组件里**不许**
+再写内联字体栈。两条原因：
+- **antd 6 不把 `token.fontFamily/fontFamilyCode` 注入成 `--ant-font-*` 变量**（实测为空），
+  所以 `var(--ant-font-family-code)` 不可用，必须自建变量；token 仍要设，供 antd 组件内部使用
+- **`monospace` 的 CJK 回退在 Windows 上是 SimSun（宋体）**，mono 栈必须显式带上
+  `"Microsoft YaHei UI"`；渲染自检用 canvas 像素比对（同串中文分别按元素栈与 SimSun 画），
+  看是否落到 SimSun——不是看 `font-family` 字符串
+
 **「装得下」也是不变量**（v2.9.9 立）：默认窗口下**测试台不得出现纵向滚动条**
 （它是最高的一页：页头 + 三块），**请求历史不得出现横向滚动条**（它是最宽的一页）。
 量的地方是「窄窗口下的内容列」而不是「设计宽度」——出问题的从来不是窗口太小，

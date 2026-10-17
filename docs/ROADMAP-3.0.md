@@ -299,8 +299,8 @@ mono : ui-monospace, SFMono-Regular, Menlo, Consolas, "Microsoft YaHei UI",
 |---|---|
 | `web/src/theme.ts` | 设 `token.fontFamily` 与 `token.fontFamilyCode`（见 §5 的字符串） |
 | `web/src/app.css` | 定义 `--cps-font-sans` / `--cps-font-mono`；`.cps-mono`、`.cps-pre`、`pre/code` 引用它们（mono 栈必须带 CJK 回退） |
-| `web/src/App.tsx` | 六个页面包装层由 `flex: 0 0 auto` 改为 `flex: 1 1 auto; minHeight: 0`（只有模型的页面用得上，其余页不受影响） |
-| `web/src/features/Models.tsx` | 两栏行 `height: calc(100vh - 448px)` → `flex: 1 1 auto; minHeight: 0`；页面根 `height: 100%` |
+| `web/src/App.tsx` | 内容列 `height:100%`（确定高度）；六个页面包装层由 `flex: 0 0 auto` 改为 `flex: 1 0 auto; minHeight: 0`（可拉伸、不可压缩；只有模型的页面用得上，其余页不受影响） |
+| `web/src/features/Models.tsx` | 两栏行 `height: calc(100vh - 448px)` → `flex: 1 1 0; minHeight: 300`；页面根 `height: 100%`；**去掉两栏外面那层不带 flex 的 div**（用 Fragment）——它就是高度传播的断点 |
 
 **验收（必须全绿才算完成）**
 
@@ -310,6 +310,17 @@ mono : ui-monospace, SFMono-Regular, Menlo, Consolas, "Microsoft YaHei UI",
   横向溢出 0；测试台纵向溢出 0
 - 字体：用 canvas 像素比对（同串中文分别以元素栈与 SimSun 渲染）确认**没有元素落到 SimSun**
 - `npm test / typecheck / lint / build` 全绿
+
+**实做记录（2026-10-17 已完成）**
+
+- 字体：`--cps-font-*` 由 `main.tsx` 写入（antd 6 不注入 `--ant-font-*`，实测为空）；
+  canvas 像素比对：body → YaHei，mono/pre/code → Consolas（拉丁）+ YaHei UI（CJK），**无元素落到 SimSun**
+- 版式（隔离实例 3133，1170×860）：两栏行 485（126..611）、路由策略 627..782 贴底、
+  最后区块底到内容列底 = 0（再往下即内容区 24px 内边距）、内容区纵向滚动 0
+- 六页 × {1506×900, 1280×800, 1170×860}：标题顶 56 / 首块顶 126 / 左边缘 228 全一致，
+  横向溢出 0，测试台纵向溢出 0
+- 关键坑：两栏外多包一层 `display:flex; flex-direction:column` 但没有 `flex` 的 div，
+  剩余高度被截断在那里，两栏只涨到 `minHeight: 300`（底部空 185px）。去掉后一次到位
 
 **commit**：`fix: 字体栈补 CJK 回退 + 模型页两栏填满（3.0 P1）`
 
