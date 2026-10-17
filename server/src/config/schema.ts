@@ -59,8 +59,11 @@ export type PerModelConfig = z.infer<typeof PerModelSchema>;
  * 单次尝试 60s、整条链 90s 封顶——多数 OpenAI 客户端 60~120s 就断了，再长只是白烧额度。
  */
 export const FailoverSchema = z.object({
-  /** 单次尝试上限（毫秒）。 */
+  /** 单次尝试上限（毫秒）。语义是「多久内要开始有响应」——拿到首块数据后交给下面的空闲超时。 */
   attemptTimeoutMs: z.number().int().min(1000).max(600000).catch(60000).default(60000),
+  /** 流式/内部流式尝试的**空闲**超时（毫秒）：连续这么久没有新数据才判定卡死。
+   *  长回答不再被「总时长」切断（详见 docs/timeouts.md）。 */
+  idleTimeoutMs: z.number().int().min(1000).max(600000).catch(60000).default(60000),
   /** 整条故障转移链的总预算（毫秒）。预算耗尽立即返回最后错误，不再切换。 */
   budgetMs: z.number().int().min(1000).max(600000).catch(90000).default(90000),
   /** 渠道级错误时同渠道重试次数（不含首次）。 */

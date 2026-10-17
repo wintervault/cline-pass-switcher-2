@@ -206,7 +206,8 @@ describe('ChatChain 故障转移', () => {
     // 等第一次尝试发出后立刻断开
     await new Promise((r) => setTimeout(r, 30));
     controller.abort();
-    asFailure(await pending);
+    // 客户端走了：不是上游失败，如实标成「取消」（不记历史、不写响应）
+    expect((await pending).outcome).toBe('cancelled');
     expect(upstream.count).toBeLessThan(2); // 客户端走了就不再花钱
   });
 
@@ -224,7 +225,8 @@ describe('ChatChain 故障转移', () => {
     });
     await new Promise((r) => setTimeout(r, 30));
     controller.abort();
-    const r = asFailure(await pending);
+    const r = await pending;
+    expect(r.outcome).toBe('cancelled');
     // 用户取消（agent 里按 Esc 很常见）不应把渠道打入冷却 5 分钟
     expect(health.isCooling('cline-pass/x', 'ch1')).toBe(false);
     expect(r.trace).toHaveLength(0);
@@ -541,7 +543,7 @@ describe('ChatChain 非流式的超时与断连（回归：signal 未接线）',
     });
     await new Promise((r) => setTimeout(r, 100));
     controller.abort();
-    asFailure(await pending);
+    expect((await pending).outcome).toBe('cancelled');
     // 若 signal 没接到 fetch 上，这里要等满 5s 才返回
     expect(Date.now() - started).toBeLessThan(2000);
     expect(upstream.count).toBe(1);
@@ -566,5 +568,122 @@ describe('ChatChain 非流式的超时与断连（回归：signal 未接线）',
     expect(Date.now() - started).toBeLessThan(2000);
     expect(r.message).toMatch(/timeout/i);
     expect(r.trace[0]?.status).toBe(502);
+  });
+});
+
+describe('非流式请求内部走流式（docs/timeouts.md）', () => {
+  const sseLine = (obj: unknown): string => `data: ${JSON.stringify(obj)}\n\n`;
+
+  it('上游拿到的确实是流式请求，客户端拿到的仍是非流式 JSON', async () => {
+    upstream.script([
+      {
+        sse: [
+          sseLine({
+            id: 'g1',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: 'x/y',
+            choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' } }],
+          }),
+          sseLine({
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+            provider_metadata: { gateway: { routing: { finalProvider: 'ch1' } } },
+            usage: { completion_tokens: 1 },
+          }),
+          'data: [DONE]\n\n',
+        ],
+      },
+    ]);
+    const chain = makeChain();
+    const r = asSuccess(
+      await chain.run({ modelId: 'cline-pass/x', body: bodyOf(), cfg: cfgOf(), meta: metaOf(), stream: false }),
+    );
+
+    const sent = upstream.requests[0]?.body as Record<string, unknown>;
+    expect(sent['stream']).toBe(true);
+    expect((sent['stream_options'] as Record<string, unknown>)['include_usage']).toBe(true);
+
+    const choice = (r.body['choices'] as Record<string, unknown>[])[0];
+    expect(choice?.['message']).toEqual({ role: 'assistant', content: 'ok' });
+    expect(r.routing.finalProvider).toBe('ch1');
+    expect(upstream.count).toBe(1);
+  });
+
+  it('上游无视 stream、直接回完整 JSON：等价于非流式成功', async () => {
+    upstream.script([{ status: 200, body: okBody('ch1') }]);
+    const chain = makeChain();
+    const r = asSuccess(
+      await chain.run({
+        modelId: 'cline-pass/x',
+        body: bodyOf(),
+        cfg: cfgOf({ upstreams: ['ch1'] }),
+        meta: metaOf(),
+        stream: false,
+      }),
+    );
+    expect((r.body['choices'] as Record<string, unknown>[])[0]?.['message']).toEqual({ content: 'ok' });
+    expect(upstream.count).toBe(1);
+  });
+
+  it('上游不认 stream（4xx）→ 回落真正的非流式请求', async () => {
+    upstream.script([
+      { status: 400, body: err('stream is not supported') },
+      { status: 200, body: okBody('ch1') },
+    ]);
+    const chain = makeChain();
+    const r = asSuccess(
+      await chain.run({
+        modelId: 'cline-pass/x',
+        body: bodyOf(),
+        cfg: cfgOf({ upstreams: ['ch1'] }),
+        meta: metaOf(),
+        stream: false,
+      }),
+    );
+    expect(upstream.count).toBe(2);
+    // 第二次请求没有 stream:true —— 回落到真正的非流式
+    const second = upstream.requests[1]?.body as Record<string, unknown>;
+    expect(second['stream']).not.toBe(true);
+    expect((r.body['choices'] as Record<string, unknown>[])[0]?.['message']).toEqual({ content: 'ok' });
+  });
+
+  it('429 不触发回落（与是否流式无关，回落只是白打一发）', async () => {
+    config.failover.retriesPerChannel = 0;
+    pool = new AccountPool(config);
+    upstream.script([
+      { status: 429, body: err('rate limited') },
+      { status: 200, body: okBody('ch1') },
+    ]);
+    const chain = makeChain();
+    const r = asFailure(
+      await chain.run({
+        modelId: 'cline-pass/x',
+        body: bodyOf(),
+        cfg: cfgOf({ upstreams: ['ch1'] }),
+        meta: metaOf(),
+        stream: false,
+      }),
+    );
+    expect(upstream.count).toBe(1);
+    const sent = upstream.requests[0]?.body as Record<string, unknown>;
+    expect(sent['stream']).toBe(true);
+    expect(r.message).toMatch(/rate limited/i);
+  });
+
+  it('客户端提前断开 → cancelled（不是上游失败）', async () => {
+    upstream.script([{ delayMs: 5000, body: okBody('ch1') }]);
+    const chain = makeChain();
+    const abort = new AbortController();
+    const pending = chain.run({
+      modelId: 'cline-pass/x',
+      body: bodyOf(),
+      cfg: cfgOf({ upstreams: ['ch1'] }),
+      meta: metaOf(),
+      stream: false,
+      clientSignal: abort.signal,
+    });
+    setTimeout(() => abort.abort(), 50);
+    const r = await pending;
+    expect(r.outcome).toBe('cancelled');
   });
 });

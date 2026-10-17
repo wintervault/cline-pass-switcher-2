@@ -132,7 +132,14 @@ function RoutingPanel({ model, cfg, meta }: { model: string; cfg: PerModelConfig
               title: '最近耗时',
               width: 104,
               align: 'right',
-              render: () => <Typography.Text type="secondary">—</Typography.Text>,
+              /* 来自「校验渠道」的实测往返（那是小请求，只用于渠道之间的相对比较）。
+                 以前这里恒为「—」——列头写着耗时却没有数据，等于没有这一列。 */
+              render: (_, r) =>
+                r.status?.ms != null ? (
+                  <Typography.Text className="cps-num">{r.status.ms} ms</Typography.Text>
+                ) : (
+                  <Typography.Text type="secondary">—</Typography.Text>
+                ),
             },
             {
               title: '参与路由',

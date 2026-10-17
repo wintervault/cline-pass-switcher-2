@@ -65,14 +65,25 @@ mimo 的请求分成两组，界限泾渭分明：
 同一个机制也解释了「有时候别的模型也有这种情况」：不限于 mimo，任何**勾选的渠道在
 非流式路径上偏慢**的模型都会这样。
 
-## 六、修复选项（未实施）
+## 六、修复（2.9.12 已实施：A + B + C + D）
 
-| 方案 | 做法 | 代价 |
+| 方案 | 落地 |
+|---|---|
+| **A 非流式内部走流式** | `proxy/collect.ts` 把 SSE 拼回非流式 JSON；`chain.ts` 的 `#attemptCollect` 承接所有 `stream:false` 的客户端请求。上游明确不支持流式（4xx 且消息里带 stream）时回落真正的非流式请求；上游无视 `stream` 直接回完整 JSON 也视为成功 |
+| **B 分级超时** | `attemptTimeoutMs`（默认 60s）语义改为「多久内要开始有响应」；新增 `idleTimeoutMs`（默认 60s）=「连续多久没有新数据算卡死」。长回答不再被总时长切断 |
+| **C 渠道耗时可见** | 测试台路由面板的「最近耗时」显示校验实测往返。根因是 `metaStore` 的 `UpstreamStatusSchema` 没有 `ms` 字段——校验一直在算，却被 schema 静默丢弃 |
+| **D 取消噪声** | 客户端在请求发出前断开 → `outcome: 'cancelled'`：不记历史、不打红标、不冷却渠道 |
+
+### 实测（隔离实例，端口 3133，真实网关）
+
+| 请求 | 修复前 | 修复后 |
 |---|---|---|
-| **A（推荐）非流式内部改走流式** | 客户端发 `stream:false` 时，向上游用流式请求、本地累积成完整 JSON 返回。同一负载 13s vs >60s，且不依赖具体 provider | 要组装 SSE 的 content / tool_calls / finish_reason；`proxy/stream.ts` 已有增量解析可复用 |
-| B 放宽/分级超时 | 非流式放宽（如 attempt 120s、budget 180s），流式保持短超时（首字节慢就该切） | 真挂了的请求会多等；回到原版行为 |
-| C 渠道耗时可见 | Playground 路由面板的「最近耗时」列目前恒为「—」，填上后能看出哪个渠道慢 | 纯前端 |
-| D 过滤取消噪声 | `no upstream attempt was made` 是客户端断开，不该记成错误/红标 | 小 |
+| 10 万 token · 非流式 · 带 tools | **502 / 91s** | **200 / 14s**（attempts=1，upstream=xiaomi，choices/message/usage 齐全） |
+| 10 万 token · 流式（对照） | 200 / 13s | 200 / 20s |
+
+单测覆盖 `StreamCollector` 的 content / tool_calls / reasoning / reasoning_details /
+usage / provider_metadata / 截断 / 流内错误 / 任意切分；`ChatChain` 覆盖内部流式、
+上游无视 stream、4xx 回落、429 不回落、客户端取消。
 
 ## 七、边界
 

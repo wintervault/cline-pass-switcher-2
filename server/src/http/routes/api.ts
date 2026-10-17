@@ -223,6 +223,8 @@ export function registerApiRoutes(
       sendJSON(c.res, 502, { ok: false, error: 'unexpected stream outcome', targets, trace });
       return;
     }
+    // 客户端在请求结束前断开（取消）：不是上游失败，不记历史、不写响应
+    if (result.outcome === 'cancelled') return;
     recordHistory(ctx, model, result, { stream: false });
 
     if (result.outcome !== 'success') {

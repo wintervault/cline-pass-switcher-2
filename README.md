@@ -147,7 +147,7 @@ location / {
 | `exposeCatalog` | `true` 时 `/v1/models` 合并完整目录模型 |
 | `knownModels` | 订阅模型清单（可「拉取官方最新」合并，成功调用自动收录） |
 | `perModel` | 每模型钉住配置：`{ upstreams, exclude, pinMode, sort }` |
-| `failover` | `{ attemptTimeoutMs:60000, budgetMs:90000, retriesPerChannel:1, cooldownMs:300000, retryBackoffMs:500 }` |
+| `failover` | `{ attemptTimeoutMs:60000, idleTimeoutMs:60000, budgetMs:90000, retriesPerChannel:1, cooldownMs:300000, retryBackoffMs:500 }` |
 | `historyLimit` | 请求历史上限（默认 500） |
 
 数据文件损坏不会丢：`config.json` / `metadata.json` 原子写 + 损坏自动备份为 `*.broken-<时间>`。
@@ -226,7 +226,13 @@ prompt cache 是一等约束：agent 多轮对话每轮带完整上下文，切�
 | **渠道级** | 429 / 5xx / 网络失败 / 超时 | 同渠道退避重试 ≤ `retriesPerChannel` → 仍失败则标记冷却并切下一个候选 |
 | **请求级** | 其余 4xx | 同渠道重试一次即切换（`invalid_request_error` 兼有「渠道映射失败」与「参数错误」两种含义，从文本无法可靠区分，用「重试是否复现」区分） |
 
-- **预算封顶**：整条链 `failover.budgetMs`（默认 90s）；每次尝试超时 = min(单次上限, 剩余预算)。agent 场景下绝不久挂。
+- **预算封顶**：整条链 `failover.budgetMs`（默认 90s），预算耗尽立即返回最后错误。agent 场景下绝不久挂。
+- **两种超时分工**（`attemptTimeoutMs` 默认 60s / `idleTimeoutMs` 默认 60s）：前者是「多久内要开始有响应」，
+  后者是「连续多久没有新数据算卡死」。长回答不会被总时长切断。
+- **非流式请求内部走流式**：客户端发 `stream:false` 时，向上游要流、本地拼成完整 JSON 再返回。
+  上游的非流式路径在大上下文下慢得多（实测同一份 10 万 token 负载：流式 13s、非流式 >60s），
+  这样既保持客户端契约不变，又不会撞超时。上游明确不支持流式时会回落真正的非流式请求。
+- **客户端取消不算失败**：请求发出前就断开的，不进历史、不打红标、不冷却渠道。
 - **冷却**：渠道级失败进入 `cooldownMs`（默认 5 分钟）冷却，期间排到候选末尾（不剔除）。
 - **账号粘性**：一次请求固定一个账号；粘性模式跨请求也固定，只有账号级错误才轮转。
 - **preferred = 本地说了算**：前面的候选逐个 strict，只给**最后一个候选**放开网关回退。

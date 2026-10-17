@@ -74,6 +74,9 @@ export function chatHandler(ctx: AppContext): Handler {
 
     const targets = (config.perModel[modelId]?.upstreams ?? []).filter(Boolean);
 
+    // 客户端在发出请求前就断开（取消）：不是上游失败，不记历史、不写响应
+    if (result.outcome === 'cancelled') return;
+
     // 客户端实际使用成功的新订阅模型自动收录进清单（只增不删）
     if (result.outcome === 'success' && /^cline-pass\//.test(modelId) && !config.knownModels.includes(modelId)) {
       ctx.configStore.update((cfg) => {

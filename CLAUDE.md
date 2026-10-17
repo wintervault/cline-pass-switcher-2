@@ -117,6 +117,15 @@ web/src/      api/{client,types,hooks} / features/* / panel.tsx(区块容器) / 
 - **错误三分类**（`upstream/errors.ts`）：账号级→立即换账号；渠道级→重试后切换；
   请求级→重试一次即切。判定顺序有讲究（文本先于状态码、限流先于配额），注释里有原因。
 - **failover 全局预算**：`failover.budgetMs` 封顶，agent 场景绝不久挂。
+- **非流式请求内部走流式**（v2.9.12，根因与实测见 `docs/timeouts.md`）：上游的非流式
+  路径在大上下文下慢 5 倍以上（10 万 token：流式 13s / 非流式 >60s，会撞超时变成 502）。
+  所以 `stream:false` 的客户端请求也是「向上游要流 → `proxy/collect.ts` 拼回完整 JSON」。
+  **不要再改回直接发非流式**；只有上游明确不认流式（4xx 且消息里带 stream）才回落，
+  且只回落那一次。
+- **超时分两段**：`attemptTimeoutMs` = 多久内要开始有响应；`idleTimeoutMs` = 连续多久
+  没有新数据算卡死。长回答不许按「总时长」掐断。
+- **取消 ≠ 失败**：客户端在请求发出前断开 → `outcome: 'cancelled'`——不记历史、不打红标、
+  不冷却渠道（旧版记成红色错误，纯噪声）。
 - **preferred = 本地说了算**：前面的候选逐个 strict，只给最后一个放开网关回退。
 - **配置一律走 schema**：给 config/metadata 加字段时同步改 `config/schema.ts` /
   `store/metaStore.ts`（记得 zod 4 陷阱：对象默认值要 `.catch(() => Schema.parse({})).prefault({})`）。

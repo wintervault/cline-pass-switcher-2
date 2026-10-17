@@ -1,6 +1,6 @@
 [package]
 name = "cline-pass-switcher"
-version = "2.9.11"
+version = "2.9.12"
 description = "Cline Pass 上游控制台 —— 桌面壳"
 edition = "2021"
 rust-version = "1.77"

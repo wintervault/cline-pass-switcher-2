@@ -3,9 +3,10 @@ import type { Account, FailoverConfig, PerModelConfig } from '../config/schema.t
 import { fetchJSON } from '../upstream/client.ts';
 import { classifyErrorKind } from '../upstream/errors.ts';
 import { unwrap } from '../upstream/response.ts';
-import { emptyRouting, injectPrefs, type RoutingInfo } from '../upstream/routing.ts';
+import { emptyRouting, injectPrefs, parseRouting, type RoutingInfo } from '../upstream/routing.ts';
 import type { ModelMeta, PinState, TraceEntry, UpstreamErrorKind } from '../upstream/types.ts';
 import { buildCandidates } from './candidates.ts';
+import { StreamCollector } from './collect.ts';
 import type { ChannelHealth } from './health.ts';
 
 const CHAT_PATH = '/chat/completions';
@@ -67,7 +68,15 @@ export interface ChainFailure extends ChainCommon {
   kind: UpstreamErrorKind | null;
 }
 
-export type ChainResult = ChainSuccess | ChainStream | ChainFailure;
+/**
+ * 客户端在请求发出前就断开（取消）。
+ * 这不是上游失败：不记历史、不冷却渠道、不写响应（docs/timeouts.md 的「取消噪声」）。
+ */
+export interface ChainCancelled extends ChainCommon {
+  outcome: 'cancelled';
+}
+
+export type ChainResult = ChainSuccess | ChainStream | ChainFailure | ChainCancelled;
 
 interface AttemptBase {
   ms: number;
@@ -302,6 +311,20 @@ export class ChatChain {
       }
     }
 
+    // 客户端断开导致的「没尝试 / 尝试被打断」不是上游失败：如实标成取消，
+    // 调用方据此不记历史、不写响应（此前会显示成红色错误，属噪声）
+    if (input.clientSignal?.aborted) {
+      return {
+        outcome: 'cancelled',
+        account,
+        trace,
+        degraded,
+        accountRotations: rotations,
+        budgetExhausted,
+        totalMs: Date.now() - startedAt,
+      };
+    }
+
     return {
       outcome: 'failure',
       status: lastError?.status ?? 502,
@@ -331,8 +354,18 @@ export class ChatChain {
     const ms = () => Date.now() - started;
     const controller = new AbortController();
     // 单次尝试超时；客户端断开时立即中止（比 AbortSignal.timeout 省一个悬挂定时器）
-    const timer = setTimeout(() => controller.abort(new Error(`attempt timeout (${timeoutMs}ms)`)), timeoutMs);
+    let timer = setTimeout(() => controller.abort(new Error(`attempt timeout (${timeoutMs}ms)`)), timeoutMs);
     timer.unref?.();
+    /**
+     * 首块数据到达后，把「开始超时」换成「空闲超时」：长回答不再被总时长切断。
+     * 语义见 docs/timeouts.md——判定卡死的标准是「连续 N 秒没有新数据」，不是总耗时。
+     */
+    const resetIdle = (): void => {
+      clearTimeout(timer);
+      const idle = this.#deps.failover.idleTimeoutMs;
+      timer = setTimeout(() => controller.abort(new Error(`stream idle timeout (${idle}ms)`)), idle);
+      timer.unref?.();
+    };
     const onClientAbort = () => controller.abort(new Error('client disconnected'));
     input.clientSignal?.addEventListener('abort', onClientAbort, { once: true });
 
@@ -343,8 +376,9 @@ export class ChatChain {
 
     try {
       if (input.stream) return await this.#attemptStream(sendBody, headers, controller.signal, ms);
-      // signal 必须传下去：这是非流式尝试的「单次超时 + 客户端断连止损」的唯一通道
-      return await this.#attemptJson(sendBody, headers, controller.signal, ms);
+      // 非流式：内部改走流式再拼装（docs/timeouts.md）。上游的非流式路径在大上下文下
+      // 明显更慢（同一 10 万 token 负载：流式 13s、非流式 >60s），这样对客户端契约零变化。
+      return await this.#attemptCollect(sendBody, headers, controller.signal, ms, resetIdle);
     } finally {
       clearTimeout(timer);
       input.clientSignal?.removeEventListener('abort', onClientAbort);
@@ -383,6 +417,100 @@ export class ChatChain {
       }
       return { verdict: 'success', body: unwrapped.body, routing: unwrapped.routing, ms: ms() };
     } catch (err) {
+      return {
+        verdict: 'error',
+        status: null,
+        ms: ms(),
+        message: err instanceof Error ? err.message : String(err),
+        kind: 'channel',
+      };
+    }
+  }
+
+  /**
+   * 非流式请求的「内部流式」尝试：向上游要流、本地拼成非流式 JSON（docs/timeouts.md）。
+   *
+   * - 首块之前受「开始超时」约束；首块之后每收一段就重置「空闲超时」——长回答不再
+   *   被总时长切断，卡死仍能在 N 秒内发现；
+   * - 上游可能不认 `stream` / `stream_options`：4xx（不含 401/403/429）时回落**真正的
+   *   非流式**请求，老路径兜底；
+   * - 流里带回的错误对象照样归类（渠道级/请求级），交给调用方重试或切换。
+   */
+  async #attemptCollect(
+    sendBody: Record<string, unknown>,
+    headers: Record<string, string>,
+    signal: AbortSignal,
+    ms: () => number,
+    resetIdle: () => void,
+  ): Promise<AttemptOutcome> {
+    const url = `${this.#deps.upstreamBase}${CHAT_PATH}`;
+    const prevOptions = sendBody['stream_options'];
+    const streamOptions: Record<string, unknown> =
+      prevOptions !== null && typeof prevOptions === 'object' && !Array.isArray(prevOptions)
+        ? { ...(prevOptions as Record<string, unknown>) }
+        : {};
+    streamOptions['include_usage'] = true;
+    const send = { ...sendBody, stream: true, stream_options: streamOptions };
+
+    let response: Response | null = null;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+    try {
+      response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(send), signal });
+      const ctype = response.headers.get('content-type') ?? '';
+      if (!response.ok || !ctype.includes('event-stream') || !response.body) {
+        const text = await response.text().catch(() => '');
+        let json: unknown = null;
+        try {
+          json = JSON.parse(text);
+        } catch {
+          json = null;
+        }
+        const unwrapped = json !== null ? unwrap(json) : null;
+        // 上游无视了 stream 参数、直接回了完整 JSON：等价于这次非流式尝试成功
+        if (unwrapped !== null && unwrapped.status === 200 && response.status < 400) {
+          return { verdict: 'success', body: unwrapped.body, routing: unwrapped.routing, ms: ms() };
+        }
+        const status = response.status >= 400 ? response.status : (unwrapped?.status ?? 502);
+        const message = unwrapped?.error ?? (text ? text.slice(0, 160) : 'empty response');
+        // 只有**明确指向流式**的 4xx 才回落真非流式（如 "stream is not supported"）。
+        // 鉴权/限流与是否流式无关；其它 4xx 多为参数错误，回落只会白打一发。
+        const streamIssue =
+          response.status >= 400 &&
+          response.status < 500 &&
+          ![401, 403, 429].includes(response.status) &&
+          /stream/i.test(message);
+        if (streamIssue) return await this.#attemptJson(sendBody, headers, signal, ms);
+        return { verdict: 'error', status, ms: ms(), message, kind: classifyErrorKind({ status, message }) };
+      }
+
+      reader = response.body.getReader();
+      const collector = new StreamCollector();
+      const decoder = new TextDecoder();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        resetIdle();
+        collector.push(decoder.decode(value, { stream: true }));
+      }
+      collector.push(decoder.decode());
+      const collected = collector.finish();
+      if (collected.error !== null || collected.body === null) {
+        const message = collected.error ?? 'empty stream';
+        // 流内错误没有可用的 HTTP 状态，按文本分类（限流 / 鉴权 / 请求错误）
+        return { verdict: 'error', status: 502, ms: ms(), message, kind: classifyErrorKind({ status: 200, message }) };
+      }
+      return { verdict: 'success', body: collected.body, routing: parseRouting(collected.body), ms: ms() };
+    } catch (err) {
+      try {
+        reader?.releaseLock();
+      } catch {
+        /* 已取消 */
+      }
+      try {
+        await response?.body?.cancel();
+      } catch {
+        /* 忽略 */
+      }
       return {
         verdict: 'error',
         status: null,

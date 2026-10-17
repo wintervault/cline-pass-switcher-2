@@ -44,6 +44,9 @@ const UpstreamDetailSchema = z.object({
 const UpstreamStatusSchema = z.object({
   status: z.enum(['ok', 'limited', 'bad', 'auth', 'unknown']).catch('unknown').default('unknown'),
   note: z.string().optional().catch(undefined),
+  /** 最近一次校验的往返耗时（毫秒）。缺了这条，UI 的「最近耗时」列永远显示「—」
+   *  ——校验代码一直在算，却被 schema 静默丢弃。 */
+  ms: z.number().optional().catch(undefined),
   checkedAt: z.number().optional().catch(undefined),
 });
 

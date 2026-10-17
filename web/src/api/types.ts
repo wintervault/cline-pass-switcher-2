@@ -11,6 +11,8 @@ export type AccountMode = 'sticky' | 'single' | 'roundrobin';
 export interface UpstreamStatus {
   status: UpstreamStatusKind;
   note?: string;
+  /** 最近一次校验该渠道的往返耗时（毫秒）；未校验过则缺省。 */
+  ms?: number;
   checkedAt?: number;
 }
 
