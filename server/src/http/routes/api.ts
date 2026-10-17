@@ -20,7 +20,7 @@ import {
   type PerModelConfig,
 } from '../../config/schema.ts';
 import type { ChainResult } from '../../proxy/chain.ts';
-import { maskSecret } from '../../security/compare.ts';
+import { isLoopbackHost, maskSecret } from '../../security/compare.ts';
 import { fetchJSON } from '../../upstream/client.ts';
 import type { RoutingInfo } from '../../upstream/routing.ts';
 import { gatewayModels } from '../../upstream/types.ts';
@@ -258,6 +258,7 @@ export function mergeGatewayPayload(raw: Record<string, unknown>, existing: Gate
       ? raw['accountMode']
       : fallback.accountMode;
 
+  const allAccounts = typeof raw['allAccounts'] === 'boolean' ? raw['allAccounts'] : fallback.allAccounts;
   const accounts = Array.isArray(raw['accounts'])
     ? [...new Set(raw['accounts'].map((n) => String(n ?? '').trim()).filter(Boolean))]
     : fallback.accounts;
@@ -298,6 +299,7 @@ export function mergeGatewayPayload(raw: Record<string, unknown>, existing: Gate
         : fallback.publicBaseUrl,
     corsOrigins,
     exposeCatalog: typeof raw['exposeCatalog'] === 'boolean' ? raw['exposeCatalog'] : fallback.exposeCatalog,
+    allAccounts,
     accounts,
     accountMode,
     activeAccount,
@@ -631,6 +633,11 @@ export function registerApiRoutes(
     const gateway = mergeGatewayPayload({ ...payload, id }, existing);
     if (typeof gateway === 'string') return sendError(c.res, 400, gateway);
     if (!existing) gateway.id = id;
+
+    // 与启动闸门同一条规则：非回环地址 + 空密钥 = 任何人可白嫖，运行期保存也不许绕过
+    if (!isLoopbackHost(gateway.bindHost) && !gateway.proxyKey && process.env['ALLOW_INSECURE_BIND'] !== '1') {
+      return sendError(c.res, 400, '绑定非回环地址时必须设置 API Key（或把绑定地址改成 127.0.0.1）');
+    }
 
     // 端口冲突在保存时就拦住：同地址同端口一定绑不上，没必要等到运行时报错
     const clash = cfg.gateways.find((g) => g.id !== id && g.bindHost === gateway.bindHost && g.port === gateway.port);

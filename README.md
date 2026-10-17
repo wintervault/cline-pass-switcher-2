@@ -22,7 +22,7 @@
 
 ![控制台截图](docs/screenshot-top.png)
 
-> 控制台支持亮/暗色主题（跟随系统 + 手动切换 + 持久化）与**中英双语**（状态栏即时切换，不刷新页面）；截图为亮色。
+> 控制台支持亮/暗色主题（跟随系统 + 手动切换 + 持久化）与**中英双语**（状态栏即时切换，不刷新页面）；截图为暗色。
 
 ---
 
@@ -159,7 +159,7 @@ location / {
 | `port` / `bindHost` | 监听端口与地址；**每个网关一个 listener**，绑定失败只影响该网关 |
 | `proxyKey` | 下游代理密钥；空 = 不鉴权（该网关绑定非回环地址时必须设置） |
 | `publicBaseUrl` / `corsOrigins` / `exposeCatalog` | 公网地址展示 / CORS 白名单 / `/v1/models` 是否合并完整目录 |
-| `accounts` | 账号子集（全局账号的名字）；**空 = 全部账号** |
+| `allAccounts` / `accounts` | `allAccounts: true`（默认）用全部账号；为 `false` 时只用 `accounts` 里列出的账号 |
 | `accountMode` / `activeAccount` | 粘性（默认）/ 单账号（用账号名指定）/ 轮转 |
 | `knownModels` / `perModel` | 该网关的模型清单与每模型钉住配置 `{ upstreams, exclude, pinMode, sort }` |
 | `failover` | `{ attemptTimeoutMs:60000, idleTimeoutMs:60000, budgetMs:90000, retriesPerChannel:1, cooldownMs:300000, retryBackoffMs:500 }` |
@@ -277,10 +277,14 @@ prompt cache 是一等约束：agent 多轮对话每轮带完整上下文，切�
 
 ---
 
-## 从 1.2 升级
+## 升级
 
-配置文件自动迁移（`apiKey` → 账号池、单 `upstream` → 优先级列表、`roundrobin` → `sticky`），
-启动日志会列出每一项。行为变化与原因见 [CHANGELOG.md](CHANGELOG.md)；
+- **2.x → 3.0**：配置自动从 v2 迁到 v3——端口/密钥/CORS/账号策略/失败转移/模型清单与路由
+  配置整体搬进「主网关」（`id: main`），账号池保持全局；metadata 的模型记录迁入 `main`。
+  「访问与安全」页并入「网关」页，账号策略改为按网关设置
+- **1.2 → 2.0**：`apiKey` → 账号池、单 `upstream` → 优先级列表、`roundrobin` → `sticky`
+
+迁移项都会写进启动日志。行为变化与原因见 [CHANGELOG.md](CHANGELOG.md)；
 真实网关的手动验收清单见 [docs/UAT.md](docs/UAT.md)。
 
 ## 安全提醒

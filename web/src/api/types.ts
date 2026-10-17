@@ -133,7 +133,8 @@ export interface GatewayView {
   publicBaseUrl: string;
   corsOrigins: string[];
   exposeCatalog: boolean;
-  /** 账号子集；空 = 全部账号。 */
+  /** true = 使用全部账号；false = 只用 accounts 里的账号。 */
+  allAccounts: boolean;
   accounts: string[];
   accountMode: AccountMode;
   activeAccount: string;

@@ -105,7 +105,8 @@ describe('migrateConfig', () => {
     expect(gateway?.accountMode).toBe('single');
     // 旧的 activeAccount 是下标，迁移后要变成账号名
     expect(gateway?.activeAccount).toBe('B');
-    // 空数组 = 全部账号（v2 的账号池本来就是全量的）
+    // v2 的账号池本来就是全量的 → allAccounts=true
+    expect(gateway?.allAccounts).toBe(true);
     expect(gateway?.accounts).toEqual([]);
     expect(gateway?.knownModels).toEqual(['cline-pass/x']);
     expect(r.raw.console).toEqual({ gatewayId: 'main' });

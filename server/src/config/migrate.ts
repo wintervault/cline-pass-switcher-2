@@ -106,7 +106,8 @@ export function migrateConfig(input: Record<string, unknown>): MigrationResult {
     for (const key of legacyKeys) {
       if (raw[key] !== undefined) gateway[key] = raw[key];
     }
-    // 账号子集：空数组 = 全部账号（见 GatewaySchema.accounts 的注释）
+    // v2 的账号池本来就是全量的
+    gateway.allAccounts = true;
     gateway.accounts = [];
     gateway.activeAccount = activeName;
 

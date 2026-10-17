@@ -131,7 +131,15 @@ export const GatewaySchema = z.object({
   /** true 时 /v1/models 合并完整目录模型。 */
   exposeCatalog: z.boolean().catch(false).default(false),
 
-  /** 账号子集（全局账号池里的名字）。空 = 该网关没有可用账号（不是「全部」）。 */
+  /**
+   * 是否使用全部账号（默认）。为 false 时只看 `accounts` 列表。
+   *
+   * 为什么不拿「空数组 = 全部」当约定：账号被删除后子集会被剪空，
+   * 那样网关会从「只用某一个号」悄悄变成「用全部号」——权限被放大且无声。
+   * 显式布尔让两种情况永远可区分。
+   */
+  allAccounts: z.boolean().catch(true).default(true),
+  /** 账号子集（全局账号池里的名字），仅在 `allAccounts=false` 时生效。 */
   accounts: z.array(z.string().min(1)).catch([]).default([]),
   accountMode: AccountModeSchema.catch('sticky').default('sticky'),
   /** single 模式使用的账号名（账号标识是 name，不再是下标）。 */
@@ -197,6 +205,7 @@ export function defaultGateway(overrides: Partial<Gateway> = {}): Gateway {
     publicBaseUrl: '',
     corsOrigins: [],
     exposeCatalog: false,
+    allAccounts: true,
     accounts: [],
     accountMode: 'sticky',
     activeAccount: '',

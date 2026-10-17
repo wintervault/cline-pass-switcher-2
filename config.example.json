@@ -1,21 +1,50 @@
 {
-  "version": 2,
-  "port": 3123,
-  "bindHost": "127.0.0.1",
+  "version": 3,
   "upstreamBase": "https://api.cline.bot/api/v1",
-  "proxyKey": "",
-  "publicBaseUrl": "",
-  "corsOrigins": [],
-  "exposeCatalog": false,
-  "accounts": [],
-  "accountMode": "sticky",
-  "activeAccount": 0,
-  "failover": {
-    "attemptTimeoutMs": 60000,
-    "budgetMs": 90000,
-    "retriesPerChannel": 1,
-    "cooldownMs": 300000,
-    "retryBackoffMs": 500
+  "accounts": [
+    {
+      "name": "主力",
+      "key": "sk_你的_Cline_Pass_Key",
+      "enabled": true,
+      "expiresAt": "2026-12-31"
+    }
+  ],
+  "classifyModel": "cline-pass/deepseek-v4.1-flash",
+  "gateways": [
+    {
+      "id": "main",
+      "name": "主网关",
+      "port": 3123,
+      "bindHost": "0.0.0.0",
+      "proxyKey": "换成一串你自己的下游密钥",
+      "publicBaseUrl": "",
+      "corsOrigins": [],
+      "exposeCatalog": false,
+      "allAccounts": true,
+      "accounts": [],
+      "accountMode": "sticky",
+      "activeAccount": "",
+      "knownModels": ["cline-pass/glm-5.3-flash", "cline-pass/deepseek-v4.1-flash"],
+      "perModel": {
+        "cline-pass/deepseek-v4.1-flash": {
+          "upstreams": ["deepseek"],
+          "exclude": [],
+          "pinMode": "strict",
+          "sort": null
+        }
+      },
+      "failover": {
+        "attemptTimeoutMs": 60000,
+        "idleTimeoutMs": 60000,
+        "budgetMs": 90000,
+        "retriesPerChannel": 1,
+        "cooldownMs": 300000,
+        "retryBackoffMs": 500
+      }
+    }
+  ],
+  "console": {
+    "gatewayId": "main"
   },
   "historyLimit": 500
 }

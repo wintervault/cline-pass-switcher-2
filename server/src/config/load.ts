@@ -114,7 +114,12 @@ export async function loadConfig(file: string): Promise<LoadResult> {
       droppedGateways += 1;
       continue;
     }
-    const r = GatewaySchema.safeParse(entry);
+    // 兼容早期 3.0 预发布写法：给了非空 accounts 却没写 allAccounts 时，意图显然是「子集」
+    const normalizedEntry =
+      isPlainObject(entry) && !('allAccounts' in entry) && Array.isArray(entry['accounts']) && entry['accounts'].length
+        ? { ...entry, allAccounts: false }
+        : entry;
+    const r = GatewaySchema.safeParse(normalizedEntry);
     if (!r.success || seenIds.has(r.data.id)) {
       if (!r.success) log.warn({ issues: r.error.issues }, '网关配置无法解析，已丢弃');
       droppedGateways += 1;
@@ -180,7 +185,7 @@ function normalizeGateway(g: GatewayInput, accountNames: Set<string>, notes: str
 
   let activeAccount = g.activeAccount;
   if (activeAccount) {
-    const inScope = accounts.length === 0 ? accountNames.has(activeAccount) : accounts.includes(activeAccount);
+    const inScope = g.allAccounts || accounts.includes(activeAccount);
     if (!inScope) {
       notes.push(`网关「${g.name}」指定的账号「${activeAccount}」不在其账号范围内，已改为默认`);
       activeAccount = '';

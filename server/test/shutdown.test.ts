@@ -15,23 +15,32 @@ import { defaultMeta, type MetaFile } from '../src/upstream/types.ts';
 import { listen, request } from './helpers/http.ts';
 
 let dir: string;
+/** 本测试创建的 store：清理前必须先关掉并 flush，否则防抖写会与删目录打架（Windows 上 ENOTEMPTY）。 */
+const stores: Array<{ close(): void; flush(): Promise<void> }> = [];
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cps-shutdown-'));
 });
 
 afterEach(async () => {
-  await fs.promises.rm(dir, { recursive: true, force: true });
+  for (const store of stores.splice(0)) {
+    store.close();
+    await store.flush().catch(() => {});
+  }
+  await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 
 function makeCtx(onShutdown?: (reason: string) => void): AppContext {
   const config = defaultConfig();
   const meta = defaultMeta();
+  const configStore = new JsonStore(path.join(dir, 'config.json'), config, { debounceMs: 1 });
+  const metaStore = new JsonStore<MetaFile>(path.join(dir, 'metadata.json'), meta, { debounceMs: 1 });
+  stores.push(configStore, metaStore);
   return {
     version: 'test',
     startedAt: Date.now(),
-    configStore: new JsonStore(path.join(dir, 'config.json'), config, { debounceMs: 1 }),
-    metaStore: new JsonStore<MetaFile>(path.join(dir, 'metadata.json'), meta, { debounceMs: 1 }),
+    configStore,
+    metaStore,
     // 关停测试只关心 /api/shutdown：网关运行时用最小桩（它不参与该路径）
     gateways: {
       get: () => null,

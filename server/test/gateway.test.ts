@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { AppContext } from '../src/appContext.ts';
+import { gatewayEnabledAccounts } from '../src/config/derive.ts';
 import { defaultConfig, defaultGateway, type Gateway } from '../src/config/schema.ts';
 import { GatewayManager, type GatewayRuntime } from '../src/gateways/manager.ts';
 import { sendError, sendJSON } from '../src/http/respond.ts';
@@ -204,6 +205,7 @@ describe('网关 API', () => {
           name: '风控号专用',
           port: secondPort,
           bindHost: '127.0.0.1',
+          allAccounts: false,
           accounts: ['A'],
           accountMode: 'single',
           activeAccount: 'A',
@@ -300,6 +302,51 @@ describe('网关 API', () => {
 
     const unknown = await request(apiPort, '/api/models?gateway=nope');
     expect(unknown.status).toBe(404);
+  });
+
+  it('账号子集：allAccounts=false 时只用列出的账号，删除账号后不会悄悄放大成全部', async () => {
+    const mainPort = await freePort();
+    const { port: apiPort, configStore } = await harness([defaultGateway({ id: 'main', port: mainPort })]);
+    // 再加一个账号，并把网关限制到 A
+    await request(apiPort, '/api/accounts', {
+      method: 'POST',
+      body: {
+        accounts: [
+          { name: 'A', key: 'sk_a', enabled: true, existingIndex: 0 },
+          { name: 'B', key: 'sk_b', enabled: true, existingIndex: null },
+        ],
+      },
+    });
+    await request(apiPort, '/api/gateways/save', {
+      method: 'POST',
+      body: { gateway: { id: 'main', name: '主网关', allAccounts: false, accounts: ['A'] } },
+    });
+    const gateway = configStore.value.gateways[0];
+    if (!gateway) throw new Error('缺少网关');
+    expect(gateway.allAccounts).toBe(false);
+    expect(gateway.accounts).toEqual(['A']);
+    expect(gatewayEnabledAccounts(configStore.value, gateway)).toHaveLength(1);
+
+    // 删掉 A：范围变空，但 allAccounts 仍是 false → 0 个账号（而不是全部）
+    await request(apiPort, '/api/accounts', {
+      method: 'POST',
+      body: { accounts: [{ name: 'B', key: 'sk_b', enabled: true, existingIndex: 1 }] },
+    });
+    const after = configStore.value.gateways[0];
+    if (!after) throw new Error('缺少网关');
+    expect(after.allAccounts).toBe(false);
+    expect(after.accounts).toEqual([]);
+    expect(gatewayEnabledAccounts(configStore.value, after)).toHaveLength(0);
+  });
+
+  it('保存网关时也执行「非回环 + 空密钥」闸门', async () => {
+    const mainPort = await freePort();
+    const { port: apiPort } = await harness([defaultGateway({ id: 'main', port: mainPort })]);
+    const res = await request(apiPort, '/api/gateways/save', {
+      method: 'POST',
+      body: { gateway: { id: 'main', name: '主网关', bindHost: '0.0.0.0', proxyKey: null } },
+    });
+    expect(res.status).toBe(400);
   });
 
   it('请求历史带 gateway 字段', async () => {

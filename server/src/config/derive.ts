@@ -14,12 +14,12 @@ export function enabledAccounts(config: Config) {
 /**
  * 该网关可见的账号。
  *
- * `gateway.accounts` 为空 = **全部账号**（见 GatewaySchema.accounts 的注释）；
- * 否则是全局账号池的子集。账号本身是全局的，网关只引用名字、不复制密钥。
+ * `gateway.allAccounts` 为真时用全部账号；否则只取 `gateway.accounts` 里的子集。
+ * 账号本身是全局的，网关只引用名字、不复制密钥。
  */
 export function gatewayAccounts(config: Config, gateway: Gateway): Account[] {
+  if (gateway.allAccounts) return config.accounts;
   const names = new Set(gateway.accounts);
-  if (!names.size) return config.accounts;
   return config.accounts.filter((a) => names.has(a.name));
 }
 

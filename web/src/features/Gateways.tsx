@@ -117,7 +117,7 @@ function draftOf(gateway: GatewayView): Draft {
     publicBaseUrl: gateway.publicBaseUrl,
     corsOrigins: gateway.corsOrigins.join('\n'),
     exposeCatalog: gateway.exposeCatalog,
-    allAccounts: gateway.accounts.length === 0,
+    allAccounts: gateway.allAccounts,
     accounts: gateway.accounts,
     accountMode: gateway.accountMode,
     activeAccount: gateway.activeAccount,
@@ -295,6 +295,7 @@ export default function Gateways() {
         .map((s) => s.trim())
         .filter(Boolean),
       exposeCatalog: draft.exposeCatalog,
+      allAccounts: draft.allAccounts,
       accounts: draft.allAccounts ? [] : draft.accounts,
       accountMode: draft.accountMode,
       activeAccount: draft.accountMode === 'single' ? draft.activeAccount : '',
