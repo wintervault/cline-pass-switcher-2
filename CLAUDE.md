@@ -70,7 +70,8 @@ server/src/
   gateways/   manager(每网关一个 listener + 运行时;reconcile 是唯一入口,失败局部化)
   proxy/      candidates(候选生成纯函数) / chain(故障转移执行器) / health(冷却) / stream(增量解析)
   http/       server(生命周期) / router / respond / routes/{api,chat,static}
-  security/   compare(timingSafeEqual/掩码) / bind(启动闸门) / middleware(鉴权/Origin/CORS)
+  security/   compare(timingSafeEqual/掩码) / bind(启动闸门) / local(本机判定) /
+              middleware(鉴权/Origin/CORS) / gatewayGuard(删除网关的过渡窗口)
 web/src/      api/{client,types,hooks} / features/* / panel.tsx(区块容器) / theme.ts
               gatewayScope.tsx(当前查看的网关:context + 页头切换器) / i18n(词典/provider/codes)
 ```
@@ -184,6 +185,17 @@ web/src/      api/{client,types,hooks} / features/* / panel.tsx(区块容器) / 
 - **配置一律走 schema**：给 config/metadata 加字段时同步改 `config/schema.ts` /
   `store/metaStore.ts`（记得 zod 4 陷阱：对象默认值要 `.catch(() => Schema.parse({})).prefault({})`）。
 - **客户端断开即止损**：长耗时操作都接 `ctx.abortSignal`。
+- **控制台可见的错误一律带 `code + params`**（`http/respond.ts` 的 `sendError`）：
+  前端 `ApiError` 按当前语言映射（`i18n/codes.ts`），`message` 只作日志/老客户端兜底。
+  新加错误分支时先想「英文界面会显示什么」——不允许把服务端中文原样漏给用户。
+- **配置版本迁移必须落盘**（`config/load.ts` 的 `persistConfigMigration`）：启动闸门
+  通过后写回并备份原文件，且不写入 `PORT` / `BIND_HOST` 等环境变量覆盖；否则每次
+  启动重放迁移，用户看到的文件与运行时不一致。
+- **网关删除有过渡窗口**：listener 关完之前配置里已经没有它，鉴权会看到空密钥。
+  所以每个 listener 的第一道中间件是 `security/gatewayGuard.ts`（不在配置里 → 503）。
+  `GatewayManager.reconcile()` 通过内部队列串行执行，不要绕过它直接改运行时。
+- **reconcile 是唯一入口**（续上条）：保存/删除/切控制台都只能改配置再 reconcile；
+  控制台不能切到 `state !== 'running'` 的网关（旧控制台一停就再也进不来）。
 - **控制台不受下游密钥管辖**（v2.9.3 的设计修正）：`proxyKey` 是**下发给客户端的**
   凭据，只守 `/v1/*` 与**远端**的控制台访问；**本机访问控制台永远免密钥**——
   能坐在本机前面的人就是最高权限。判定是「回环对端 + 回环 Host」两条缺一不可
